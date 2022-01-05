@@ -1,12 +1,29 @@
 #![no_std]
+#![no_main]
+#![feature(const_mut_refs)]
 
 
-fn main() {
-    println!("Hello, world!");
+
+mod vga_text;
+
+#[no_mangle]
+pub extern "C" fn _start() -> !{
+    use core::fmt::Write;
+
+    println!("hello, World!");
+
+
+
+
+    loop {}
 }
-
 
 #[panic_handler]
-fn panic_handler(_info: &core::panic::PanicInfo) -> !{
+fn panic_handler(info: &core::panic::PanicInfo) -> !{
+
+    println!("{}", info);
+
     loop{}
 }
+
+

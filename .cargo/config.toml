@@ -4,3 +4,6 @@
 
 [build]
 target = "x86_64-owl-os-build.json"
+
+[target.'cfg(target_os = "none")']
+runner = "bootimage runner"
