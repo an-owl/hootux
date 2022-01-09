@@ -3,7 +3,7 @@
 #![feature(const_mut_refs)]
 
 #![feature(custom_test_frameworks)]
-#![test_runner(crate::test_runner)]
+#![test_runner(owl_os::test_runner)]
 #![reexport_test_harness_main = "test_main"]
 
 use owl_os::*;
@@ -27,7 +27,6 @@ fn panic_handler(info: &core::panic::PanicInfo) -> !{
     loop{}
 }
 
-#[cfg(test)]
 fn test_runner(tests: &[&dyn Testable]){
     serial_println!("Running {} tests", tests.len());
     for test in tests {
@@ -38,6 +37,6 @@ fn test_runner(tests: &[&dyn Testable]){
 
 #[cfg(test)]
 #[panic_handler]
-fn panic(info: &PanicInfo) -> ! {
+fn panic(info: &core::panic::PanicInfo) -> ! {
     test_panic(info)
 }

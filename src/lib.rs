@@ -1,9 +1,9 @@
 #![no_std]
-#![no_main]
+#![cfg_attr(test, no_main)]
 #![feature(const_mut_refs)]
 
 #![feature(custom_test_frameworks)]
-#![test_runner(crate::test_runner)]
+#![test_runner(test_runner)]
 #![reexport_test_harness_main = "test_main"]
 
 pub mod vga_text;
@@ -23,7 +23,6 @@ impl<T> Testable for T
     }
 }
 
-#[cfg(test)]
 pub fn test_runner(tests: &[&dyn Testable]){
     serial_println!("Running {} tests", tests.len());
     for test in tests {
