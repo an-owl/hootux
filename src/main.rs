@@ -15,6 +15,11 @@ pub extern "C" fn _start() -> !{
     #[cfg(test)]
     test_main();
 
+    init();
+
+    x86_64::instructions::interrupts::int3();
+
+
     panic!("Almost fell through");
 }
 

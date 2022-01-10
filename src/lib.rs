@@ -6,12 +6,17 @@
 #![test_runner(test_runner)]
 #![reexport_test_harness_main = "test_main"]
 
+//for interrupts
+#![feature(abi_x86_interrupt)]
+
 pub mod vga_text;
 pub mod serial;
+pub mod interrupts;
 
 pub trait Testable{
     fn run (&self);
 }
+
 
 impl<T> Testable for T
     where T: Fn()
@@ -31,6 +36,10 @@ pub fn test_runner(tests: &[&dyn Testable]){
     exit_qemu(QemuExitCode::Success);
 }
 
+pub fn init(){
+    interrupts::init_exceptions();
+}
+
 pub fn test_panic(info: &core::panic::PanicInfo) -> ! {
     serial_println!("[FAILED]");
     serial_println!("Error: {}", info);
@@ -41,7 +50,7 @@ pub fn test_panic(info: &core::panic::PanicInfo) -> ! {
 #[cfg(test)]
 #[no_mangle]
 pub extern "C" fn _start() -> !{
-
+    init();
     test_main();
     loop{}
 }
