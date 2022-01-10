@@ -1,34 +1,33 @@
-use volatile::Volatile;
 use core::fmt;
 use spin::Mutex;
+use volatile::Volatile;
 
 const BUFFER_HEIGHT: usize = 25;
 const BUFFER_WIDTH: usize = 80;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(C)]
-struct VgaChar{
+struct VgaChar {
     char: u8,
     colour: ColourCode,
 }
 
-struct VgaBuffer{
-    chars: [[Volatile<VgaChar>; BUFFER_WIDTH]; BUFFER_HEIGHT]
+struct VgaBuffer {
+    chars: [[Volatile<VgaChar>; BUFFER_WIDTH]; BUFFER_HEIGHT],
 }
 
-pub struct Cursor{
+pub struct Cursor {
     column: usize,
     colour_code: ColourCode,
-    buffer: &'static mut VgaBuffer
+    buffer: &'static mut VgaBuffer,
 }
 
-impl Cursor{
-
-    pub fn write_byte(&mut self, byte: u8){
-        match byte{
+impl Cursor {
+    pub fn write_byte(&mut self, byte: u8) {
+        match byte {
             b'\n' => self.new_line(),
-            byte=> {
-                if self.column >= BUFFER_WIDTH{
+            byte => {
+                if self.column >= BUFFER_WIDTH {
                     self.new_line()
                 }
 
@@ -37,28 +36,24 @@ impl Cursor{
 
                 let colour = self.colour_code;
 
-                self.buffer.chars[row][col].write(VgaChar {
-                    char: byte,
-                    colour
-                });
+                self.buffer.chars[row][col].write(VgaChar { char: byte, colour });
                 self.column += 1;
-
             }
         }
     }
 
-    pub fn write_str(&mut self, s:&str) {
+    pub fn write_str(&mut self, s: &str) {
         for byte in s.bytes() {
             match byte {
-                0x20..=0x7e |  b'\n' => self.write_byte(byte),
+                0x20..=0x7e | b'\n' => self.write_byte(byte),
                 _ => self.write_byte(0xfe),
             }
         }
     }
 
     fn new_line(&mut self) {
-        for row in 1..BUFFER_HEIGHT{
-            for col in 0..BUFFER_WIDTH{
+        for row in 1..BUFFER_HEIGHT {
+            for col in 0..BUFFER_WIDTH {
                 //todo optimize this with copy from slice
                 let char = self.buffer.chars[row][col].read();
                 self.buffer.chars[row - 1][col].write(char);
@@ -67,19 +62,19 @@ impl Cursor{
         self.clear_row(BUFFER_HEIGHT - 1);
         self.column = 0
     }
-    fn clear_row(&mut self, row: usize){
+    fn clear_row(&mut self, row: usize) {
         let blank = VgaChar {
             char: b' ',
             colour: self.colour_code,
         };
 
-        for col in 0..BUFFER_WIDTH{
+        for col in 0..BUFFER_WIDTH {
             self.buffer.chars[row][col].write(blank);
         }
     }
 }
 
-impl fmt::Write for Cursor{
+impl fmt::Write for Cursor {
     fn write_str(&mut self, s: &str) -> fmt::Result {
         self.write_str(s);
         Ok(())
@@ -94,7 +89,7 @@ lazy_static::lazy_static! {
 }
 
 #[allow(dead_code)]
-#[derive(Debug,Clone,Copy,PartialEq,Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum Colour {
     Black = 0,
@@ -123,7 +118,6 @@ impl ColourCode {
     fn new(foreground: Colour, background: Colour) -> Self {
         Self((background as u8) << 4 | (foreground as u8))
     }
-
 }
 
 #[macro_export]
@@ -144,23 +138,23 @@ pub fn _print(args: fmt::Arguments) {
 }
 
 #[test_case]
-fn print_test(){
+fn print_test() {
     println!("testing vga text");
 }
 
 #[test_case]
-fn print_test_many(){
-    for _ in 0..200{
+fn print_test_many() {
+    for _ in 0..200 {
         println!("Testing VGA text many times")
     }
 }
 
 #[test_case]
-fn is_print_actually_working(){
+fn is_print_actually_working() {
     let test = "is it actually working";
-    println!("{}",test);
-    for (i,c) in test.chars().enumerate(){
+    println!("{}", test);
+    for (i, c) in test.chars().enumerate() {
         let screen_char = WRITER.lock().buffer.chars[BUFFER_HEIGHT - 2][i].read();
-        assert_eq!( char::from(screen_char.char) ,c);
+        assert_eq!(char::from(screen_char.char), c);
     }
 }
