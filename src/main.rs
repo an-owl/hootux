@@ -13,6 +13,13 @@ pub extern "C" fn _start() -> ! {
     init();
 
     println!("hello, World!");
+
+    fn overflow(num: u64) {
+        overflow(num + 1)
+    }
+
+    overflow(0);
+
     #[cfg(test)]
     test_main();
 

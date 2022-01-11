@@ -4,12 +4,13 @@
 #![feature(custom_test_frameworks)]
 #![test_runner(test_runner)]
 #![reexport_test_harness_main = "test_main"]
-//for interrupts
+//for interrupts.rs
 #![feature(abi_x86_interrupt)]
 
 pub mod interrupts;
 pub mod serial;
 pub mod vga_text;
+pub mod gdt;
 
 pub trait Testable {
     fn run(&self);
@@ -36,6 +37,7 @@ pub fn test_runner(tests: &[&dyn Testable]) {
 
 pub fn init() {
     interrupts::init_exceptions();
+    gdt::init()
 }
 
 pub fn test_panic(info: &core::panic::PanicInfo) -> ! {
