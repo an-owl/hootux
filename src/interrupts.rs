@@ -5,7 +5,8 @@ use x86_64::structures::idt::{InterruptDescriptorTable, InterruptStackFrame};
 lazy_static! {
     static ref IDT: InterruptDescriptorTable = {
         let mut idt = InterruptDescriptorTable::new();
-        idt.breakpoint.set_handler_fn(init_breakpoint);
+        idt.breakpoint.set_handler_fn(except_breakpoint);
+        idt.double_fault.set_handler_fn(except_double);
         idt
     };
 }
@@ -14,8 +15,12 @@ pub fn init_exceptions() {
     IDT.load()
 }
 
-extern "x86-interrupt" fn init_breakpoint(stack_frame: InterruptStackFrame) {
+extern "x86-interrupt" fn except_breakpoint(stack_frame: InterruptStackFrame) {
     println!("Breakpoint at: {:#?}", stack_frame);
+}
+
+extern "x86-interrupt" fn except_double(stack: InterruptStackFrame, _err: u64) -> ! {
+    panic!("EXCEPTION DOUBLE FAULT\n{:#?}",stack);
 }
 
 #[test_case]
