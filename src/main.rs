@@ -9,13 +9,12 @@ use owl_os::*;
 
 #[no_mangle]
 pub extern "C" fn _start() -> ! {
+    //initialize system
+    init();
+
     println!("hello, World!");
     #[cfg(test)]
     test_main();
-
-    init();
-
-    x86_64::instructions::interrupts::int3();
 
     panic!("Almost fell through");
 }
