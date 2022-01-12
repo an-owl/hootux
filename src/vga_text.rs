@@ -136,9 +136,7 @@ pub fn _print(args: fmt::Arguments) {
     use core::fmt::Write;
     use x86_64::instructions::interrupts::without_interrupts;
 
-    without_interrupts(||
-        WRITER.lock().write_fmt(args).unwrap()
-    );
+    without_interrupts(|| WRITER.lock().write_fmt(args).unwrap());
 }
 
 #[test_case]
