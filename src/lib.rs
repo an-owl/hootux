@@ -7,10 +7,10 @@
 //for interrupts.rs
 #![feature(abi_x86_interrupt)]
 
+pub mod gdt;
 pub mod interrupts;
 pub mod serial;
 pub mod vga_text;
-pub mod gdt;
 
 pub trait Testable {
     fn run(&self);
@@ -38,9 +38,8 @@ pub fn test_runner(tests: &[&dyn Testable]) {
 pub fn init() {
     gdt::init();
     interrupts::init_exceptions();
-    unsafe{ interrupts::PICS.lock().initialize() }
+    unsafe { interrupts::PICS.lock().initialize() }
     x86_64::instructions::interrupts::enable();
-
 }
 
 pub fn test_panic(info: &core::panic::PanicInfo) -> ! {

@@ -3,17 +3,15 @@
 #![feature(abi_x86_interrupt)]
 
 use core::panic::PanicInfo;
-use owl_os::{exit_qemu, QemuExitCode, serial_println,serial_print};
+use owl_os::{exit_qemu, serial_print, serial_println, QemuExitCode};
 
 #[no_mangle]
 pub extern "C" fn _start() -> ! {
-
-    serial_print!("{}::overflow...\t",file!());
+    serial_print!("{}::overflow...\t", file!());
     owl_os::init();
     init_test_idt();
 
     overflow();
-
 
     panic!("failed to overflow stack")
 }
@@ -24,32 +22,32 @@ fn panic(info: &PanicInfo) -> ! {
 }
 
 #[allow(unconditional_recursion)]
-fn overflow(){
+fn overflow() {
     overflow();
     volatile::Volatile::new(0).read();
 }
 
-
 use lazy_static::lazy_static;
 use x86_64::structures::idt::{InterruptDescriptorTable, InterruptStackFrame};
 
-fn init_test_idt(){
+fn init_test_idt() {
     TEST_IDT.load()
 }
 
-extern "x86-interrupt" fn test_double_fault(_sf: InterruptStackFrame, _code: u64) -> !{
+extern "x86-interrupt" fn test_double_fault(_sf: InterruptStackFrame, _code: u64) -> ! {
     serial_println!("[PASSED]");
     exit_qemu(QemuExitCode::Success);
 
-    loop{}
+    loop {}
 }
 
-lazy_static!{
+lazy_static! {
     static ref TEST_IDT: InterruptDescriptorTable = {
         let mut idt = InterruptDescriptorTable::new();
-        unsafe{
-            idt.double_fault.set_handler_fn(test_double_fault)
-            .set_stack_index(owl_os::gdt::DOUBLE_FAULT_IST_INDEX);
+        unsafe {
+            idt.double_fault
+                .set_handler_fn(test_double_fault)
+                .set_stack_index(owl_os::gdt::DOUBLE_FAULT_IST_INDEX);
         }
         idt
     };
