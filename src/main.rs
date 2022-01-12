@@ -14,26 +14,26 @@ pub extern "C" fn _start() -> ! {
 
     println!("hello, World!");
 
-    fn overflow(num: u64) {
-        overflow(num + 1)
-    }
-
-    overflow(0);
-
     #[cfg(test)]
     test_main();
 
-    panic!("Almost fell through");
+    loop{
+        for _ in 0..10000{
+            x86_64::instructions::nop();
+        }
+        print!("-")
+    }
 }
 
 #[cfg(not(test))]
 #[panic_handler]
 fn panic_handler(info: &core::panic::PanicInfo) -> ! {
-    println!("KERNEL PANIC\nInfo\n{}", info);
+    println!("KERNEL PANIC\nInfo: {}", info);
 
     loop {}
 }
 
+#[allow(dead_code)]
 fn test_runner(tests: &[&dyn Testable]) {
     serial_println!("Running {} tests", tests.len());
     for test in tests {

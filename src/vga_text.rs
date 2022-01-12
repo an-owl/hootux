@@ -134,7 +134,11 @@ macro_rules! println {
 #[doc(hidden)]
 pub fn _print(args: fmt::Arguments) {
     use core::fmt::Write;
-    WRITER.lock().write_fmt(args).unwrap();
+    use x86_64::instructions::interrupts::without_interrupts;
+
+    without_interrupts(||
+        WRITER.lock().write_fmt(args).unwrap()
+    );
 }
 
 #[test_case]
@@ -152,9 +156,11 @@ fn print_test_many() {
 #[test_case]
 fn is_print_actually_working() {
     let test = "is it actually working";
-    println!("{}", test);
-    for (i, c) in test.chars().enumerate() {
-        let screen_char = WRITER.lock().buffer.chars[BUFFER_HEIGHT - 2][i].read();
-        assert_eq!(char::from(screen_char.char), c);
-    }
+    x86_64::instructions::interrupts::without_interrupts(|| {
+        println!("\n{}", test);
+        for (i, c) in test.chars().enumerate() {
+            let screen_char = WRITER.lock().buffer.chars[BUFFER_HEIGHT - 2][i].read();
+            assert_eq!(char::from(screen_char.char), c);
+        }
+    });
 }

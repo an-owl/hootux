@@ -36,8 +36,11 @@ pub fn test_runner(tests: &[&dyn Testable]) {
 }
 
 pub fn init() {
+    gdt::init();
     interrupts::init_exceptions();
-    gdt::init()
+    unsafe{ interrupts::PICS.lock().initialize() }
+    x86_64::instructions::interrupts::enable();
+
 }
 
 pub fn test_panic(info: &core::panic::PanicInfo) -> ! {
