@@ -17,11 +17,8 @@ pub extern "C" fn _start() -> ! {
     #[cfg(test)]
     test_main();
 
-    loop{
-        for _ in 0..10000{
-            x86_64::instructions::nop();
-        }
-        print!("-")
+    loop {
+        x86_64::instructions::hlt();
     }
 }
 
