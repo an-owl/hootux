@@ -2,7 +2,7 @@ use crate::gdt;
 use crate::print;
 use crate::println;
 use lazy_static::lazy_static;
-use x86_64::structures::idt::{InterruptDescriptorTable, InterruptStackFrame};
+use x86_64::structures::idt::{InterruptDescriptorTable, InterruptStackFrame, PageFaultErrorCode};
 
 pub const PIC_0_OFFSET: u8 = 32;
 pub const PIC_1_OFFSET: u8 = PIC_0_OFFSET + 8;
@@ -18,9 +18,10 @@ lazy_static! {
             idt.double_fault
                 .set_handler_fn(except_double)
                 .set_stack_index(gdt::DOUBLE_FAULT_IST_INDEX);
-            idt[InterruptIndex::Timer.as_usize()].set_handler_fn(timer_interrupt_handler);
-            idt[InterruptIndex::Keyboard.as_usize()].set_handler_fn(keyboard_interrupt_handler);
         }
+        idt[InterruptIndex::Timer.as_usize()].set_handler_fn(timer_interrupt_handler);
+        idt[InterruptIndex::Keyboard.as_usize()].set_handler_fn(keyboard_interrupt_handler);
+        idt.page_fault.set_handler_fn(except_page);
         idt
     };
 }
@@ -34,7 +35,7 @@ extern "x86-interrupt" fn except_breakpoint(stack_frame: InterruptStackFrame) {
 }
 
 extern "x86-interrupt" fn except_double(stack: InterruptStackFrame, _err: u64) -> ! {
-    panic!("EXCEPTION DOUBLE FAULT\n{:#?}\n", stack);
+    panic!("EXCEPTION: DOUBLE FAULT\n{:#?}\n", stack);
 }
 
 extern "x86-interrupt" fn timer_interrupt_handler(_sf: InterruptStackFrame) {
@@ -74,6 +75,20 @@ extern "x86-interrupt" fn keyboard_interrupt_handler(_sf: InterruptStackFrame) {
             .notify_end_of_interrupt(InterruptIndex::Keyboard.as_u8());
     }
 }
+
+extern "x86-interrupt" fn except_page(sf: InterruptStackFrame, e: PageFaultErrorCode){
+    use x86_64::registers::control::Cr2;
+
+    println!("EXCEPTION: PAGE FAULT");
+    println!("At address {:?}",Cr2::read());
+    println!("Error code {:?}",e);
+    println!("{:#?}",sf);
+    loop {
+        x86_64::instructions::hlt();
+    }
+}
+
+
 
 #[test_case]
 fn test_breakpoint() {
