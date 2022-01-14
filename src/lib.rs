@@ -11,6 +11,7 @@ pub mod gdt;
 pub mod interrupts;
 pub mod serial;
 pub mod vga_text;
+pub mod mem;
 
 pub trait Testable {
     fn run(&self);
@@ -57,11 +58,17 @@ pub fn test_panic(info: &core::panic::PanicInfo) -> ! {
 }
 
 #[cfg(test)]
+use bootloader::{entry_point,BootInfo};
+
+#[cfg(test)]
+entry_point!(kernel_test_main);
+
+#[cfg(test)]
 #[no_mangle]
-pub extern "C" fn _start() -> ! {
+fn kernel_test_main(_b: &'static BootInfo) -> ! {
     init();
     test_main();
-    loop {}
+    loop {x86_64::instructions::hlt()}
 }
 
 #[cfg(test)]

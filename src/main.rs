@@ -6,20 +6,45 @@
 #![reexport_test_harness_main = "test_main"]
 
 use owl_os::*;
+use bootloader::entry_point;
+use x86_64::structures::paging::PageTable;
+use x86_64::VirtAddr;
+use owl_os::mem::active_l4_table;
 
+
+entry_point!(kernel_main);
 #[no_mangle]
-pub extern "C" fn _start() -> ! {
+fn kernel_main(b: &'static bootloader::BootInfo) -> ! {
     //initialize system
     init();
 
     println!("hello, World!");
 
+    let phy_mem_offset = VirtAddr::new(b.physical_memory_offset);
+    let l4_table = unsafe {active_l4_table(phy_mem_offset)};
+
+    for (i, entry) in l4_table.iter().enumerate(){
+        if !entry.is_unused(){
+            println!("Entry {}: {:?}", i, entry);
+
+            let phys = entry.frame().unwrap().start_address();
+            let virt = phys.as_u64() + b.physical_memory_offset;
+            let ptr = VirtAddr::new(virt).as_mut_ptr();
+            let l3_table: &PageTable = unsafe {&*ptr};
+
+            for (i,entry) in l3_table.iter().enumerate(){
+                if !entry.is_unused(){
+                    println!("\t L3 Entry {}: {:?}",i,entry);
+                }
+            }
+
+        }
+    }
+
     #[cfg(test)]
     test_main();
 
-    loop {
-        x86_64::instructions::hlt();
-    }
+    stop()
 }
 
 #[cfg(not(test))]
