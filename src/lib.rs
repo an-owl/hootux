@@ -42,6 +42,13 @@ pub fn init() {
     x86_64::instructions::interrupts::enable();
 }
 
+#[inline]
+pub fn stop() -> !{
+    loop{
+        x86_64::instructions::hlt()
+    }
+}
+
 pub fn test_panic(info: &core::panic::PanicInfo) -> ! {
     serial_println!("[FAILED]");
     serial_println!("Error: {}", info);
