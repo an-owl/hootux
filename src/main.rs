@@ -7,7 +7,7 @@
 
 use owl_os::*;
 use bootloader::entry_point;
-use x86_64::structures::paging::{Page, Translate};
+use x86_64::structures::paging::Page;
 use x86_64::VirtAddr;
 use owl_os::mem;
 
@@ -20,7 +20,7 @@ fn kernel_main(b: &'static bootloader::BootInfo) -> ! {
     println!("hello, World!");
     let phy_mem_offset = VirtAddr::new(b.physical_memory_offset);
     let mut mapper = unsafe { mem::init(phy_mem_offset)};
-    let mut frame_alloc = mem::EmptyFrameAllocator;
+    let mut frame_alloc = unsafe { mem::BootInfoFrameAllocator::init(&b.memory_map) };
 
     let target_page = Page::containing_address(VirtAddr::new(0xdeadbeef));
 
