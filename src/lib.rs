@@ -54,7 +54,7 @@ pub fn test_panic(info: &core::panic::PanicInfo) -> ! {
     serial_println!("[FAILED]");
     serial_println!("Error: {}", info);
     exit_qemu(QemuExitCode::Failed);
-    loop {}
+    stop()
 }
 
 #[cfg(test)]

@@ -7,9 +7,9 @@
 
 use owl_os::*;
 use bootloader::entry_point;
-use x86_64::structures::paging::PageTable;
+use x86_64::structures::paging::{Page, Translate};
 use x86_64::VirtAddr;
-use owl_os::mem::active_l4_table;
+use owl_os::mem;
 
 
 entry_point!(kernel_main);
@@ -17,29 +17,18 @@ entry_point!(kernel_main);
 fn kernel_main(b: &'static bootloader::BootInfo) -> ! {
     //initialize system
     init();
-
     println!("hello, World!");
-
     let phy_mem_offset = VirtAddr::new(b.physical_memory_offset);
-    let l4_table = unsafe {active_l4_table(phy_mem_offset)};
+    let mut mapper = unsafe { mem::init(phy_mem_offset)};
+    let mut frame_alloc = mem::EmptyFrameAllocator;
 
-    for (i, entry) in l4_table.iter().enumerate(){
-        if !entry.is_unused(){
-            println!("Entry {}: {:?}", i, entry);
+    let target_page = Page::containing_address(VirtAddr::new(0xdeadbeef));
 
-            let phys = entry.frame().unwrap().start_address();
-            let virt = phys.as_u64() + b.physical_memory_offset;
-            let ptr = VirtAddr::new(virt).as_mut_ptr();
-            let l3_table: &PageTable = unsafe {&*ptr};
+    mem::create_example_mapping(target_page,&mut mapper, &mut frame_alloc);
 
-            for (i,entry) in l3_table.iter().enumerate(){
-                if !entry.is_unused(){
-                    println!("\t L3 Entry {}: {:?}",i,entry);
-                }
-            }
+    let page_ptr: *mut u64 = target_page.start_address().as_mut_ptr();
+    unsafe  { page_ptr.offset(400).write_volatile(0x_f021_f077_f065_f04e)}
 
-        }
-    }
 
     #[cfg(test)]
     test_main();
@@ -52,7 +41,7 @@ fn kernel_main(b: &'static bootloader::BootInfo) -> ! {
 fn panic_handler(info: &core::panic::PanicInfo) -> ! {
     println!("KERNEL PANIC\nInfo: {}", info);
 
-    loop {}
+    stop()
 }
 
 #[allow(dead_code)]
