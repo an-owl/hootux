@@ -16,6 +16,8 @@ fn panic(info: &PanicInfo) -> ! {
     test_panic(&info)
 }
 
+entry_point!(main);
+#[no_mangle]
 fn main(b: &'static BootInfo) -> ! {
     use owl_os::allocator;
     use owl_os::mem::{self, BootInfoFrameAllocator};
