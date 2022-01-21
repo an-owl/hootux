@@ -6,12 +6,16 @@
 #![reexport_test_harness_main = "test_main"]
 //for interrupts.rs
 #![feature(abi_x86_interrupt)]
+#![feature(alloc_error_handler)]
+
+extern crate alloc;
 
 pub mod gdt;
 pub mod interrupts;
 pub mod serial;
 pub mod vga_text;
 pub mod mem;
+pub mod allocator;
 
 pub trait Testable {
     fn run(&self);
@@ -91,4 +95,10 @@ pub fn exit_qemu(exit_code: QemuExitCode) {
         let mut port = Port::new(0xf4);
         port.write(exit_code as u32);
     }
+}
+
+
+#[alloc_error_handler]
+fn alloc_error_handler(layout: alloc::alloc::Layout) -> !{
+    panic!("alloc error {:?}", layout)
 }

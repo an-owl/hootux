@@ -5,11 +5,14 @@
 #![test_runner(owl_os::test_runner)]
 #![reexport_test_harness_main = "test_main"]
 
+extern crate alloc;
+
 use owl_os::*;
 use bootloader::entry_point;
-use x86_64::structures::paging::Page;
 use x86_64::VirtAddr;
+use alloc::boxed::Box;
 use owl_os::mem;
+
 
 
 entry_point!(kernel_main);
@@ -21,13 +24,16 @@ fn kernel_main(b: &'static bootloader::BootInfo) -> ! {
     let phy_mem_offset = VirtAddr::new(b.physical_memory_offset);
     let mut mapper = unsafe { mem::init(phy_mem_offset)};
     let mut frame_alloc = unsafe { mem::BootInfoFrameAllocator::init(&b.memory_map) };
+    allocator::init_heap(&mut mapper,&mut frame_alloc).expect("heap allocation failed");
 
-    let target_page = Page::containing_address(VirtAddr::new(0xdeadbeef));
+    let x = Box::new(42);
+    println!("heap value at {:p}", x);
 
-    mem::create_example_mapping(target_page,&mut mapper, &mut frame_alloc);
-
-    let page_ptr: *mut u64 = target_page.start_address().as_mut_ptr();
-    unsafe  { page_ptr.offset(400).write_volatile(0x_f021_f077_f065_f04e)}
+    let mut vec = alloc::vec::Vec::new();
+    for i in 0..500 {
+        vec.push(i);
+    }
+    println!("vec at {:p}", vec.as_slice());
 
 
     #[cfg(test)]
