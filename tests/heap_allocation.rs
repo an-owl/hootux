@@ -57,7 +57,7 @@ fn realloc(){
 
 #[test_case]
 fn dealloc(){
-    for i in 0..owl_os::allocator::HEAP_SIZE{
+    for i in 0..owl_os::allocator::HEAP_SIZE-1{
         let x = Box::new(i);
         assert_eq!(*x, i);
     }
