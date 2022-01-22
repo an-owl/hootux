@@ -57,8 +57,9 @@ fn realloc(){
 
 #[test_case]
 fn dealloc(){
-    for i in 0..owl_os::allocator::HEAP_SIZE-1{
+    for i in 0..core::mem::size_of::<Box<usize>>()/owl_os::allocator::HEAP_SIZE{
         let x = Box::new(i);
+        serial_println!("{}",i);
         assert_eq!(*x, i);
     }
 }
