@@ -3,6 +3,7 @@ use x86_64::structures::paging::{
 use x86_64::VirtAddr;
 
 pub mod bump;
+pub mod linked_list;
 
 pub struct Locked<A>{
     inner: spin::Mutex<A>
@@ -27,7 +28,7 @@ use linked_list_allocator::LockedHeap;
 use crate::allocator::bump::BumpAllocator;
 
 #[global_allocator]
-static ALLOCATOR: Locked<BumpAllocator> = Locked::new(BumpAllocator::new());
+static ALLOCATOR: Locked<linked_list::LinkedListAllocator> = Locked::new(linked_list::LinkedListAllocator::new());
 
 pub fn init_heap(
     mapper: &mut impl Mapper<Size4KiB>,
