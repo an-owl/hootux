@@ -4,6 +4,7 @@ use x86_64::VirtAddr;
 
 pub mod bump;
 pub mod linked_list;
+pub mod fixed_size_block;
 
 pub struct Locked<A>{
     inner: spin::Mutex<A>
@@ -28,7 +29,7 @@ use linked_list_allocator::LockedHeap;
 use crate::allocator::bump::BumpAllocator;
 
 #[global_allocator]
-static ALLOCATOR: Locked<linked_list::LinkedListAllocator> = Locked::new(linked_list::LinkedListAllocator::new());
+static ALLOCATOR: Locked<fixed_size_block::FixedBlockAllocator> = Locked::new(fixed_size_block::FixedBlockAllocator::new());
 
 pub fn init_heap(
     mapper: &mut impl Mapper<Size4KiB>,
