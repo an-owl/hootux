@@ -11,6 +11,8 @@ use owl_os::*;
 use bootloader::entry_point;
 use x86_64::VirtAddr;
 use owl_os::mem;
+use owl_os::task::{executor, Task};
+use owl_os::task::keyboard;
 
 
 
@@ -25,20 +27,22 @@ fn kernel_main(b: &'static bootloader::BootInfo) -> ! {
     let mut frame_alloc = unsafe { mem::BootInfoFrameAllocator::init(&b.memory_map) };
     allocator::init_heap(&mut mapper,&mut frame_alloc).expect("heap allocation failed");
 
-    let x = Box::new(42);
-    println!("heap value at {:p}", x);
-
-    let mut vec = alloc::vec::Vec::new();
-    for i in 0..500 {
-        vec.push(i);
-    }
-    println!("vec at {:p}", vec.as_slice());
-
-
     #[cfg(test)]
     test_main();
 
-    stop()
+    let mut executor = executor::Executor::new();
+    executor.spawn(Task::new(thing()));
+    executor.spawn(Task::new(keyboard::print_key()));
+    executor.run();
+}
+
+async fn async_number() -> u32 {
+    42069
+}
+
+async fn thing() {
+    let number = async_number().await;
+    println!("async number: {}", number)
 }
 
 #[cfg(not(test))]

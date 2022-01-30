@@ -16,6 +16,7 @@ pub mod serial;
 pub mod vga_text;
 pub mod mem;
 pub mod allocator;
+pub mod task;
 
 pub trait Testable {
     fn run(&self);
