@@ -25,9 +25,6 @@ impl<A> Locked<A>{
 pub const HEAP_START: usize = 0x4444_4444_0000;
 pub const HEAP_SIZE: usize = 100 * 1024;
 
-use linked_list_allocator::LockedHeap;
-use crate::allocator::bump::BumpAllocator;
-
 #[global_allocator]
 static ALLOCATOR: Locked<fixed_size_block::FixedBlockAllocator> = Locked::new(fixed_size_block::FixedBlockAllocator::new());
 

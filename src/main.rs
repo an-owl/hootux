@@ -10,7 +10,6 @@ extern crate alloc;
 use owl_os::*;
 use bootloader::entry_point;
 use x86_64::VirtAddr;
-use alloc::boxed::Box;
 use owl_os::mem;
 
 

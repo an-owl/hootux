@@ -41,7 +41,6 @@ impl LinkedListAllocator {
         self.add_free_region(heap_start, heap_size);
     }
     unsafe fn add_free_region(&mut self, addr: usize, size: usize) {
-        use super::align_up;
         use core::mem;
         // ensure that the freed region can contain the ListNode
         assert_eq!(align_up(addr,mem::align_of::<ListNode>()),addr);
@@ -117,7 +116,6 @@ impl LinkedListAllocator {
 
 unsafe impl GlobalAlloc for super::Locked<LinkedListAllocator> {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        use alloc::alloc::{GlobalAlloc, Layout};
         use core::ptr;
 
         let (size, align) = LinkedListAllocator::size_align(layout);
