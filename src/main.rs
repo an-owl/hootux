@@ -18,13 +18,13 @@ use owl_os::task::keyboard;
 
 entry_point!(kernel_main);
 #[no_mangle]
-fn kernel_main(b: &'static bootloader::BootInfo) -> ! {
+fn kernel_main(b: &'static mut bootloader::BootInfo) -> ! {
     //initialize system
     init();
     println!("hello, World!");
-    let phy_mem_offset = VirtAddr::new(b.physical_memory_offset);
+    let phy_mem_offset = VirtAddr::new(b.physical_memory_offset.into_option().unwrap());
     let mut mapper = unsafe { mem::init(phy_mem_offset)};
-    let mut frame_alloc = unsafe { mem::BootInfoFrameAllocator::init(&b.memory_map) };
+    let mut frame_alloc = unsafe { mem::BootInfoFrameAllocator::init(&b.memory_regions) };
     allocator::init_heap(&mut mapper,&mut frame_alloc).expect("heap allocation failed");
 
     #[cfg(test)]
