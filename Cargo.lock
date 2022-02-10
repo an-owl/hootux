@@ -16,9 +16,9 @@ checksum = "bef38d45163c2f1dde094a7dfd33ccf595c92905c8f8f4fdc18d06fb1037718a"
 
 [[package]]
 name = "bootloader"
-version = "0.10.11"
+version = "0.10.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d1f59a0a451dcca424e0e728277a78e6f0ebac4cf1c267ad4b9c49d53c73ee15"
+checksum = "f2d9b14b92a825ecc3b24e4c163a578af473fbba5f190bfaf48092b29b604504"
 
 [[package]]
 name = "bootloader-locator"
@@ -52,9 +52,9 @@ checksum = "e763eef8846b13b380f37dfecda401770b0ca4e56e95170237bd7c25c7db3582"
 
 [[package]]
 name = "crossbeam-queue"
-version = "0.3.3"
+version = "0.3.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b979d76c9fcb84dffc80a73f7290da0f83e4c95773494674cb44b76d13a7a110"
+checksum = "4dd435b205a4842da59efd07628f921c096bc1cc0a156835b4fa0bcb9a19bcce"
 dependencies = [
  "cfg-if",
  "crossbeam-utils",
@@ -62,30 +62,30 @@ dependencies = [
 
 [[package]]
 name = "crossbeam-utils"
-version = "0.8.6"
+version = "0.8.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cfcae03edb34f947e64acdb1c33ec169824e20657e9ecb61cef6c8c74dcb8120"
+checksum = "b5e5bed1f1c269533fa816a0a5492b3545209a205ca1a54842be180eb63a16a6"
 dependencies = [
  "cfg-if",
 ]
 
 [[package]]
 name = "futures-core"
-version = "0.3.19"
+version = "0.3.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d0c8ff0461b82559810cdccfde3215c3f373807f5e5232b71479bff7bb2583d7"
+checksum = "0c09fd04b7e4073ac7156a9539b57a484a8ea920f79c7c675d05d289ab6110d3"
 
 [[package]]
 name = "futures-task"
-version = "0.3.19"
+version = "0.3.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6ee7c6485c30167ce4dfb83ac568a849fe53274c831081476ee13e0dce1aad72"
+checksum = "57c66a976bf5909d801bbef33416c41372779507e7a6b3a5e25e4749c58f776a"
 
 [[package]]
 name = "futures-util"
-version = "0.3.19"
+version = "0.3.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d9b5cf40b47a271f77a8b1bec03ca09044d99d2372c0de244e66430761127164"
+checksum = "d8b7abd5d659d9b90c8cba917f6ec750a74e2dc23902ef9cd4cc8c8b22e6036a"
 dependencies = [
  "futures-core",
  "futures-task",
@@ -136,12 +136,18 @@ dependencies = [
 
 [[package]]
 name = "lock_api"
-version = "0.4.5"
+version = "0.4.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "712a4d093c9976e24e7dbca41db895dabcbac38eb5f4045393d17a95bdfb1109"
+checksum = "88943dd7ef4a2e5a4bfa2753aaab3013e34ce2533d1996fb18ef591e315e2b3b"
 dependencies = [
  "scopeguard",
 ]
+
+[[package]]
+name = "noto-sans-mono-bitmap"
+version = "0.1.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "643bee6617a18c64f5a72ef358a9426d3682dc768db7c320825d3d936e2232d4"
 
 [[package]]
 name = "owl_os"
@@ -153,6 +159,7 @@ dependencies = [
  "futures-util",
  "lazy_static",
  "linked_list_allocator",
+ "noto-sans-mono-bitmap",
  "pc-keyboard",
  "pic8259",
  "spin",
@@ -211,9 +218,9 @@ dependencies = [
 
 [[package]]
 name = "uart_16550"
-version = "0.2.15"
+version = "0.2.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "65ad019480ef5ff8ffe66d6f6a259cd87cf317649481394981db1739d844f374"
+checksum = "af81448a9a53c7b0f66198381f80912fd18f2c8965f9da4319e6f92e740bca5b"
 dependencies = [
  "bitflags",
  "x86_64",
@@ -233,9 +240,9 @@ checksum = "e4c2dbd44eb8b53973357e6e207e370f0c1059990df850aca1eca8947cf464f0"
 
 [[package]]
 name = "x86_64"
-version = "0.14.7"
+version = "0.14.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fb611915c917c6296d11e23f71ff1ecfe49c5766daba92cd3df52df6b58285b6"
+checksum = "958ab3202b01bc43ba2eb832102c4a487ed93151667a2289062e5f2b00058be2"
 dependencies = [
  "bit_field",
  "bitflags",

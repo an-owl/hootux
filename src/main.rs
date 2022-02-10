@@ -6,10 +6,10 @@
 #![reexport_test_harness_main = "test_main"]
 
 extern crate alloc;
-
 use owl_os::*;
 use bootloader::entry_point;
 use x86_64::VirtAddr;
+use owl_os::graphics::{BltPixel, Sprite};
 use owl_os::mem;
 use owl_os::task::{executor, Task};
 use owl_os::task::keyboard;
@@ -26,6 +26,21 @@ fn kernel_main(b: &'static mut bootloader::BootInfo) -> ! {
     let mut mapper = unsafe { mem::init(phy_mem_offset)};
     let mut frame_alloc = unsafe { mem::BootInfoFrameAllocator::init(&b.memory_regions) };
     allocator::init_heap(&mut mapper,&mut frame_alloc).expect("heap allocation failed");
+
+
+
+
+
+    if let Some(buff) = b.framebuffer.as_mut() {
+
+        let mut g = graphics::GraphicalFrame { buff };
+
+        let sprite = Sprite::from_bltpixel(1,1,&[BltPixel::new(0xff,0xff,0xff)]);
+        g.draw((1,1), sprite);
+
+    }
+
+
 
     #[cfg(test)]
     test_main();
