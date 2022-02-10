@@ -145,6 +145,19 @@ impl BltPixel{
         Ok(out)
     }
 
+    /// Creates new \[Bltpixel\] using a greyscale format
+    ///
+    /// Bytes are interpreted as a scale between high and low where a byte set to `0xff` == high
+    /// i.e. to create a greyscale image low == Black and high == White. the value of &data will be the intensity
+    pub fn new_arr_greyscale(data: &[u8]) -> Result<Vec<Self>,()> {
+
+        let mut out = Vec::with_capacity(data.len()/size_of::<BltPixel>());
+        for b in data{
+            out.push(BltPixel::new(*b,*b,*b));
+        }
+        Ok(out)
+    }
+
     //todo include colour schemes like greyscale, 1bit with foreground/background colours
 
 }
