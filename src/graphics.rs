@@ -128,7 +128,7 @@ impl BltPixel{
     /// where each pixel represented ad 3 bits
     ///
     /// Returns err(()) if data is not divisible by 3
-    pub fn new_arr_3b(data: &[u8]) -> Result<Vec<BltPixel>,()>{
+    pub fn new_arr_3b(data: &[u8]) -> Result<Vec<Self>,()>{
         //check alignment
         if (data.len() % 3) != 0 { return Err(()) }
 
@@ -142,7 +142,7 @@ impl BltPixel{
                 data[base+2],
             ))
         }
-        return Ok(out)
+        Ok(out)
     }
 
     //todo include colour schemes like greyscale, 1bit with foreground/background colours
