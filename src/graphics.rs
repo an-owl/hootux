@@ -12,6 +12,13 @@ pub struct GraphicalFrame{
 
 impl GraphicalFrame{
 
+    /// Creates new GraphicalFrame
+    pub fn new(buff: &mut FrameBuffer) -> Self {
+        Self{
+            buff,
+        }
+    }
+
     /// Render sprite to screen coords
     ///
     /// Silently returns on error
