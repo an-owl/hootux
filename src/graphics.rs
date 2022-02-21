@@ -4,8 +4,11 @@ use core::ops::{Deref, DerefMut};
 use core::slice::from_raw_parts_mut;
 use bootloader::boot_info::FrameBuffer;
 
-//pub mod vtty;
+pub mod vtty;
 
+/// Struct for graphics driver
+//todo impl Graphical sprite
+//TODO impl draw queue
 pub struct GraphicalFrame{
     pub buff: &'static mut FrameBuffer,
 }
@@ -13,7 +16,7 @@ pub struct GraphicalFrame{
 impl GraphicalFrame{
 
     /// Creates new GraphicalFrame
-    pub fn new(buff: &mut FrameBuffer) -> Self {
+    pub fn new(buff: &'static mut FrameBuffer) -> Self {
         Self{
             buff,
         }
@@ -24,7 +27,8 @@ impl GraphicalFrame{
     /// Silently returns on error
     ///
     /// Does not write into overscan region
-    pub fn draw(&mut self, coords: (usize,usize), sprite: Sprite){
+    //TODO make async
+    pub fn draw(&mut self, coords: (usize,usize), sprite: &Sprite){
 
         let (x,y) = coords;
 
@@ -51,10 +55,10 @@ impl GraphicalFrame{
         }
 
 
-        let width = self.buff.info().stride;
+        let data_width = self.buff.info().stride;
         // used to calculate index within loop  because of borrow checker
         let index = |coords: (usize,usize)| {
-            let mut i = width * coords.1; //get the start of the scan line
+            let mut i = data_width * coords.1; //get the start of the scan line
         i += coords.0; // add offset of x
 
         i
@@ -170,6 +174,7 @@ impl BltPixel{
 }
 
 /// Struct to store graphical simple data
+#[derive(Clone)]
 pub struct Sprite{
     pub height: usize,
     pub width: usize,
