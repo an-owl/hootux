@@ -1,15 +1,22 @@
 use alloc::vec::Vec;
 use core::mem::size_of;
 use core::ops::{Deref, DerefMut};
-use core::slice::from_raw_parts_mut;
+use core::slice::{from_raw_parts_mut, from_raw_parts};
 use bootloader::boot_info::FrameBuffer;
+use crate::interrupts::init_exceptions;
 
-pub mod vtty;
+//pub mod vtty;
+pub mod basic_output;
+
+
+//pub static GRAPHICS: spin::Mutex<Option<GraphicalFrame>> = spin::Mutex::new(None);
 
 /// Struct for graphics driver
 //todo impl Graphical sprite
 //TODO impl draw queue
 pub struct GraphicalFrame{
+    //TODO actually create an abstraction ofr this. idk why i thought this was a good idea
+
     pub buff: &'static mut FrameBuffer,
 }
 
@@ -65,7 +72,7 @@ impl GraphicalFrame{
         };
 
         //get pix buff
-        let pix_buff = unsafe { self.pix_buff_mut()};
+        let pix_buff = self.pix_buff_mut();
 
 
         for scan in 0..mod_h{
@@ -80,18 +87,44 @@ impl GraphicalFrame{
     /// Converts `mut &[u8]` given by self.buff.buffer() to `&[Bltpixel]`
     ///
     /// This should be safe but it probably isn't
-    // remove #allow if this works properly
-    #[allow(unused_unsafe)]
-    unsafe fn pix_buff_mut(&mut self) -> &mut [BltPixel]{
+
+    pub fn pix_buff_mut(&mut self) -> &mut [BltPixel]{
         let len = self.buff.buffer_mut().len();
         let ptr = self.buff.buffer_mut().as_ptr() as usize;
         // assert framebuffer geometry
         assert_eq!(0, len % size_of::<BltPixel>());
 
 
-        let base = &mut *(ptr as *mut BltPixel);
+        let base = unsafe {&mut *(ptr as *mut BltPixel)};
         // divide len by `size_of(BltPixel)` or buffer will be overrun
         unsafe {from_raw_parts_mut(base, len/size_of::<BltPixel>())}
+    }
+
+    pub fn pix_buff(&self) -> &[BltPixel]{
+        let len = self.buff.buffer().len();
+        let ptr = self.buff.buffer().as_ptr() as usize;
+        // assert framebuffer geometry
+        assert_eq!(0, len % size_of::<BltPixel>());
+
+
+        let base = unsafe {&mut *(ptr as *mut BltPixel)};
+        // divide len by `size_of(BltPixel)` or buffer will be overrun
+        unsafe {from_raw_parts(base, len/size_of::<BltPixel>())}
+    }
+
+    /// Scrolls the displayed image by `lines` upward
+    ///
+    /// values above `self.buff.info().vertical_resolution` will clear the screen
+    pub fn scroll_up(&mut self, lines: usize){
+        if lines > self.buff.info().vertical_resolution{
+            self.buff.buffer_mut().fill_with(||{0})
+        }
+        else {
+            let v_size = self.buff.info().vertical_resolution;
+            let start = self.index_of((0,lines));
+
+            self.pix_buff_mut().copy_within(start.., 0)
+        }
     }
 }
 

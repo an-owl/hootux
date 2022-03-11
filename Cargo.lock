@@ -94,6 +94,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "hootux"
+version = "0.1.0"
+dependencies = [
+ "bootloader",
+ "conquer-once",
+ "crossbeam-queue",
+ "futures-util",
+ "lazy_static",
+ "linked_list_allocator",
+ "noto-sans-mono-bitmap",
+ "pc-keyboard",
+ "pic8259",
+ "spin",
+ "uart_16550",
+ "volatile 0.2.7",
+ "x86_64",
+]
+
+[[package]]
 name = "json"
 version = "0.12.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -148,25 +167,6 @@ name = "noto-sans-mono-bitmap"
 version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "643bee6617a18c64f5a72ef358a9426d3682dc768db7c320825d3d936e2232d4"
-
-[[package]]
-name = "owl_os"
-version = "0.1.0"
-dependencies = [
- "bootloader",
- "conquer-once",
- "crossbeam-queue",
- "futures-util",
- "lazy_static",
- "linked_list_allocator",
- "noto-sans-mono-bitmap",
- "pc-keyboard",
- "pic8259",
- "spin",
- "uart_16550",
- "volatile 0.2.7",
- "x86_64",
-]
 
 [[package]]
 name = "pc-keyboard"

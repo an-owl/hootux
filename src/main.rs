@@ -2,18 +2,22 @@
 #![no_main]
 #![feature(const_mut_refs)]
 #![feature(custom_test_frameworks)]
-#![test_runner(owl_os::test_runner)]
+#![test_runner(hootux::test_runner)]
 #![reexport_test_harness_main = "test_main"]
 
 extern crate alloc;
-use owl_os::*;
+use hootux::*;
 use bootloader::entry_point;
+use x86_64::instructions::hlt;
 use x86_64::VirtAddr;
-use owl_os::graphics::{BltPixel, GraphicalFrame, Sprite};
-use owl_os::graphics::vtty::Vtty;
-use owl_os::mem;
-use owl_os::task::{executor, Task};
-use owl_os::task::keyboard;
+use hootux::graphics::{BltPixel, GraphicalFrame, Sprite};
+use hootux::graphics::basic_output::BasicTTY;
+//use hootux::graphics::vtty::Vtty;
+use hootux::mem;
+use hootux::task::{executor, Task};
+use hootux::task::keyboard;
+use hootux::exit_qemu;
+
 
 
 
@@ -21,27 +25,35 @@ entry_point!(kernel_main);
 #[no_mangle]
 fn kernel_main(b: &'static mut bootloader::BootInfo) -> ! {
     //initialize system
+
+    if let Some(g) = b.framebuffer.as_mut(){
+        g.buffer_mut().fill_with(||{0xff})
+    }
+
     init();
 
     //doesn't work
-    println!("hello, World!");
+    //println!("hello, World!");
+
+
 
     //initialize memory things
     let phy_mem_offset = VirtAddr::new(b.physical_memory_offset.into_option().unwrap());
+
     let mut mapper = unsafe { mem::init(phy_mem_offset)};
     let mut frame_alloc = unsafe { mem::BootInfoFrameAllocator::init(&b.memory_regions) };
     allocator::init_heap(&mut mapper,&mut frame_alloc).expect("heap allocation failed");
 
     //initialize graphics
-    let mut g: GraphicalFrame = if let Some(buff) = b.framebuffer.as_mut() {
+    if let Some(buff) = b.framebuffer.as_mut() {
         let mut g = graphics::GraphicalFrame { buff };
-        let sprite = Sprite::from_bltpixel(1,1,&[BltPixel::new(0xff,0xff,0xff)]);
-        g
-    } else { panic!("graphics not found") };
+        g.pix_buff_mut().fill_with(||{BltPixel::new(0,0,0)});
+        g.draw((0,0), &Sprite::from_bltpixel(1,1,&[BltPixel::new(255,255,255)]));
+        let mut tty = BasicTTY::new(g);
+        tty.print_str("Hello, World!");
 
-    let mut vtty = Vtty::new(g.info());
-    vtty.output_to_buff("Hello, world!");
-    vtty.render(&mut g);
+
+    } else { panic!("graphics not found") };
 
 
 
@@ -66,7 +78,7 @@ async fn thing() {
 #[cfg(not(test))]
 #[panic_handler]
 fn panic_handler(info: &core::panic::PanicInfo) -> ! {
-    println!("KERNEL PANIC\nInfo: {}", info);
+    //println!("KERNEL PANIC\nInfo: {}", info);
 
     stop()
 }
