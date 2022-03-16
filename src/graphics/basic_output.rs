@@ -52,7 +52,10 @@ impl BasicTTY{
     pub fn print_char(&mut self, c: char){
         use noto_sans_mono_bitmap::*;
         match c {
-            '\n' => self.newline(),
+            '\n' => {
+                self.newline();
+                self.carriage_return();
+            }
             '\r' => self.carriage_return(),
             c=> {
 
@@ -96,6 +99,8 @@ impl BasicTTY{
         if self.cursor_y == self.cursor_y_max {
             let l = self.char_height;
             self.framebuffer.scroll_up(l)
+        } else {
+            self.cursor_y += 1;
         }
     }
 
