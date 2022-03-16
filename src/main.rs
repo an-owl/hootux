@@ -54,25 +54,27 @@ fn kernel_main(b: &'static mut bootloader::BootInfo) -> ! {
         let mut g = graphics::GraphicalFrame { buff };
         g.pix_buff_mut().fill_with(||{BltPixel::new(0,0,0)});
         let mut tty = BasicTTY::new(g);
-        tty.print_str("Hello, World!");
-
-        serial_println!("lock t");
-        let t = spin::Mutex::new(2);
-        let y = t.lock();
-        drop(y);
-        serial_println!("unlocked t");
 
         unsafe{
             hootux::graphics::basic_output::WRITER = spin::Mutex::new(Some(tty));
         }
 
 
-    } else { panic!("graphics not found") };
+    };
 
-    print!("cock lmao");
+    println!("Starting Owl_OS");
+    println!(r#" |   |   \---/   "#);
+    println!(r#"\    |  {{\OvO/}}  "#);
+    println!(r#"\    |  '/_o_\'  "#);
+    println!(r#" | _  >===;=;===="#);
+    println!(r#" |( )/ "#);
+    println!(r#" | " | "#);
+    println!(r#" /    \"#);
 
     #[cfg(test)]
     test_main();
+
+    stop();
 
     let mut executor = executor::Executor::new();
     executor.spawn(Task::new(thing()));
