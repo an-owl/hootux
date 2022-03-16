@@ -119,7 +119,6 @@ impl fmt::Write for BasicTTY{
 }
 
 pub fn _print(args: core::fmt::Arguments){
-    serial_println!("printing");
     without_interrupts(||
         {
             if let Some(tty) = unsafe { WRITER.lock().as_mut() }{
