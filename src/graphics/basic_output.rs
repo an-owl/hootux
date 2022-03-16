@@ -1,7 +1,11 @@
+use core::fmt;
+use core::fmt::{Arguments, Write};
+use x86_64::instructions::interrupts::without_interrupts;
+use crate::serial_println;
 use super::*;
 
 //TODO add scheduled rewrite from buffer
-pub static WRITER: spin::Mutex<Option<BasicTTY>> = spin::Mutex::new(None);
+pub static mut WRITER: spin::Mutex<Option<BasicTTY>> = spin::Mutex::new(None);
 
 //assume framebuffer is always `Some`
 pub struct BasicTTY{
@@ -68,7 +72,8 @@ impl BasicTTY{
                         &*BltPixel::new_arr_greyscale(&hold).unwrap()
                     );
 
-                    self.framebuffer.draw((self.cursor_x * self.char_width, self.cursor_y * self.char_height), &char_sprite)
+                    self.framebuffer.draw((self.cursor_x * self.char_width, self.cursor_y * self.char_height), &char_sprite);
+                    self.cursor_x += 1;
                 }
             }
         }
@@ -99,4 +104,33 @@ impl BasicTTY{
     pub fn carriage_return(&mut self){
         self.cursor_x = 0
     }
+}
+
+impl fmt::Write for BasicTTY{
+    fn write_str(&mut self, s: &str) -> fmt::Result {
+        self.print_str(s);
+        Ok(())
+    }
+}
+
+pub fn _print(args: core::fmt::Arguments){
+    serial_println!("printing");
+    without_interrupts(||
+        {
+            if let Some(tty) = unsafe { WRITER.lock().as_mut() }{
+                tty.write_fmt(args);
+            }
+        }
+    )
+}
+
+#[macro_export]
+macro_rules! print {
+    ($($arg:tt)*) => ($crate::graphics::basic_output::_print(format_args!($($arg)*)));
+}
+
+#[macro_export]
+macro_rules! println {
+    () => ($crate::print!("\n"));
+    ($($arg:tt)*) => ($crate::print!("{}\n", format_args!($($arg)*)));
 }

@@ -29,7 +29,7 @@ fn build_bootloader() -> Result<(),()> {
 
     //Kernel target
     let target_path = kernel_manifest.parent().unwrap()
-        .join("target").join(TARGET).join("release").join("owl_os");
+        .join("target").join(TARGET).join("release").join("hootux");
 
     let mut build_cmd = Command::new("/usr/bin/cargo");
     build_cmd.current_dir(&bootloader_manifest.parent().unwrap());

@@ -120,7 +120,6 @@ impl GraphicalFrame{
             self.buff.buffer_mut().fill_with(||{0})
         }
         else {
-            let v_size = self.buff.info().vertical_resolution;
             let start = self.index_of((0,lines));
 
             self.pix_buff_mut().copy_within(start.., 0)
@@ -149,9 +148,9 @@ impl Deref for GraphicalFrame{
 #[repr(C)]
 #[derive(Copy,Clone)]
 pub struct BltPixel {
-    pub red: u8,
-    pub green: u8,
     pub blue: u8,
+    pub green: u8,
+    pub red: u8,
     _reserved: u8,
 
 }
