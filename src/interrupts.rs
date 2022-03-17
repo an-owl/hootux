@@ -31,10 +31,12 @@ pub fn init_exceptions() {
 }
 
 extern "x86-interrupt" fn except_breakpoint(stack_frame: InterruptStackFrame) {
-    println!("Breakpoint at: {:#?}", stack_frame);
+    println!("Breakpoint, details\n{:#?}", stack_frame);
 }
 
 extern "x86-interrupt" fn except_double(stack: InterruptStackFrame, _err: u64) -> ! {
+    println!("***DOUBLE FAULT***");
+    println!("{:#?}",stack);
     panic!("EXCEPTION: DOUBLE FAULT\n{:#?}\n", stack);
 }
 
@@ -65,9 +67,7 @@ extern "x86-interrupt" fn except_page(sf: InterruptStackFrame, e: PageFaultError
     println!("At address {:?}",Cr2::read());
     println!("Error code {:?}",e);
     println!("{:#?}",sf);
-    loop {
-        x86_64::instructions::hlt();
-    }
+    panic!();
 }
 
 extern "x86-interrupt" fn except_general_protection(sf: InterruptStackFrame, e: u64){
