@@ -21,6 +21,7 @@ lazy_static! {
         idt[InterruptIndex::Timer.as_usize()].set_handler_fn(timer_interrupt_handler);
         idt[InterruptIndex::Keyboard.as_usize()].set_handler_fn(keyboard_interrupt_handler);
         idt.page_fault.set_handler_fn(except_page);
+        idt.general_protection_fault.set_handler_fn(except_general_protection);
         idt
     };
 }
@@ -67,6 +68,13 @@ extern "x86-interrupt" fn except_page(sf: InterruptStackFrame, e: PageFaultError
     loop {
         x86_64::instructions::hlt();
     }
+}
+
+extern "x86-interrupt" fn except_general_protection(sf: InterruptStackFrame, e: u64){
+    println!("GENERAL PROTECTION FAULT");
+    println!("error: {}", e);
+    println!("{:#?}",sf);
+    panic!();
 }
 
 
