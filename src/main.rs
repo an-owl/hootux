@@ -74,21 +74,9 @@ fn kernel_main(b: &'static mut bootloader::BootInfo) -> ! {
     #[cfg(test)]
     test_main();
 
-    stop();
-
     let mut executor = executor::Executor::new();
-    executor.spawn(Task::new(thing()));
     executor.spawn(Task::new(keyboard::print_key()));
     executor.run();
-}
-
-async fn async_number() -> u32 {
-    42069
-}
-
-async fn thing() {
-    let number = async_number().await;
-    println!("async number: {}", number)
 }
 
 #[cfg(not(test))]
