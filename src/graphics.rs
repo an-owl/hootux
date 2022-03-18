@@ -10,7 +10,7 @@ pub mod basic_output;
 
 /// Struct for graphics driver
 //todo impl Graphical sprite
-//TODO impl draw queue
+//what that does that mean? ^^
 pub struct GraphicalFrame{
     //TODO actually create an abstraction ofr this. idk why i thought this was a good idea
 
@@ -121,6 +121,11 @@ impl GraphicalFrame{
 
             self.pix_buff_mut().copy_within(start.., 0)
         }
+    }
+
+    /// Clears screen setting all pixels to black
+    pub fn clear(&mut self){
+        self.pix_buff_mut().fill_with(||{BltPixel::new(0,0,0)})
     }
 }
 
