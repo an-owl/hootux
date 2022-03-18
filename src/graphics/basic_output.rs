@@ -1,7 +1,6 @@
 use core::fmt;
-use core::fmt::{Arguments, Write};
+use core::fmt::Write;
 use x86_64::instructions::interrupts::without_interrupts;
-use crate::serial_println;
 use super::*;
 
 //TODO add scheduled rewrite from buffer
@@ -126,7 +125,7 @@ pub fn _print(args: core::fmt::Arguments){
     without_interrupts(||
         {
             if let Some(tty) = unsafe { WRITER.lock().as_mut() }{
-                tty.write_fmt(args);
+                tty.write_fmt(args).unwrap() //does not return `err()`
             }
         }
     )

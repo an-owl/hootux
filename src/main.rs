@@ -7,14 +7,11 @@
 
 extern crate alloc;
 
-use core::fmt::Write;
 use hootux::*;
 use bootloader::entry_point;
-use x86_64::instructions::hlt;
 use x86_64::VirtAddr;
 use hootux::graphics::{BltPixel, GraphicalFrame, Sprite};
 use hootux::graphics::basic_output::BasicTTY;
-//use hootux::graphics::vtty::Vtty;
 use hootux::mem;
 use hootux::task::{executor, Task};
 use hootux::task::keyboard;

@@ -3,9 +3,6 @@ use core::mem::size_of;
 use core::ops::{Deref, DerefMut};
 use core::slice::{from_raw_parts_mut, from_raw_parts};
 use bootloader::boot_info::FrameBuffer;
-use crate::interrupts::init_exceptions;
-
-//pub mod vtty;
 pub mod basic_output;
 
 

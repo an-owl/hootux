@@ -41,7 +41,6 @@ extern "x86-interrupt" fn except_double(stack: InterruptStackFrame, _err: u64) -
 }
 
 extern "x86-interrupt" fn timer_interrupt_handler(_sf: InterruptStackFrame) {
-    //print!(".");
     unsafe {
         PICS.lock()
             .notify_end_of_interrupt(InterruptIndex::Timer.as_u8());
