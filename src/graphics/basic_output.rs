@@ -3,7 +3,7 @@ use core::fmt::Write;
 use x86_64::instructions::interrupts::without_interrupts;
 use super::*;
 
-//TODO add scheduled rewrite from buffer
+//TODO add scheduled write from buffer
 pub static mut WRITER: spin::Mutex<Option<BasicTTY>> = spin::Mutex::new(None);
 
 //assume framebuffer is always `Some`
