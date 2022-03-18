@@ -68,6 +68,10 @@ impl BasicTTY{
                     for i in bitmap.bitmap(){
                         hold.extend_from_slice(i)
                     }
+                    if self.cursor_x >= self.cursor_x_max {
+                        self.newline();
+                        self.carriage_return();
+                    }
 
                     let char_sprite = Sprite::from_bltpixel(
                         bitmap.height(),
