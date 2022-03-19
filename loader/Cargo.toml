@@ -8,3 +8,4 @@ edition = "2021"
 [dependencies]
 bootloader-locator = "0.0.4"
 locate-cargo-manifest = "0.2.2"
+runner-utils = "0.0.2"

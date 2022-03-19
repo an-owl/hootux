@@ -1,48 +1,112 @@
-use std::process::Command;
+extern crate core;
 
-const TARGET: &str = "x86_64-owl-os-build";
+use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
+use std::time::Duration;
 
-fn main(){
-    build_kernel_bin().expect("failed to build kernel");
+const OVMF_DIR: &str = "/usr/share/edk2-ovmf/x64/";
+const OVMF_BIN: &str = "OVMF_CODE.fd";
 
-    build_bootloader().expect("failed to create bootable images");
-}
+const RUN_ARGS: &[&str] = &[
+    "--no-reboot",
+    "-serial", "stdio",
+    "-d", "int",
+    "--no-reboot"
+];
 
-fn build_kernel_bin() -> Result<(),()> {
-    let mut build_cmd = Command::new("/usr/bin/cargo");
-    build_cmd.arg("+nightly");
-    build_cmd.arg("build");
-    build_cmd.arg("--release");
-    build_cmd.arg("-Zbuild-std=core,alloc");
-    build_cmd.arg("--target").arg(format!("{}.json",TARGET));
+const TEST_ARGS: &[&str] = &[
+    "-device",
+    "isa-debug-exit,iobase=0xf4,iosize=0x04",
+    "-serial",
+    "stdio",
+    "-display",
+    "none",
+    "--no-reboot",
+];
+const TEST_TIMEOUT: u64 = 10;
 
-    if build_cmd.status().is_err(){
-        println!("failed to build");
-        return Err(());
+
+fn main() {
+    let mut args = std::env::args().skip(1); // skip executable name
+
+    //gather args
+    let kernel_binary_path = {
+        let path = PathBuf::from(args.next().unwrap());
+        path.canonicalize().unwrap()
+    };
+
+    //todo add proper option parsing to enable more capabilities
+    // maybe use env vars instead
+    let no_boot = if let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--no-run" => true,
+            other => panic!("unexpected argument `{}`", other),
+        }
+    } else {
+        false
+    };
+
+    //build image
+    let efi = create_images(&kernel_binary_path);
+    if no_boot {
+        println!("efi image created at {}",efi.display());
+        return
     }
-    Ok(())
+
+    let mut qemu_cmd = Command::new("qemu-system-x86_64");
+    qemu_cmd.arg("-bios").arg(format!("{}{}",OVMF_DIR,OVMF_BIN));
+    qemu_cmd.arg("-kernel").arg(format!("{}",efi.display()));
+
+    let binary_kind = runner_utils::binary_kind(&kernel_binary_path);
+
+    //run
+    if binary_kind.is_test(){
+        qemu_cmd.args(TEST_ARGS);
+        qemu_cmd.stdout(Stdio::inherit());
+        qemu_cmd.stderr(Stdio::inherit());
+
+        let exit_status = runner_utils::run_with_timeout(
+            &mut qemu_cmd,
+            Duration::from_secs(TEST_TIMEOUT)).unwrap();
+
+        match exit_status.code(){
+            Some(33) => {}
+            e => panic!("Failed: exit code: {:?}", e)
+        }
+    } else {
+        qemu_cmd.args(RUN_ARGS);
+        let exit_status = qemu_cmd.status().unwrap();
+        if !exit_status.success(){
+            std::process::exit(exit_status.code().unwrap_or(1));
+        }
+    }
 }
 
-fn build_bootloader() -> Result<(),()> {
-    let bootloader_manifest = bootloader_locator::locate_bootloader("bootloader").expect("failed to locate bootloader manifest");
-    let kernel_manifest = locate_cargo_manifest::locate_manifest().expect("failed to locate kernel manifest");
+fn create_images(kernel_binary_path: &Path) -> PathBuf {
+    //gather paths
+    let bootloader_manifest_path = bootloader_locator::locate_bootloader("bootloader").unwrap();
+    let kernel_manifest_path = locate_cargo_manifest::locate_manifest().unwrap();
 
-    //Kernel target
-    let target_path = kernel_manifest.parent().unwrap()
-        .join("target").join(TARGET).join("release").join("hootux");
+    //build images
+    let mut img_cmd = Command::new("cargo");
+    img_cmd.current_dir(bootloader_manifest_path.parent().unwrap());
+    img_cmd.arg("builder");
+    img_cmd.arg("--kernel-manifest").arg(&kernel_manifest_path);
+    img_cmd.arg("--kernel-binary").arg(&kernel_binary_path);
+    img_cmd.arg("--out-dir").arg(kernel_binary_path.parent().unwrap().parent().unwrap()); //this dir should be target/$TARGET/
 
-    let mut build_cmd = Command::new("/usr/bin/cargo");
-    build_cmd.current_dir(&bootloader_manifest.parent().unwrap());
-    build_cmd.arg("builder");
-    build_cmd.arg("--kernel-manifest").arg(&kernel_manifest);
-    build_cmd.arg("--kernel-binary").arg(&target_path);
-    build_cmd.arg("--out-dir").arg("/home/an_owl/source/rust/owl_os/target/x86_64-owl-os-build/");
-
-    if build_cmd.status().is_err(){
-        println!("failed to create bootable images");
-        return Err(())
+    if !img_cmd.status().unwrap().success(){
+        panic!("build failed");
     }
 
-    Ok(())
-}
+    //return .efi
+    let kernel_binary_name = kernel_binary_path.file_name().unwrap().to_str().unwrap();
+    let efi = kernel_binary_path.parent().unwrap().parent().unwrap().join(format!("boot-uefi-{}.efi",kernel_binary_name));
+    println!("{},",efi.display());
 
+    if !efi.exists(){
+        panic!("Disk image not found")
+    }
+
+    efi
+}
