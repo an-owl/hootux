@@ -10,7 +10,6 @@ extern crate alloc;
 use hootux::*;
 use bootloader::entry_point;
 use x86_64::VirtAddr;
-use hootux::graphics::{BltPixel, GraphicalFrame, Sprite};
 use hootux::graphics::basic_output::BasicTTY;
 use hootux::mem;
 use hootux::task::{executor, Task};
@@ -31,11 +30,6 @@ fn kernel_main(b: &'static mut bootloader::BootInfo) -> ! {
 
     init();
 
-    //doesn't work
-    //println!("hello, World!");
-
-
-
     //initialize memory things
     let phy_mem_offset = VirtAddr::new(b.physical_memory_offset.into_option().unwrap());
 
@@ -43,13 +37,11 @@ fn kernel_main(b: &'static mut bootloader::BootInfo) -> ! {
     let mut frame_alloc = unsafe { mem::BootInfoFrameAllocator::init(&b.memory_regions) };
     allocator::init_heap(&mut mapper,&mut frame_alloc).expect("heap allocation failed");
 
-
-    serial_println!("init graphics");
     //initialize graphics
     if let Some(buff) = b.framebuffer.as_mut() {
         let mut g = graphics::GraphicalFrame { buff };
-        g.pix_buff_mut().fill_with(||{BltPixel::new(0,0,0)});
-        let mut tty = BasicTTY::new(g);
+        g.clear();
+        let tty = BasicTTY::new(g);
 
         unsafe{
             hootux::graphics::basic_output::WRITER = spin::Mutex::new(Some(tty));
@@ -58,7 +50,7 @@ fn kernel_main(b: &'static mut bootloader::BootInfo) -> ! {
 
     };
 
-    println!("Starting Owl_OS");
+    println!("Starting Hootux");
     println!(r#" |   |   \---/   "#);
     println!(r#"\    |  {{\OvO/}}  "#);
     println!(r#"\    |  '/_o_\'  "#);
