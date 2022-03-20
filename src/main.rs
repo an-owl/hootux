@@ -16,7 +16,6 @@ use hootux::mem;
 use hootux::task::{executor, Task};
 use hootux::task::keyboard;
 use hootux::exit_qemu;
-use hootux::vga_text::WRITER;
 
 
 
