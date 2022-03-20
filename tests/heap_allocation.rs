@@ -1,7 +1,7 @@
 #![no_std]
 #![no_main]
 #![feature(custom_test_frameworks)]
-#![test_runner(owl_os::test_runner)]
+#![test_runner(hootux::test_runner)]
 #![reexport_test_harness_main = "test_main"]
 
 extern crate alloc;
@@ -9,7 +9,7 @@ extern crate alloc;
 use alloc::boxed::Box;
 use bootloader::{BootInfo, entry_point};
 use core::panic::PanicInfo;
-use owl_os::*;
+use hootux::*;
 
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {
@@ -18,17 +18,17 @@ fn panic(info: &PanicInfo) -> ! {
 
 entry_point!(main);
 #[no_mangle]
-fn main(b: &'static BootInfo) -> ! {
-    use owl_os::allocator;
-    use owl_os::mem::{self, BootInfoFrameAllocator};
+fn main(b: &'static mut BootInfo) -> ! {
+    use hootux::allocator;
+    use hootux::mem::{self, BootInfoFrameAllocator};
     use x86_64::VirtAddr;
 
     serial_println!("test");
 
     init();
-    let phy_mem_offset = VirtAddr::new(b.physical_memory_offset);
+    let phy_mem_offset = VirtAddr::new(b.physical_memory_offset.into_option().unwrap());
     let mut mapper = unsafe { mem::init(phy_mem_offset)};
-    let mut frame_alloc = unsafe { mem::BootInfoFrameAllocator::init(&b.memory_map) };
+    let mut frame_alloc = unsafe { mem::BootInfoFrameAllocator::init(&b.memory_regions) };
     allocator::init_heap(&mut mapper,&mut frame_alloc).expect("heap allocation failed");
 
     test_main();
@@ -57,7 +57,7 @@ fn realloc(){
 
 #[test_case]
 fn dealloc(){
-    for i in 0..core::mem::size_of::<Box<usize>>()/owl_os::allocator::HEAP_SIZE{
+    for i in 0..core::mem::size_of::<Box<usize>>()/hootux::allocator::HEAP_SIZE{
         let x = Box::new(i);
         serial_println!("{}",i);
         assert_eq!(*x, i);
@@ -67,7 +67,7 @@ fn dealloc(){
 #[test_case]
 fn many_boxes_long_lived() {
     let long_lived = Box::new(1); // new
-    for i in 0..owl_os::allocator::HEAP_SIZE {
+    for i in 0..hootux::allocator::HEAP_SIZE {
         let x = Box::new(i);
         assert_eq!(*x, i);
     }

@@ -1,10 +1,12 @@
 #![no_std]
 #![no_main]
 #![feature(custom_test_frameworks)]
-#![test_runner(owl_os::test_runner)]
+#![test_runner(hootux::test_runner)]
 #![reexport_test_harness_main = "test_main"]
 
-use owl_os::println;
+use hootux::println;
+
+// this test will run "0 tests" but if it runs it works
 
 #[no_mangle]
 pub extern "C" fn _start() -> ! {
@@ -14,7 +16,7 @@ pub extern "C" fn _start() -> ! {
 
 #[panic_handler]
 fn panic(info: &core::panic::PanicInfo) -> ! {
-    owl_os::test_panic(info);
+    hootux::test_panic(info);
 }
 
 #[test_case]

@@ -70,7 +70,7 @@ entry_point!(kernel_test_main);
 
 #[cfg(test)]
 #[no_mangle]
-fn kernel_test_main(_b: &'static BootInfo) -> ! {
+fn kernel_test_main(_b: &'static mut BootInfo) -> ! {
     init();
     test_main();
     loop {x86_64::instructions::hlt()}

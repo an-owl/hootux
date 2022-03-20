@@ -70,7 +70,7 @@ fn kernel_main(b: &'static mut bootloader::BootInfo) -> ! {
 #[cfg(not(test))]
 #[panic_handler]
 fn panic_handler(info: &core::panic::PanicInfo) -> ! {
-    //println!("KERNEL PANIC\nInfo: {}", info);
+    println!("KERNEL PANIC\nInfo: {}", info);
 
     stop()
 }
