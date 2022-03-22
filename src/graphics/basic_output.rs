@@ -34,7 +34,7 @@ impl BasicTTY{
         let char_height = Self::FONT_SIZE.val();
 
         let cursor_x_max = buff.info().horizontal_resolution / char_width;
-        let cursor_y_max = buff.info().vertical_resolution / char_height;
+        let cursor_y_max = (buff.info().vertical_resolution / char_height) - 1;
 
         Self{
             framebuffer: buff,
