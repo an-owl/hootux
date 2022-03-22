@@ -112,6 +112,10 @@ impl BasicTTY{
     pub fn carriage_return(&mut self){
         self.cursor_x = 0
     }
+
+    fn clear(&mut self){
+        self.framebuffer.pix_buff_mut().fill_with(||{BltPixel::new(0,0,0)});
+    }
 }
 
 impl fmt::Write for BasicTTY{
@@ -131,6 +135,16 @@ pub fn _print(args: core::fmt::Arguments){
     )
 }
 
+pub fn _clear(){
+    without_interrupts(||
+        {
+            if let Some(tty) = unsafe { WRITER.lock().as_mut() }{
+                tty.clear()
+            }
+        }
+    )
+}
+
 #[macro_export]
 macro_rules! print {
     ($($arg:tt)*) => ($crate::graphics::basic_output::_print(format_args!($($arg)*)));
@@ -140,4 +154,9 @@ macro_rules! print {
 macro_rules! println {
     () => ($crate::print!("\n"));
     ($($arg:tt)*) => ($crate::print!("{}\n", format_args!($($arg)*)));
+}
+
+#[macro_export]
+macro_rules! clear{
+    () => ($crate::graphics::basic_output::_clear());
 }
