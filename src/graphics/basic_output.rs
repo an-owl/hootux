@@ -115,6 +115,8 @@ impl BasicTTY{
 
     fn clear(&mut self){
         self.framebuffer.pix_buff_mut().fill_with(||{BltPixel::new(0,0,0)});
+        self.cursor_x = 0;
+        self.cursor_y = 0;
     }
 }
 
