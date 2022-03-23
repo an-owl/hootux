@@ -1,6 +1,11 @@
-use x86_64::{structures::paging::PageTable,VirtAddr,PhysAddr};
-use x86_64::structures::paging::{FrameAllocator, OffsetPageTable, PhysFrame, Size4KiB};
+use alloc::boxed::Box;
+use x86_64::{structures::paging::PageTable, VirtAddr, PhysAddr};
+use x86_64::structures::paging::{FrameAllocator, Mapper, OffsetPageTable, Page, PageTableFlags, PhysFrame, Size4KiB};
 use bootloader::boot_info::{MemoryRegion, MemoryRegionKind};
+use x86_64::structures::paging::frame::PhysFrameRangeInclusive;
+use x86_64::structures::paging::mapper::MappedFrame::Size4KiB;
+use x86_64::structures::paging::page::PageRangeInclusive;
+use crate::{print, println};
 
 
 /// A FrameAllocator that returns usable frames from the bootloader's memory map.
@@ -75,4 +80,137 @@ unsafe fn active_l4_table(physical_memory_offset: VirtAddr) -> &'static mut Page
 pub unsafe fn init(offset: VirtAddr) -> OffsetPageTable<'static> {
     let l4 = active_l4_table(offset);
     OffsetPageTable::new(l4,offset)
+}
+
+
+/// This is here to break safety and should only be used under very
+/// specific circumstances. Usage of this struct should be avoided
+/// unless absolutely necessary.
+///
+/// Stores
+pub(crate) struct VeryUnsafeFrameAllocator{
+    addr: Option<PhysAddr>,
+    virt_base: Option<VirtAddr>,
+    advanced: usize
+}
+
+impl VeryUnsafeFrameAllocator {
+    /// Creates an instance of VeryUnsafeFrameAllocator
+    ///
+    /// This function is unsafe because it god damn well should be
+    pub unsafe fn new() -> Self{
+        Self{
+            addr: None,
+            virt_base: None,
+            advanced: 0, // ((this - 1) * 4096) + addr = end frame address
+        }
+    }
+
+
+    /// Sets physical addr if original VeryUnsafeFrameAllocator is dropped
+    ///
+    /// This function will panic if addr has already been set
+    ///
+    /// This function is unsafe because it potentially violates memory safety
+    pub unsafe fn set_geom(&mut self, addr: PhysAddr, advance: usize) {
+        if let None = self.addr {
+            self.addr = Some(addr);
+            self.advanced = advance
+        } else { panic!("Cannot reassign physical address") }
+    }
+
+    /// Allocates a range of physical frames to virtual memory via `self.advance`
+    ///
+    /// this works via calling `self.advance` do its caveats apply
+    pub unsafe fn map_frames_from_range(&mut self, phy_addr_range: PhysFrameRangeInclusive, mapper: &mut OffsetPageTable){
+
+        self.set_geom(phy_addr,0);
+
+        for frame in phy_addr_range{
+            self.advance(frame.start_address(),mapper)
+        }
+    }
+
+    /// Maps a specified physical frame to a virtual page.
+    /// Sets self.addr to an address with the last frame allocated
+    ///
+
+    pub unsafe fn get_frame(&mut self, phy_addr: PhysAddr, mapper: &mut OffsetPageTable) -> Option<VirtAddr> {
+        // be careful with this
+
+        self.set_geom(phy_addr, 0);
+
+        self.advance(phy_addr,mapper)
+    }
+
+    /// Allocates memory by calling mapper.map_to
+    ///
+    /// In theory this only needs to be used to access memory written
+    /// to by the firmware as such the writable bit is unset
+    ///
+    /// ##Panics
+    /// this function will panic if it exceeds 2Mib of allocations
+    /// because it cannot guarantee that the next page is free
+    ///
+    /// ##Saftey
+    /// This function is unsafe because it violates memory safety
+    pub unsafe fn advance(&mut self, phy_addr: PhysAddr, mapper: &mut OffsetPageTable ) -> Option<VirtAddr> {
+
+        return if let Some(page) = Self::find_unused_high_half(mapper) {
+            mapper.map_to(
+                page,
+                PhysFrame::containing_address(phy_addr),
+                (PageTableFlags::PRESENT | PageTableFlags::NO_EXECUTE),
+                self
+            );
+            self.addr(None);
+            Some(page.start_address())
+
+        } else {
+            None
+        }
+    }
+
+    /// Unmaps Virtual page
+    ///
+    /// This function is unsafe because it can be used to unmap
+    /// arbitrary Virtual memory
+    pub unsafe fn dealloc_page(page: Page, mapper: &mut OffsetPageTable){
+        mapper.unmap(page);
+    }
+
+    /// Unmaps a range of Virtual pages
+    ///
+    /// This function is unsafe because it can be used to unmap
+    /// arbitrary Virtual memory
+    pub unsafe fn dealloc_pages(pages: PageRangeInclusive, mapper: &mut OffsetPageTable){
+        for page in pages{
+            mapper.unmap(page)
+        }
+    }
+
+    /// Searches fo an unused page within the high half of memory
+    ///
+    /// currently only scans for unused L3 page tables
+    fn find_unused_high_half(mapper: &mut OffsetPageTable) -> Option<Page> {
+        // todo make this better by traversing to L1 page tables
+        for (e,p3) in mapper.level_4_table().iter().enumerate().skip(255) {
+            if p3.is_unused() {
+                return Some(Page::containing_address(VirtAddr::new((e << 39) as u64))); //conversion into 512GiB
+            }
+        }
+        return None
+    }
+}
+
+unsafe impl FrameAllocator<Size4KiB> for VeryUnsafeFrameAllocator{
+    //jesus christ this is bad
+    //be careful with this
+    fn allocate_frame(&mut self) -> Option<PhysFrame<Size4KiB>> {
+        println!("allocating {}", self.addr);
+        let frame: PhysFrame<Size4KiB> = PhysFrame::containing_address((self.addr.expect("VeryUnsafeFrameAllocator failed addr not set") + (4096 * self.advanced)));
+        self.advanced += 1;
+        Some(frame)
+    }
+
 }
