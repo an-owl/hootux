@@ -71,11 +71,11 @@ extern "x86-interrupt" fn keyboard_interrupt_handler(_sf: InterruptStackFrame) {
 extern "x86-interrupt" fn except_page(sf: InterruptStackFrame, e: PageFaultErrorCode){
     use x86_64::registers::control::Cr2;
 
-    println!("EXCEPTION: PAGE FAULT");
+    println!("*EXCEPTION: PAGE FAULT*\n");
     println!("At address {:?}",Cr2::read());
-    println!("Error code {:?}",e);
+    println!("Error code {:?}\n",e);
     println!("{:#?}",sf);
-    panic!();
+    panic!("page fault");
 }
 
 extern "x86-interrupt" fn except_general_protection(sf: InterruptStackFrame, e: u64){
