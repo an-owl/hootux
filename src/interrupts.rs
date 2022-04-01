@@ -15,14 +15,21 @@ lazy_static! {
     static ref IDT: InterruptDescriptorTable = {
         let mut idt = InterruptDescriptorTable::new();
         idt.breakpoint.set_handler_fn(except_breakpoint);
+        // these unsafe blocks set alternate stack addresses ofr interrupts
         unsafe {
             idt.double_fault
                 .set_handler_fn(except_double)
                 .set_stack_index(gdt::DOUBLE_FAULT_IST_INDEX);
         }
+
+        unsafe {
+            idt.page_fault
+                .set_handler_fn(except_page)
+                .set_stack_index(gdt::DOUBLE_FAULT_IST_INDEX);
+        }
+
         idt[InterruptIndex::Timer.as_usize()].set_handler_fn(timer_interrupt_handler);
         idt[InterruptIndex::Keyboard.as_usize()].set_handler_fn(keyboard_interrupt_handler);
-        idt.page_fault.set_handler_fn(except_page);
         idt.general_protection_fault.set_handler_fn(except_general_protection);
         idt
     };
