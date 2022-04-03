@@ -7,7 +7,7 @@
 //for interrupts.rs
 #![feature(abi_x86_interrupt)]
 #![feature(alloc_error_handler)]
-
+#![feature(inline_const)]
 extern crate alloc;
 
 pub mod gdt;
