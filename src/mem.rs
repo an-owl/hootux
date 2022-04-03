@@ -1,11 +1,8 @@
-use alloc::boxed::Box;
 use x86_64::{structures::paging::PageTable, VirtAddr, PhysAddr};
 use x86_64::structures::paging::{FrameAllocator, Mapper, OffsetPageTable, Page, PageTableFlags, PhysFrame, Size4KiB};
 use bootloader::boot_info::{MemoryRegion, MemoryRegionKind};
 use x86_64::structures::paging::frame::PhysFrameRangeInclusive;
-use x86_64::structures::paging::mapper::MappedFrame::Size4KiB;
 use x86_64::structures::paging::page::PageRangeInclusive;
-use crate::{print, println};
 
 
 /// A FrameAllocator that returns usable frames from the bootloader's memory map.
@@ -88,12 +85,14 @@ pub unsafe fn init(offset: VirtAddr) -> OffsetPageTable<'static> {
 /// unless absolutely necessary.
 ///
 /// Stores
+#[allow(dead_code)]
 pub(crate) struct VeryUnsafeFrameAllocator{
     addr: Option<PhysAddr>,
     virt_base: Option<VirtAddr>,
     advanced: usize
 }
 
+#[allow(dead_code)]
 impl VeryUnsafeFrameAllocator {
     /// Creates an instance of VeryUnsafeFrameAllocator
     ///
@@ -119,16 +118,26 @@ impl VeryUnsafeFrameAllocator {
         } else { panic!("Cannot reassign physical address") }
     }
 
+    pub fn get_advance(&self) -> usize{
+        self.advanced
+    }
+
     /// Allocates a range of physical frames to virtual memory via `self.advance`
     ///
     /// this works via calling `self.advance` do its caveats apply
-    pub unsafe fn map_frames_from_range(&mut self, phy_addr_range: PhysFrameRangeInclusive, mapper: &mut OffsetPageTable){
+    pub unsafe fn map_frames_from_range(&mut self, phy_addr_range: PhysFrameRangeInclusive, mapper: &mut OffsetPageTable) -> Option<VirtAddr>{
 
-        self.set_geom(phy_addr,0);
+        self.set_geom(phy_addr_range.start.start_address(),0);
+
+        let mut virt_addr_base = None;
 
         for frame in phy_addr_range{
-            self.advance(frame.start_address(),mapper)
+
+            if let None = virt_addr_base {
+                virt_addr_base = self.advance(frame.start_address(), mapper);
+            } else { self.advance(frame.start_address(), mapper); }
         }
+        virt_addr_base
     }
 
     /// Maps a specified physical frame to a virtual page.
@@ -160,10 +169,10 @@ impl VeryUnsafeFrameAllocator {
             mapper.map_to(
                 page,
                 PhysFrame::containing_address(phy_addr),
-                (PageTableFlags::PRESENT | PageTableFlags::NO_EXECUTE),
+                PageTableFlags::PRESENT | PageTableFlags::NO_EXECUTE,
                 self
-            );
-            self.addr(None);
+            ).unwrap().flush();
+            self.addr = None;
             Some(page.start_address())
 
         } else {
@@ -176,7 +185,7 @@ impl VeryUnsafeFrameAllocator {
     /// This function is unsafe because it can be used to unmap
     /// arbitrary Virtual memory
     pub unsafe fn dealloc_page(page: Page, mapper: &mut OffsetPageTable){
-        mapper.unmap(page);
+        mapper.unmap(page).unwrap().1.flush();
     }
 
     /// Unmaps a range of Virtual pages
@@ -185,7 +194,7 @@ impl VeryUnsafeFrameAllocator {
     /// arbitrary Virtual memory
     pub unsafe fn dealloc_pages(pages: PageRangeInclusive, mapper: &mut OffsetPageTable){
         for page in pages{
-            mapper.unmap(page)
+            mapper.unmap(page).unwrap().1.flush();
         }
     }
 
@@ -207,8 +216,7 @@ unsafe impl FrameAllocator<Size4KiB> for VeryUnsafeFrameAllocator{
     //jesus christ this is bad
     //be careful with this
     fn allocate_frame(&mut self) -> Option<PhysFrame<Size4KiB>> {
-        println!("allocating {}", self.addr);
-        let frame: PhysFrame<Size4KiB> = PhysFrame::containing_address((self.addr.expect("VeryUnsafeFrameAllocator failed addr not set") + (4096 * self.advanced)));
+        let frame: PhysFrame<Size4KiB> = PhysFrame::containing_address(self.addr.expect("VeryUnsafeFrameAllocator failed addr not set") + (4096 * self.advanced));
         self.advanced += 1;
         Some(frame)
     }
