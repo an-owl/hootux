@@ -14,8 +14,8 @@ bootloader = "0.10.11"
 volatile = "0.2.6"
 lazy_static = {version = "1.0", features = ["spin_no_std"]}
 spin = "0.5.2"
-x86_64 = "0.14.2"
-uart_16550 = "0.2.0"
+x86_64 = "0.14.9"
+uart_16550 = "0.2.16"
 pic8259 = "0.10.2"
 pc-keyboard = "0.5.1"
 linked_list_allocator = "0.9.1"
@@ -23,6 +23,7 @@ crossbeam-queue = { version = "0.3.3", default-features = false, features = ["al
 conquer-once = { version = "0.3.2", default-features = false }
 futures-util = { version = "0.3.19", default-features = false, features = ["alloc"] }
 noto-sans-mono-bitmap = "0.1.5"
+acpi = "4.1.0"
 
 [package.metadata.bootloader]
 map-physical-memory = true
