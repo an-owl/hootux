@@ -381,6 +381,11 @@ pub mod page_table_tree {
             &*self.page
         }
 
+        /// Returns the given page table as mutable
+        pub fn get_page_mut(&mut self) -> &mut PageTable {
+            &mut self.page
+        }
+
         /// address of &self.page
         pub fn page_phy_addr(&self, mapper: &impl Mapper<Size4KiB>) -> PhysAddr{
             let virt_addr = VirtAddr::from_ptr(&*self.page);
