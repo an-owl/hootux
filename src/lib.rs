@@ -17,6 +17,7 @@ pub mod graphics;
 pub mod mem;
 pub mod allocator;
 pub mod task;
+pub mod acpi_driver;
 
 pub trait Testable {
     fn run(&self);
