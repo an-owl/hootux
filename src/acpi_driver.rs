@@ -83,18 +83,7 @@ impl<'a> AcpiHandler for AcpiGrabber<'a> {
             p_addr += Self::PAGE_SIZE
         }
 
-        println!("addr: 0x{:X}",physical_address);
-        serial_println!("addr: 0x{:X}",physical_address);
-        for (i,p) in unsafe { &*self.page_table.as_ptr() }.get_page().iter().enumerate() {
-            if !p.is_unused(){
-                println!("index {}: {:?}",i,p);
-                serial_println!("index {}: {:?}",i,p);
-            }
-        }
-
         let ptr = offset + self.virt_base.as_u64() as usize + (start_page * Self::PAGE_SIZE);
-        println!("ptr: 0x{:X}",ptr);
-        println!("new_phys: 0x{:X}, offset 0x{:X}", new_phy,offset);
         let ptr = ptr as *mut T;
 
         PhysicalMapping::new(
