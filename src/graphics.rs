@@ -127,6 +127,14 @@ impl GraphicalFrame{
     pub fn clear(&mut self){
         self.pix_buff_mut().fill_with(||{BltPixel::new(0,0,0)})
     }
+
+    /// Sets lines within \[line_start..line_end\] to BGR{0,0,0};
+    pub fn clear_lines(&mut self, line_start: usize, line_end: usize ){
+        let start_addr = self.index_of((0,line_start));
+        let end_addr = self.index_of((0,line_end));
+
+        self.pix_buff_mut()[start_addr..end_addr].fill_with(||{BltPixel::new(0,0,0)})
+    }
 }
 
 

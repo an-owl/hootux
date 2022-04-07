@@ -101,7 +101,8 @@ impl BasicTTY{
     pub fn newline(&mut self){
         if self.cursor_y == self.cursor_y_max {
             let l = self.char_height;
-            self.framebuffer.scroll_up(l)
+            self.framebuffer.scroll_up(l);
+            self.framebuffer.clear_lines(self.cursor_y_max*self.char_height, (self.cursor_y_max + 1)*self.char_height)
         } else {
             self.cursor_y += 1;
         }
