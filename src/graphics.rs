@@ -114,7 +114,7 @@ impl GraphicalFrame{
     /// values above `self.buff.info().vertical_resolution` will clear the screen
     pub fn scroll_up(&mut self, lines: usize){
         if lines > self.buff.info().vertical_resolution{
-            self.buff.buffer_mut().fill_with(||{0})
+            self.clear();
         }
         else {
             let start = self.index_of((0,lines));
