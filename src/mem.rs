@@ -437,6 +437,18 @@ pub mod page_table_tree {
                 PageTableFlags::PRESENT | PageTableFlags::WRITABLE | PageTableFlags::NO_EXECUTE,
             )
         }
+
+        /// Returns a mutable refrence to the child at `index`
+        pub fn get_child_mut(&mut self, index: PageTableIndex) -> Option<&mut Self>{
+            if let Some(vpt) = &mut self.virt_table{
+                if self.page[index].is_unused() {
+                    return None
+                }
+                let r = unsafe {&mut **vpt[index].as_mut_ptr()};
+                return Some(r);
+            } else { None }
+
+        }
     }
 
     impl Drop for PageTableBranch {
