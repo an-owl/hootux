@@ -6,7 +6,6 @@ use linked_list_allocator::align_down;
 use x86_64::structures::paging::PageTableIndex;
 use x86_64::{PhysAddr, VirtAddr};
 use x86_64::structures::paging::mapper::MapperFlushAll;
-use crate::{println, serial_println};
 
 #[allow(dead_code)]
 fn init(){
