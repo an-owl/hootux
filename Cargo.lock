@@ -127,7 +127,9 @@ dependencies = [
  "spin",
  "uart_16550",
  "volatile 0.2.7",
+ "x86",
  "x86_64",
+ "x86_msr",
 ]
 
 [[package]]
@@ -249,6 +251,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "raw-cpuid"
+version = "10.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "738bc47119e3eeccc7e94c4a506901aea5e7b4944ecd0829cbebf4af04ceda12"
+dependencies = [
+ "bitflags",
+]
+
+[[package]]
 name = "rsdp"
 version = "2.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -363,6 +374,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "x86"
+version = "0.47.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "55b5be8cc34d017d8aabec95bc45a43d0f20e8b2a31a453cabc804fe996f8dca"
+dependencies = [
+ "bit_field",
+ "bitflags",
+ "raw-cpuid",
+]
+
+[[package]]
 name = "x86_64"
 version = "0.14.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -372,4 +394,13 @@ dependencies = [
  "bitflags",
  "rustversion",
  "volatile 0.4.4",
+]
+
+[[package]]
+name = "x86_msr"
+version = "0.1.0"
+dependencies = [
+ "bitflags",
+ "lazy_static",
+ "raw-cpuid",
 ]
