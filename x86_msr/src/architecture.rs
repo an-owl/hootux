@@ -103,8 +103,7 @@ bitflags! {
 
 impl ApicBaseData{
     pub fn get_apic_base_addr(&self) -> u64{
-        let offset_addr = self.bits >> 12;
-        offset_addr & *MAXPHYADDR_MASK
+        self.bits & !Self::all().bits
     }
 
     pub fn set_apic_base_addr(&mut self, base_addr: u64){
