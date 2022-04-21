@@ -116,8 +116,11 @@ impl ApicBaseData {
     /// This returns the apic base address
     pub fn set_apic_base_addr(&mut self, base_addr: u64) {
         assert!(base_addr < *MAXPHYADDR_MASK);
-        self.bits &= !*MAXPHYADDR_MASK << 12; // clear bits in address range
-        self.bits &= base_addr << 12;
+        let mut mask = *MAXPHYADDR_MASK >> 12 ;
+        mask = mask << 12;
+        self.bits &= !mask; // clear bits in address range
+        let base_addr = (base_addr >> 12);
+        self.bits |= base_addr << 12;
     }
 }
 
