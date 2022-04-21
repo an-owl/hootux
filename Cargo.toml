@@ -25,6 +25,8 @@ futures-util = { version = "0.3.19", default-features = false, features = ["allo
 noto-sans-mono-bitmap = "0.1.5"
 acpi = "4.1.0"
 x86_msr = { path  = "./x86_msr" }
+raw-cpuid = "10.3.0"
+x86 = "0.47.0"
 
 [package.metadata.bootloader]
 map-physical-memory = true

@@ -124,9 +124,11 @@ dependencies = [
  "noto-sans-mono-bitmap",
  "pc-keyboard",
  "pic8259",
+ "raw-cpuid",
  "spin",
  "uart_16550",
  "volatile 0.2.7",
+ "x86",
  "x86_64",
  "x86_msr",
 ]
@@ -370,6 +372,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9f200f5b12eb75f8c1ed65abd4b2db8a6e1b138a20de009dacee265a2498f3f6"
 dependencies = [
  "libc",
+]
+
+[[package]]
+name = "x86"
+version = "0.47.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "55b5be8cc34d017d8aabec95bc45a43d0f20e8b2a31a453cabc804fe996f8dca"
+dependencies = [
+ "bit_field",
+ "bitflags",
+ "raw-cpuid",
 ]
 
 [[package]]
