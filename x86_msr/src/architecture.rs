@@ -119,7 +119,7 @@ impl ApicBaseData {
         let mut mask = *MAXPHYADDR_MASK >> 12 ;
         mask = mask << 12;
         self.bits &= !mask; // clear bits in address range
-        let base_addr = (base_addr >> 12);
+        let base_addr = base_addr >> 12;
         self.bits |= base_addr << 12;
     }
 }
