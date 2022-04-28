@@ -40,3 +40,12 @@ harness = false
 [[test]]
 name = "kstack_overflow"
 harness = false
+
+
+[profile.dev]
+opt-level = 1
+debug = true
+debug-assertions = false
+overflow-checks = false
+lto = false
+panic = 'abort'
