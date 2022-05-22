@@ -8,6 +8,9 @@
 #![feature(abi_x86_interrupt)]
 #![feature(alloc_error_handler)]
 #![feature(inline_const)]
+#![feature(int_roundings)]
+#![feature(allocator_api)]
+
 extern crate alloc;
 
 pub mod gdt;

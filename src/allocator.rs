@@ -5,6 +5,7 @@ use x86_64::VirtAddr;
 pub mod bump;
 pub mod linked_list;
 pub mod fixed_size_block;
+pub mod page_table_allocator;
 
 pub struct Locked<A>{
     inner: spin::Mutex<A>
