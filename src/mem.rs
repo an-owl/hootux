@@ -237,4 +237,21 @@ unsafe impl FrameAllocator<Size4KiB> for VeryUnsafeFrameAllocator {
     }
 }
 
+#[derive(PartialOrd, PartialEq, Debug, Copy, Clone)]
+enum PageSizeLevel{
+    L3,
+    L2,
+    L1,
+}
 
+impl PageSizeLevel{
+    //const PAGE_SIZE: u32 = 4096;
+    const PAGE_TABLE_ENTRIES: u32 = 512;
+    const fn num_4k_pages(&self) -> u32 {
+        return match self{
+            PageSizeLevel::L3 => Self::PAGE_TABLE_ENTRIES * Self::PAGE_TABLE_ENTRIES,
+            PageSizeLevel::L2 => Self::PAGE_TABLE_ENTRIES,
+            PageSizeLevel::L1 => 1
+        }
+    }
+}
