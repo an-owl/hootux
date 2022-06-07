@@ -186,10 +186,11 @@ impl OffsetPageTable{
     }
 }
 
-struct PageReference{
-    page: VirtAddr,
-    size: super::PageSizeLevel,
-    entry: PageTableEntry
+// todo move to mem
+pub(super) struct PageReference{
+    pub page: VirtAddr,
+    pub size: super::PageSizeLevel,
+    pub entry: PageTableEntry
 }
 
 #[derive(Debug)]
