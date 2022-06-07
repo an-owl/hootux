@@ -190,17 +190,33 @@ impl PageTableBranch {
 
     /// Allocates a physical frame to the given page table index
     ///
-    /// This function will panic if self.level is NOT L1
-    pub fn allocate_frame(&mut self, index: PageTableIndex, addr: PhysAddr) {
-        assert_eq!(self.level, L1);
+    /// This function will panic if self.level is L4
+    pub fn allocate_frame(&mut self, index: PageTableIndex, frame: PhysFrame) {
+        assert_ne!(self.level, PageTableLevel::L4);
+        let flags;
+        if let L1 = self.level{
+            flags = PageTableFlags::PRESENT | PageTableFlags::WRITABLE | PageTableFlags::NO_EXECUTE;
+        } else {
+            flags = PageTableFlags::PRESENT | PageTableFlags::WRITABLE | PageTableFlags::NO_EXECUTE | PageTableFlags::HUGE_PAGE
+        }
 
-        self.page[index].set_addr(
-            addr,
-            PageTableFlags::PRESENT | PageTableFlags::WRITABLE | PageTableFlags::NO_EXECUTE,
+        self.page[index].set_frame(
+            frame,
+            flags
         )
     }
 
-    /// Returns a mutable refrence to the child at `index`
+    /// Sets the given `index` to `entry`\
+    ///
+    /// This function is unsafe because the virtual table addresses are not updated.
+    /// under **No Circumstances** this is this to be changed to PRESENT without HUGE_PAGE
+    /// on a non L1 without updating virt_table. This will almost definitely cause
+    /// a deref to a *not-present* box
+    unsafe fn set_with_flags(&mut self, index: PageTableIndex, entry: PageTableEntry ){
+        self.page[index] = entry
+    }
+
+    /// Returns a mutable reference to the child at `index`
     pub fn get_child_mut(&mut self, index: PageTableIndex) -> Option<&mut Self> {
         if let Some(vpt) = &mut self.virt_table {
             if self.page[index].is_unused() {
