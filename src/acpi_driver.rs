@@ -37,7 +37,7 @@ impl<'a> AcpiGrabber<'a> {
     /// finds a free region of `frame_count` within th local page table
     fn find_free(&self, frame_count: usize) -> Option<usize> {
         let mut base = None;
-        for (i, e) in (unsafe { &*self.page_table.as_ptr() }).get_table().iter().enumerate() {
+        for (i, e) in (unsafe { &*self.page_table.as_ptr() }).get_page().iter().enumerate() {
             if e.is_unused() {
                 if let None = base {
                     // sets base if it is not set
