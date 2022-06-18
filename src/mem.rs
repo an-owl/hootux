@@ -258,3 +258,21 @@ impl PageSizeLevel{
         }
     }
 }
+
+pub(crate) const fn addr_from_indices(l4: usize, l3: usize, l2: usize, l1: usize) -> usize {
+    const BITS_PAGE_OFFSET: u8 = 12;
+    const BITS_TABLE_OFFSET: u8 = 9;
+
+    assert!(l1 < 512);
+    assert!(l2 < 512);
+    assert!(l3 < 512);
+    assert!(l4 < 512);
+
+    let mut ret = l1 << BITS_PAGE_OFFSET;
+
+    ret |= l2 << (BITS_TABLE_OFFSET * 1 );
+    ret |= l3 << (BITS_TABLE_OFFSET * 2 );
+    ret |= l4 << (BITS_TABLE_OFFSET * 3 );
+
+    ret
+}
