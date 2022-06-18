@@ -200,8 +200,8 @@ impl OffsetPageTable {
                 } else {
 
                     let addr = self.offset_base + e.addr().as_u64();
-                    let new_table = unsafe { *addr.as_mut_ptr() };
 
+                    let new_table = unsafe { &*addr.as_mut_ptr() };
                     // l1 table does not need to be read because its pages aare not needed
                     if level != PageTableLevel::L2{
                         count += self.count_tables_inner(new_table, level.dec());
