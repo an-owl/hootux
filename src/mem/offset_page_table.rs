@@ -1,4 +1,5 @@
 use crate::mem::PageSizeLevel;
+use super::page_table_tree::PageTableLevel;
 use alloc::vec::Vec;
 use x86_64::structures::paging::page::PageRangeInclusive;
 use x86_64::structures::paging::page_table::{FrameError, PageTableEntry};
@@ -182,6 +183,74 @@ impl OffsetPageTable {
             }
             Err(err) => Err((err, FrameErrorLevel::L1)),
         };
+    }
+
+    /// Returns number of active PageTables
+    pub(super) fn count_tables(&self) -> usize {
+
+        self.count_tables_inner(self.l4_table, PageTableLevel::L4)
+    }
+
+    fn count_tables_inner(&self, table: &PageTable, level: PageTableLevel) -> usize {
+        let mut count= 0;
+        for e in table.iter() {
+            if e.flags().contains(PageTableFlags::PRESENT){
+                if e.flags().contains(PageTableFlags::HUGE_PAGE){
+                    continue // does not contain another table
+                } else {
+
+                    let addr = self.offset_base + e.addr().as_u64();
+                    let new_table = unsafe { *addr.as_mut_ptr() };
+
+                    // l1 table does not need to be read because its pages aare not needed
+                    if level != PageTableLevel::L2{
+                        count += self.count_tables_inner(new_table, level.dec());
+                    }
+
+                    count += 1;
+                }
+            }
+        }
+
+        count
+    }
+}
+
+#[allow(non_snake_case)]
+#[derive(Copy, Clone)]
+struct PageLevelIndex {
+    L1: Option<u16>,
+    L2: Option<u16>,
+    L3: Option<u16>,
+    L4: Option<u16>,
+}
+
+impl PageLevelIndex {
+    fn new() -> Self {
+        Self{
+            L1: None,
+            L2: None,
+            L3: None,
+            L4: None,
+        }
+    }
+
+    fn read(&self, level: PageTableLevel) -> Option<u16>{
+        match level {
+            PageTableLevel::L1 => self.L1,
+            PageTableLevel::L2 => self.L2,
+            PageTableLevel::L3 => self.L3,
+            PageTableLevel::L4 => self.L4,
+        }
+    }
+
+    fn write(&mut self, level: PageTableLevel, write: Option<u16>) {
+        match level {
+            PageTableLevel::L1 => self.L1 = write,
+            PageTableLevel::L2 => self.L2 = write,
+            PageTableLevel::L3 => self.L3 = write,
+            PageTableLevel::L4 => self.L4 = write,
+        }
     }
 }
 
