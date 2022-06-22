@@ -252,6 +252,7 @@ impl PageLevelIndex {
 }
 
 // todo move to mem
+#[derive(Debug)]
 pub(super) struct PageReference {
     pub page: VirtAddr,
     pub size: super::PageSizeLevel,
