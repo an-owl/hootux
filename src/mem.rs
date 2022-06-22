@@ -259,6 +259,77 @@ impl PageSizeLevel{
     }
 }
 
+#[derive(Clone, Copy)]
+struct PageIterator{
+    pub start: Page,
+    pub end: Page,
+}
+
+impl PageIterator{
+
+    /// skips to the next l2 index pretending that next() was never called
+    fn skip_l2(&mut self){
+        let n = self.start;
+        let n = Page::containing_address(n.start_address() + 0x200000u64);
+
+        if n > self.end {
+            self.start = self.end
+        }
+        self.start = n
+    }
+
+    fn skip_l3(&mut self){
+        let n = self.start;
+        let n = Page::containing_address(n.start_address() + 0x40000000u64);
+
+        if n > self.end {
+            self.start = self.end
+        }
+        self.start = n
+    }
+
+    fn skip_l4(&mut self){
+        let n = self.start;
+        let n = Page::containing_address(n.start_address() + 0x8000000000u64);
+
+        if n > self.end {
+            self.start = self.end
+        }
+        self.start = n
+    }
+
+    fn step_back(&mut self){
+        let n = self.start;
+        let n = Page::containing_address(n.start_address() - 0x1000u64);
+
+        if n > self.end {
+            self.start = self.end
+        }
+        self.start = n
+    }
+}
+
+impl Iterator for PageIterator{
+    type Item = Page;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let old = self.start;
+
+
+        let addr = old.start_address().as_u64();
+        let new = Page::containing_address(VirtAddr::new(addr.checked_add(0x1000u64)?));
+
+        return if new > self.end {
+            None
+        } else {
+            self.start = new;
+            Some(old)
+        }
+
+
+    }
+}
+
 pub(crate) const fn addr_from_indices(l4: usize, l3: usize, l2: usize, l1: usize) -> usize {
     const BITS_PAGE_OFFSET: u8 = 12;
     const BITS_TABLE_OFFSET: u8 = 9;
