@@ -250,6 +250,87 @@ impl PageTableBranch {
             None
         }
     }
+
+    /// sets a the given entry to the provided one.
+    ///
+    /// this function will panic under several conditions.
+    ///  * if is is not called on an L4 table
+    ///  * if `level` is L4
+    ///  * if `level` is L1 and entry.flags() contains HUGE_PAGE
+    ///  * if `level` is L3, or L2 and entry.flags() does not contain HUGE_PAGE
+    ///  * if an index in `page` below `level` is not 0
+    unsafe fn set_page(&mut self, page: Page, entry: PageTableEntry, level: PageTableLevel, mapper: &impl Mapper<Size4KiB>) -> Option<PageTableEntry>{
+
+        // sanity checks
+        assert_eq!(self.level, L4, "tried to set_page() on {:?} table", entry);
+        assert_ne!(level, L4);
+
+        match level {
+            L1 => {
+                assert!(!entry.flags().contains(PageTableFlags::HUGE_PAGE))
+            }
+            L2 => {
+                assert!(entry.flags().contains(PageTableFlags::HUGE_PAGE));
+                assert_eq!(page.p1_index(), PageTableIndex::new_truncate(0));
+            }
+            L3 => {
+                assert!(entry.flags().contains(PageTableFlags::HUGE_PAGE));
+                assert_eq!(page.p1_index(), PageTableIndex::new_truncate(0));
+                assert_eq!(page.p2_index(), PageTableIndex::new_truncate(0));
+            }
+            L4 => {
+                panic!("PageTableBranch::set_page() Not allowed with `level` l4")
+            }
+        }
+
+
+        let ret = self.set_page_inner(page, entry, level ,mapper);
+        ret
+    }
+
+    /// Sets the entry at the given level and index to the given entry.
+    ///
+    /// This should **NEVER** be called manually and should only be done through a function wrapper
+    ///
+    /// it is very unsafe because if `target_level` is not L1 and `entry` is present and *not* huge_page
+    /// this will almost definitely cause an invalid pointer dereference.
+    unsafe fn set_page_inner(&mut self, page: Page, entry: PageTableEntry, target_level: PageTableLevel, mapper: &impl Mapper<Size4KiB>) -> Option<PageTableEntry>{
+        let index = self.level.get_index(page);
+        let mut ret = None;
+        if self.level == target_level {
+            if !self.page.index(index).is_unused(){
+                ret = Some(self.page.index(index).clone());
+            }
+            *self.page.index_mut(index) = entry;
+        } else {
+            let lower = self.get_or_create_child(index,mapper);
+            lower.set_page_inner(page,entry,target_level,mapper);
+        }
+        ret
+    }
+
+    /// this will only ever need to be used if changing something so there is not immutable version
+    unsafe fn get_or_create_child(&mut self, index: PageTableIndex, mapper: &impl Mapper<Size4KiB>) -> &mut PageTableBranch{
+        if self.is_child_present(index) {
+            self.get_child_mut(index).unwrap()
+        } else {
+            self.child(index, mapper)
+        }
+    }
+
+    /// checks if a child is present at `index`
+    pub fn is_child_present(&self, index: PageTableIndex) -> bool {
+        if let L1 = self.level {
+            return false
+        }
+
+        let flags = self.page.index(index).flags();
+        if flags.contains(PageTableFlags::PRESENT) && !flags.contains(PageTableFlags::HUGE_PAGE){
+            return true
+        }
+
+        return false
+    }
 }
 
 impl Drop for PageTableBranch {
