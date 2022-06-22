@@ -2,11 +2,107 @@ use alloc::boxed::Box;
 use core::mem::MaybeUninit;
 use core::ops::{Index, IndexMut};
 use x86_64::instructions::tlb::flush_all;
-use x86_64::structures::paging::{
-    Mapper, Page, PageTable, PageTableFlags, PageTableIndex, Size4KiB,
-};
+use x86_64::structures::paging::{FrameAllocator, Mapper, Page, PageTable, PageTableFlags, PageTableIndex};
 use x86_64::{PhysAddr, VirtAddr};
+use x86_64::structures::paging::{PhysFrame,page_table::PageTableEntry};
+use x86_64::structures::paging::page::PageRangeInclusive;
+use x86_64::structures::paging::Size4KiB;
 use PageTableLevel::*;
+use crate::mem::{BootInfoFrameAllocator, PageIterator, PageSizeLevel};
+use crate::{println, serial_print, serial_println};
+use super::PAGE_SIZE;
+
+/// This struct contains the Page Table tree and is used for Operations on memory.
+/// PageTable Tree Branches are stored on the heap however Page Tables are stored
+/// in memory at 0xff8000000000. On an L4 boundary this makes mapping slightly more efficient
+pub struct PageTableTree{
+    head: PageTableBranch
+}
+impl PageTableTree{
+    pub unsafe fn from_offset_page_table(phys_offset: VirtAddr, current_mapper: &mut impl Mapper<Size4KiB>, frame_alloc: &mut BootInfoFrameAllocator) -> Self{
+        const PT_HEAP_START: usize = 0xff8000000000;
+
+        // calculate number of tables required to map `count` pages
+        let tables_to_map = |count: usize| -> usize {
+            let l1 = count.div_ceil(512);
+            let l2 = l1.div_ceil(512);
+            let l3 = l2.div_ceil(512);
+
+            l1 + l2 + l3
+        };
+
+        let offset_table = super::offset_page_table::OffsetPageTable::new(phys_offset);
+        let table_count = offset_table.count_tables();
+
+        println!("Table count: {}", table_count);
+
+        let heap_size;
+
+        // calculate heap size
+        {
+            let mut old_count = table_count;
+            let mut new_count = table_count + tables_to_map(old_count);
+            // runs heap size calculation again after updating length
+            // this should never run more than a few times even when number of tables is huge
+            // todo add warning that this has run too many times like 10 or 15 or something
+            while old_count != new_count{
+                old_count = new_count;
+                new_count = table_count + tables_to_map(old_count);
+            }
+            heap_size = new_count
+        }
+
+        let heap_start = VirtAddr::new( super::addr_from_indices(511, 0, 0, 0) as u64 );
+        let heap_start_page = Page::containing_address(heap_start);
+
+        let pages = PageRangeInclusive{start: heap_start_page, end: Page::containing_address(heap_start + (heap_size * PAGE_SIZE)) };
+
+        for page in pages{
+            let flags = PageTableFlags::PRESENT | PageTableFlags::NO_EXECUTE | PageTableFlags::WRITABLE;
+            let frame = frame_alloc.allocate_frame().unwrap(); // cant boot anyway if this fails here
+            current_mapper.map_to(page, frame, flags, frame_alloc).unwrap().flush();
+        }
+
+
+        let mut head = PageTableBranch::new(L4);
+
+
+        let mut range = PageIterator{
+            start: Page::containing_address(VirtAddr::new(0)),
+            end: Page::containing_address(VirtAddr::new(super::addr_from_indices(511,511,511,511) as u64))
+        };
+
+        let mut count = 0;
+        while let Some((reference, new_range)) = offset_table.get_allocated_frames_within(range){
+            range = new_range;
+
+            count +=1;
+
+            // TODO consolidate all the level enum into PageTableLevel
+            let level;
+            match reference.size {
+                PageSizeLevel::L3 => level = L3,
+                PageSizeLevel::L2 => level = L2,
+                PageSizeLevel::L1 => level = L1,
+            }
+
+            head.set_page(
+                Page::containing_address(reference.page),
+                reference.entry,
+                level,
+                current_mapper
+            );
+        }
+
+        Self{head}
+    }
+
+    pub unsafe fn set_cr3(&self, mapper: &impl Mapper<Size4KiB>){
+        let flags = x86_64::registers::control::Cr3::read().1;
+
+        x86_64::registers::control::Cr3::write(PhysFrame::containing_address(self.head.page_phy_addr(mapper)), flags)
+    }
+}
 
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum PageTableLevel {
