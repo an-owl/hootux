@@ -257,7 +257,7 @@ impl PageTableBranch {
 
         self.page[index].set_addr(
             phys,
-            PageTableFlags::PRESENT | PageTableFlags::NO_EXECUTE | PageTableFlags::WRITABLE,
+            PageTableFlags::PRESENT | PageTableFlags::WRITABLE,
         );
 
         unsafe { &mut *self.virt_table.as_mut().unwrap()[index].as_mut_ptr() }
