@@ -16,6 +16,28 @@ pub enum PageTableLevel {
     L4,
 }
 
+impl PageTableLevel{
+    pub fn dec(self) -> Self{
+        match self {
+            L1 => panic!(),
+            L2 => L1,
+            L3 => L2,
+            L4 => L3,
+        }
+    }
+
+    pub fn get_index(&self, page: Page) -> PageTableIndex{
+        return match self{
+            L1 => page.p1_index(),
+            L2 => page.p2_index(),
+            L3 => page.p3_index(),
+            L4 => page.p4_index(),
+        }
+    }
+}
+
+
+
 /// Stores virtual addresses of Page Tables for reference
 ///
 /// Addresses contained may be Uninitialized check
