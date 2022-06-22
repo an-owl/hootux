@@ -1,4 +1,4 @@
-use crate::mem::PageSizeLevel;
+use crate::mem::{PageIterator, PageSizeLevel};
 use super::page_table_tree::PageTableLevel;
 use alloc::vec::Vec;
 use x86_64::structures::paging::page::PageRangeInclusive;
@@ -35,40 +35,37 @@ impl OffsetPageTable {
     }
 
     /// Returns all mapped pages and their frames from `start` to `end`
-    pub(super) fn get_allocated_frames_within(&self, start: Page, end: Page) -> Vec<PageReference> {
-        let mut page_ref_list = Vec::new();
-        let range = PageRangeInclusive { start, end };
-
-        let mut skip = 0;
+    pub(super) fn get_allocated_frames_within(&self, mut range: PageIterator) -> Option<(PageReference, PageIterator)> {
 
         // this spaghetti needs some sauce but this is the best i can do
         // each page is iterated in order to get its frame entry
-        for page in range {
+        while let Some(page) = range.next() {
             // each page in the loop represents 4k if a huge page is found this must handled
             // this is done by skipping each page in the loop
-            if skip > 0 {
-                skip -= 1;
-                continue;
-            }
 
             // get l1 table of page so the table entry may be looked up
             match self.get_l1_for_addr(page.start_address()) {
                 Ok(l1) => {
+
                     let entry = l1[page.p1_index()].clone();
-                    page_ref_list.push(PageReference {
-                        page: page.start_address(), // addresses are used because of Page<T> where T is stupid
-                        size: PageSizeLevel::L1,
-                        entry,
-                    })
+                    if entry.is_unused(){
+                        continue
+                    }
+
+                    return Some((PageReference{page: page.start_address(), size: PageSizeLevel::L1, entry }, range))
                 }
 
                 // if no frame is found then continue because it does not need to be copied
-                Err((FrameError::FrameNotPresent, _)) => continue,
+                // must skip appropriately
+                Err((FrameError::FrameNotPresent, FrameErrorLevel::L1)) => range.skip_l2(),
+                Err((FrameError::FrameNotPresent, FrameErrorLevel::L2)) => range.skip_l3(),
+                Err((FrameError::FrameNotPresent, FrameErrorLevel::L3)) => range.skip_l4(),
 
                 // if a huge page is found take the error location and use it to find the correct table
                 Err((FrameError::HugeFrame, level)) => {
                     match level {
-                        // the levels indicated here are triggered by the table above them so they are 1 level lower than you'd expect
+                        // The indicated level is what was fetched the error actually
+                        // occurs on the parent table
                         FrameErrorLevel::L3 => {
                             // i think the cpu will #GP before this error happens
                             panic!("this this should never happen\nhuge page reported at l4")
@@ -78,33 +75,33 @@ impl OffsetPageTable {
                             let l3 = self.get_l3_for_addr(page.start_address()).unwrap();
                             let entry = l3[page.p3_index()].clone();
 
-                            page_ref_list.push(PageReference {
-                                page: page.start_address(),
-                                size: PageSizeLevel::L3,
-                                entry,
-                            });
+                            if entry.is_unused(){
+                                continue
+                            }
 
-                            skip = PageSizeLevel::L3.num_4k_pages();
+                            range.skip_l3();
+
+                            return Some((PageReference{page: page.start_address(), size: PageSizeLevel::L3, entry }, range))
                         }
 
                         FrameErrorLevel::L1 => {
                             let l2 = self.get_l3_for_addr(page.start_address()).unwrap();
                             let entry = l2[page.p2_index()].clone();
 
-                            page_ref_list.push(PageReference {
-                                page: page.start_address(),
-                                size: PageSizeLevel::L2,
-                                entry,
-                            });
+                            if entry.is_unused(){
+                                continue
+                            }
 
-                            skip = PageSizeLevel::L2.num_4k_pages();
+                            range.skip_l2();
+
+                            return Some((PageReference{page: page.start_address(), size: PageSizeLevel::L2, entry }, range))
                         }
                     }
                 }
             }
         }
 
-        page_ref_list
+        None
     }
 
     /// Returns the PageTable at the given frame
