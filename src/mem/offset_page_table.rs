@@ -57,9 +57,9 @@ impl OffsetPageTable {
 
                 // if no frame is found then continue because it does not need to be copied
                 // must skip appropriately
-                Err((FrameError::FrameNotPresent, FrameErrorLevel::L1)) => range.skip_l2(),
-                Err((FrameError::FrameNotPresent, FrameErrorLevel::L2)) => range.skip_l3(),
-                Err((FrameError::FrameNotPresent, FrameErrorLevel::L3)) => range.skip_l4(),
+                Err((FrameError::FrameNotPresent, FrameErrorLevel::L1)) => { range.step_back(); range.skip_l2(); },
+                Err((FrameError::FrameNotPresent, FrameErrorLevel::L2)) => { range.step_back(); range.skip_l3(); },
+                Err((FrameError::FrameNotPresent, FrameErrorLevel::L3)) => { range.step_back(); range.skip_l4(); },
 
                 // if a huge page is found take the error location and use it to find the correct table
                 Err((FrameError::HugeFrame, level)) => {
@@ -78,7 +78,7 @@ impl OffsetPageTable {
                             if entry.is_unused(){
                                 continue
                             }
-
+                            range.step_back();
                             range.skip_l3();
 
                             return Some((PageReference{page: page.start_address(), size: PageSizeLevel::L3, entry }, range))
@@ -92,6 +92,7 @@ impl OffsetPageTable {
                                 continue
                             }
 
+                            range.step_back();
                             range.skip_l2();
 
                             return Some((PageReference{page: page.start_address(), size: PageSizeLevel::L2, entry }, range))
