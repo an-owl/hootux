@@ -341,9 +341,9 @@ pub(crate) const fn addr_from_indices(l4: usize, l3: usize, l2: usize, l1: usize
 
     let mut ret = l1 << BITS_PAGE_OFFSET;
 
-    ret |= l2 << (BITS_TABLE_OFFSET * 1 );
-    ret |= l3 << (BITS_TABLE_OFFSET * 2 );
-    ret |= l4 << (BITS_TABLE_OFFSET * 3 );
+    ret |= l2 << BITS_PAGE_OFFSET + (BITS_TABLE_OFFSET * 1 );
+    ret |= l3 << BITS_PAGE_OFFSET + (BITS_TABLE_OFFSET * 2 );
+    ret |= l4 << BITS_PAGE_OFFSET + (BITS_TABLE_OFFSET * 3 );
 
     ret
 }
