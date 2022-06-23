@@ -269,35 +269,59 @@ impl PageIterator{
 
     /// skips to the next l2 index pretending that next() was never called
     fn skip_l2(&mut self){
-        let n = self.start;
-        let n = Page::containing_address(n.start_address() + 0x200000u64);
+        let mut n = self.start;
+
+        let base = n.start_address().as_u64();
+        if let Some(val) = base.checked_add(0x200000u64){
+            n = Page::containing_address(VirtAddr::new(val));
+        } else {
+            self.start = self.end;
+            return
+        }
 
         if n > self.end {
             self.start = self.end
+        } else {
+            self.start = n
         }
-        self.start = n
     }
 
     fn skip_l3(&mut self){
-        let n = self.start;
-        let n = Page::containing_address(n.start_address() + 0x40000000u64);
+        let mut n = self.start;
+
+        let base = n.start_address().as_u64();
+        if let Some(val) = base.checked_add(0x40000000u64){
+
+            n = Page::containing_address(VirtAddr::new(val));
+        } else {
+            self.start = self.end;
+            return
+        }
 
         if n > self.end {
             self.start = self.end
+        } else {
+            self.start = n
         }
-        self.start = n
     }
 
     fn skip_l4(&mut self){
-        let n = self.start;
-        let n = Page::containing_address(n.start_address() + 0x8000000000u64);
+        let mut n = self.start;
+
+        let base = n.start_address().as_u64();
+        if let Some(val) = base.checked_add(0x8000000000u64){
+            n = Page::containing_address(VirtAddr::new(val));
+        } else {
+            self.start = self.end;
+            return
+        }
 
         if n > self.end {
             self.start = self.end
+        } else {
+            self.start = n
         }
-        self.start = n
     }
-
     fn step_back(&mut self){
         let n = self.start;
         let n = Page::containing_address(n.start_address() - 0x1000u64);
@@ -313,18 +337,18 @@ impl Iterator for PageIterator{
     type Item = Page;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let old = self.start;
+        let ret = self.start;
 
-
-        let addr = old.start_address().as_u64();
-        let new = Page::containing_address(VirtAddr::new(addr.checked_add(0x1000u64)?));
-
-        return if new > self.end {
-            None
-        } else {
-            self.start = new;
-            Some(old)
+        if ret == self.end{
+            return None
         }
+
+        let mut n = ret.start_address().as_u64();
+        n = n.checked_add(PAGE_SIZE as u64)?;
+
+        self.start = Page::containing_address(VirtAddr::new(n));
+        return Some(ret)
+
 
 
     }
