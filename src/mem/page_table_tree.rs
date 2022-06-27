@@ -8,8 +8,8 @@ use x86_64::structures::paging::{PhysFrame,page_table::PageTableEntry};
 use x86_64::structures::paging::page::PageRangeInclusive;
 use x86_64::structures::paging::Size4KiB;
 use PageTableLevel::*;
-use crate::mem::{BootInfoFrameAllocator, PageIterator, PageSizeLevel};
-use crate::{println, serial_print, serial_println};
+use crate::mem::{addr_from_indices, BootInfoFrameAllocator, PageIterator, PageSizeLevel};
+use crate::allocator::page_table_allocator::PtAlloc;
 use super::PAGE_SIZE;
 
 /// This struct contains the Page Table tree and is used for Operations on memory.
@@ -20,7 +20,7 @@ pub struct PageTableTree{
 }
 impl PageTableTree{
     pub unsafe fn from_offset_page_table(phys_offset: VirtAddr, current_mapper: &mut impl Mapper<Size4KiB>, frame_alloc: &mut BootInfoFrameAllocator) -> Self{
-        const PT_HEAP_START: usize = 0xff8000000000;
+        const PT_HEAP_START: VirtAddr = VirtAddr::new_truncate(addr_from_indices(511,0,0,0) as u64);
 
         // calculate number of tables required to map `count` pages
         let tables_to_map = |count: usize| -> usize {
@@ -32,10 +32,11 @@ impl PageTableTree{
         };
 
         let offset_table = super::offset_page_table::OffsetPageTable::new(phys_offset);
-        let table_count = offset_table.count_tables();
+        let table_count = offset_table.count_tables() + 3;
 
-        println!("Table count: {}", table_count);
+        println!("counted {} tables", table_count);
 
+        // size in pages
         let heap_size;
 
         // calculate heap size
@@ -57,22 +58,28 @@ impl PageTableTree{
 
         let pages = PageRangeInclusive{start: heap_start_page, end: Page::containing_address(heap_start + (heap_size * PAGE_SIZE)) };
 
+        let mut pages_mapped = 0;
         for page in pages{
+            pages_mapped += 1;
+            println!("mapping page {:x} pages mapped {}", page.start_address().as_u64(), pages_mapped );
+            serial_println!("mapping page {:x} pages mapped {}", page.start_address().as_u64(), pages_mapped );
             let flags = PageTableFlags::PRESENT | PageTableFlags::NO_EXECUTE | PageTableFlags::WRITABLE;
             let frame = frame_alloc.allocate_frame().unwrap(); // cant boot anyway if this fails here
             current_mapper.map_to(page, frame, flags, frame_alloc).unwrap().flush();
         }
 
+        crate::allocator::page_table_allocator::PT_ALLOC.lock().init(PT_HEAP_START, PT_HEAP_START + (PAGE_SIZE * heap_size));
 
         let mut head = PageTableBranch::new(L4);
+        let head_phys_addr = head.page_phy_addr(current_mapper);
+        println!("head_phys_addr {:x}", head_phys_addr.as_u64());
 
+        let mut count = 0;
 
         let mut range = PageIterator{
             start: Page::containing_address(VirtAddr::new(0)),
             end: Page::containing_address(VirtAddr::new(super::addr_from_indices(511,511,511,511) as u64))
         };
-
-        let mut count = 0;
         while let Some((reference, new_range)) = offset_table.get_allocated_frames_within(range){
             range = new_range;
 
@@ -189,7 +196,7 @@ impl IndexMut<PageTableIndex> for VirtualPageTable {
 // however they are already there taking space so use them?
 pub struct PageTableBranch {
     level: PageTableLevel,
-    page: Box<PageTable>,
+    page: Box<PageTable,PtAlloc>,
     virt_table: Option<Box<VirtualPageTable>>, // parent_entry: Option<PageTableIndex>?
                                                // todo fast_drop: bool,
                                                // fast drop will be set on children when the
@@ -202,12 +209,12 @@ impl PageTableBranch {
         match level {
             L1 => Self {
                 level,
-                page: Box::new(PageTable::new()),
+                page: Box::new_in(PageTable::new(),PtAlloc),
                 virt_table: None,
             },
             _ => Self {
                 level,
-                page: Box::new(PageTable::new()),
+                page: Box::new_in(PageTable::new(), PtAlloc),
                 virt_table: Some(Box::new(VirtualPageTable::new())),
             },
         }
@@ -366,11 +373,11 @@ impl PageTableBranch {
                 assert!(!entry.flags().contains(PageTableFlags::HUGE_PAGE))
             }
             L2 => {
-                assert!(entry.flags().contains(PageTableFlags::HUGE_PAGE));
+                assert!(!entry.flags().contains(PageTableFlags::HUGE_PAGE));
                 assert_eq!(page.p1_index(), PageTableIndex::new_truncate(0));
             }
             L3 => {
-                assert!(entry.flags().contains(PageTableFlags::HUGE_PAGE));
+                assert!(!entry.flags().contains(PageTableFlags::HUGE_PAGE));
                 assert_eq!(page.p1_index(), PageTableIndex::new_truncate(0));
                 assert_eq!(page.p2_index(), PageTableIndex::new_truncate(0));
             }
