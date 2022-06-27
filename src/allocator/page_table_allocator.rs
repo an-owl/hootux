@@ -1,12 +1,12 @@
 use crate::allocator::Locked;
 use core::alloc::{AllocError, Allocator, Layout};
 use core::borrow::{Borrow, BorrowMut};
+use core::fmt::{Debug, Formatter};
 use core::mem::MaybeUninit;
 use core::ops::{Deref, DerefMut};
 use core::ptr::NonNull;
 use spin::Mutex;
 use x86_64::VirtAddr;
-use crate::println;
 
 const PAGE_SIZE: usize = 4096;
 
@@ -119,6 +119,15 @@ struct Node {
     next: Option<&'static mut Self>,
 }
 
+impl Debug for Node{
+    fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
+        return match self.next {
+            None => write!(f, "Node {{ None }}"),
+            Some(_) => write!(f, "Node {{ Some }}"),
+        }
+    }
+}
+
 impl Node {
     /// Creates a new node at addr
     ///
@@ -156,6 +165,7 @@ impl Node {
     }
 }
 
+#[derive(Debug)]
 pub struct PageTableAllocator {
     non_recursive_allocator: Option<&'static Self>,
     start_addr: VirtAddr,
