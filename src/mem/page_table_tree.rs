@@ -34,8 +34,6 @@ impl PageTableTree{
         let offset_table = super::offset_page_table::OffsetPageTable::new(phys_offset);
         let table_count = offset_table.count_tables() + 3;
 
-        println!("counted {} tables", table_count);
-
         // size in pages
         let heap_size;
 
@@ -61,8 +59,6 @@ impl PageTableTree{
         let mut pages_mapped = 0;
         for page in pages{
             pages_mapped += 1;
-            println!("mapping page {:x} pages mapped {}", page.start_address().as_u64(), pages_mapped );
-            serial_println!("mapping page {:x} pages mapped {}", page.start_address().as_u64(), pages_mapped );
             let flags = PageTableFlags::PRESENT | PageTableFlags::NO_EXECUTE | PageTableFlags::WRITABLE;
             let frame = frame_alloc.allocate_frame().unwrap(); // cant boot anyway if this fails here
             current_mapper.map_to(page, frame, flags, frame_alloc).unwrap().flush();
@@ -71,8 +67,6 @@ impl PageTableTree{
         crate::allocator::page_table_allocator::PT_ALLOC.lock().init(PT_HEAP_START, PT_HEAP_START + (PAGE_SIZE * heap_size));
 
         let mut head = PageTableBranch::new(L4);
-        let head_phys_addr = head.page_phy_addr(current_mapper);
-        println!("head_phys_addr {:x}", head_phys_addr.as_u64());
 
         let mut count = 0;
 
