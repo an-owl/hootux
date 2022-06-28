@@ -6,14 +6,12 @@ use x86_64::VirtAddr;
 
 const PAGE_SIZE: usize = 4096;
 
-pub static PT_ALLOC: super::Locked<PageTableAllocator> = Locked::new(PageTableAllocator::new());
+pub static PT_ALLOC: Locked<PageTableAllocator> = Locked::new(PageTableAllocator::new());
 
 #[derive(Copy, Clone)]
 pub struct PtAlloc;
 
-
-unsafe impl Allocator for PtAlloc{
-
+unsafe impl Allocator for PtAlloc {
     fn allocate(&self, layout: Layout) -> Result<NonNull<[u8]>, AllocError> {
         PT_ALLOC.allocate(layout)
     }
@@ -23,19 +21,34 @@ unsafe impl Allocator for PtAlloc{
     }
 
     unsafe fn deallocate(&self, ptr: NonNull<u8>, layout: Layout) {
-        PT_ALLOC.deallocate(ptr,layout)
+        PT_ALLOC.deallocate(ptr, layout)
     }
 
-    unsafe fn grow(&self, ptr: NonNull<u8>, old_layout: Layout, new_layout: Layout) -> Result<NonNull<[u8]>, AllocError> {
-        PT_ALLOC.grow(ptr,old_layout,new_layout)
+    unsafe fn grow(
+        &self,
+        ptr: NonNull<u8>,
+        old_layout: Layout,
+        new_layout: Layout,
+    ) -> Result<NonNull<[u8]>, AllocError> {
+        PT_ALLOC.grow(ptr, old_layout, new_layout)
     }
 
-    unsafe fn grow_zeroed(&self, ptr: NonNull<u8>, old_layout: Layout, new_layout: Layout) -> Result<NonNull<[u8]>, AllocError> {
-        PT_ALLOC.grow_zeroed(ptr,old_layout,new_layout)
+    unsafe fn grow_zeroed(
+        &self,
+        ptr: NonNull<u8>,
+        old_layout: Layout,
+        new_layout: Layout,
+    ) -> Result<NonNull<[u8]>, AllocError> {
+        PT_ALLOC.grow_zeroed(ptr, old_layout, new_layout)
     }
 
-    unsafe fn shrink(&self, ptr: NonNull<u8>, old_layout: Layout, new_layout: Layout) -> Result<NonNull<[u8]>, AllocError> {
-        PT_ALLOC.shrink(ptr,old_layout,new_layout)
+    unsafe fn shrink(
+        &self,
+        ptr: NonNull<u8>,
+        old_layout: Layout,
+        new_layout: Layout,
+    ) -> Result<NonNull<[u8]>, AllocError> {
+        PT_ALLOC.shrink(ptr, old_layout, new_layout)
     }
 }
 
@@ -54,16 +67,14 @@ unsafe impl Allocator for Locked<PageTableAllocator> {
             "PageTableAllocator layout.size not 4096"
         );
 
-
         let mut alloc = self.inner.lock();
-
 
         // basically alloc.head.take?
         let head = {
-            if let Some(head) = alloc.head.take(){
+            if let Some(head) = alloc.head.take() {
                 head
             } else {
-                return Err(AllocError)
+                return Err(AllocError);
             }
         };
 
@@ -82,8 +93,8 @@ unsafe impl Allocator for Locked<PageTableAllocator> {
                 if head.next_addr() < alloc.end_addr.as_u64() as usize {
                     alloc.head = Some(unsafe { head.autogen_next() })
                 } else {
-                    if let Err(_) = alloc.extend(){
-                        return Result::Err(AllocError)
+                    if let Err(_) = alloc.extend() {
+                        return Err(AllocError);
                     }
                     alloc.head = Some(unsafe { head.autogen_next() })
                 }
@@ -120,7 +131,7 @@ impl Debug for Node{
         return match self.next {
             None => write!(f, "Node {{ None }}"),
             Some(_) => write!(f, "Node {{ Some }}"),
-        }
+        };
     }
 }
 
@@ -190,11 +201,10 @@ impl PageTableAllocator {
 
         core::ptr::write(start_addr.as_mut_ptr(), Node { next: None });
 
-
         self.head = Some(&mut *start_addr.as_mut_ptr());
     }
 
-    fn extend(&mut self) -> Result<(),()> {
+    fn extend(&mut self) -> Result<(), ()> {
         unimplemented!()
     }
 }
