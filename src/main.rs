@@ -48,10 +48,21 @@ fn kernel_main(b: &'static mut bootloader::BootInfo) -> ! {
         unsafe{
             hootux::graphics::basic_output::WRITER = spin::Mutex::new(Some(tty));
         }
-
-
     };
 
+    say_hi();
+
+
+
+    #[cfg(test)]
+    test_main();
+
+    let mut executor = executor::Executor::new();
+    executor.spawn(Task::new(keyboard::print_key()));
+    executor.run();
+}
+
+fn say_hi(){
     println!("Starting Hootux");
     println!(r#" |   |   \---/   "#);
     println!(r#"\    |  {{\OvO/}}  "#);
@@ -60,13 +71,6 @@ fn kernel_main(b: &'static mut bootloader::BootInfo) -> ! {
     println!(r#" |( )/ "#);
     println!(r#" | " | "#);
     println!(r#" /    \"#);
-
-    #[cfg(test)]
-    test_main();
-
-    let mut executor = executor::Executor::new();
-    executor.spawn(Task::new(keyboard::print_key()));
-    executor.run();
 }
 
 #[cfg(not(test))]
