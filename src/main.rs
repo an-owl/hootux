@@ -24,6 +24,8 @@ entry_point!(kernel_main);
 fn kernel_main(b: &'static mut bootloader::BootInfo) -> ! {
     //initialize system
 
+    serial_println!("Kernel start");
+
     if let Some(g) = b.framebuffer.as_mut(){
         g.buffer_mut().fill_with(||{0xff})
     }
