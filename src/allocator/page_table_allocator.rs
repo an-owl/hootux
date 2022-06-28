@@ -8,6 +8,9 @@ const PAGE_SIZE: usize = 4096;
 
 pub static PT_ALLOC: Locked<PageTableAllocator> = Locked::new(PageTableAllocator::new());
 
+/// This is a wrapper for PageTableAllocator it forwards all calls to PT_ALLOC
+/// this is required because Copy is required for allocators however this is not reasonable
+/// for PageTableAllocator
 #[derive(Copy, Clone)]
 pub struct PtAlloc;
 
@@ -121,12 +124,15 @@ unsafe impl Allocator for Locked<PageTableAllocator> {
     }
 }
 
+/// This contains information about the next usable location on the heap
+/// align is 4096 because it should only be used for 4096 byte Pages
 #[repr(align(4096))]
 struct Node {
     next: Option<&'static mut Self>,
 }
 
-impl Debug for Node{
+/// Node can't derive Debug because then it would print all the following nodes
+impl Debug for Node {
     fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
         return match self.next {
             None => write!(f, "Node {{ None }}"),
@@ -189,6 +195,10 @@ impl PageTableAllocator {
         }
     }
 
+    /// Initializes self. this is required because the construct for an impl Allocator must be `const`
+    ///
+    /// This function is unsafe because the caller must ensure that `start_addr`..`end_adr` is
+    /// mapped and writable
     pub unsafe fn init(&mut self, start_addr: VirtAddr, end_addr: VirtAddr) {
         self.start_addr = start_addr;
         self.end_addr = end_addr;
