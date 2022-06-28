@@ -1,18 +1,19 @@
+use super::PageTableLevel;
+use super::PageTableLevel::*;
 use super::PAGE_SIZE;
 use crate::allocator::page_table_allocator::PtAlloc;
 use crate::mem::{addr_from_indices, BootInfoFrameAllocator, PageIterator};
 use alloc::boxed::Box;
 use core::mem::MaybeUninit;
 use core::ops::{Index, IndexMut};
-use x86_64::structures::paging::page::PageRangeInclusive;
-use x86_64::structures::paging::Size4KiB;
-use x86_64::structures::paging::{page_table::PageTableEntry, PhysFrame};
+use x86_64::structures::paging::mapper::{
+    FlagUpdateError, MapToError, MapperFlush, MapperFlushAll, TranslateError, UnmapError,
+};
 use x86_64::structures::paging::{
-    FrameAllocator, Mapper, Page, PageTable, PageTableFlags, PageTableIndex,
+    page::PageRangeInclusive, page_table::PageTableEntry, FrameAllocator, Mapper, Page, PageTable,
+    PageTableFlags, PageTableIndex, PhysFrame, Size4KiB,
 };
 use x86_64::{PhysAddr, VirtAddr};
-use super::PageTableLevel::*;
-use super::PageTableLevel;
 
 /// This struct contains the Page Table tree and is used for Operations on memory.
 /// PageTable Tree Branches are stored on the heap however Page Tables are stored
@@ -66,7 +67,6 @@ impl PageTableTree {
             end: Page::containing_address(heap_start + (heap_size * PAGE_SIZE)),
         };
 
-
         for page in pages {
             let flags =
                 PageTableFlags::PRESENT | PageTableFlags::NO_EXECUTE | PageTableFlags::WRITABLE;
@@ -82,8 +82,6 @@ impl PageTableTree {
             .init(PT_HEAP_START, PT_HEAP_START + (PAGE_SIZE * heap_size));
 
         let mut head = PageTableBranch::new(L4);
-
-
 
         let mut range = PageIterator {
             start: Page::containing_address(VirtAddr::new(0)),
