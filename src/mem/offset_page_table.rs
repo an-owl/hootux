@@ -1,5 +1,5 @@
 use crate::mem::{PageIterator, PageSizeLevel};
-use super::page_table_tree::PageTableLevel;
+use super::PageTableLevel;
 use alloc::vec::Vec;
 use x86_64::structures::paging::page::PageRangeInclusive;
 use x86_64::structures::paging::page_table::{FrameError, PageTableEntry};
@@ -52,40 +52,35 @@ impl OffsetPageTable {
                         continue
                     }
 
-                    return Some((PageReference{page: page.start_address(), size: PageSizeLevel::L1, entry }, range))
+                    return Some((PageReference{page: page.start_address(), size: PageTableLevel::L1, entry }, range))
                 }
 
                 // if no frame is found then continue because it does not need to be copied
                 // must skip appropriately
-                Err((FrameError::FrameNotPresent, FrameErrorLevel::L1)) => { range.step_back(); range.skip_l2(); },
-                Err((FrameError::FrameNotPresent, FrameErrorLevel::L2)) => { range.step_back(); range.skip_l3(); },
-                Err((FrameError::FrameNotPresent, FrameErrorLevel::L3)) => { range.step_back(); range.skip_l4(); },
+                Err((FrameError::FrameNotPresent, PageTableLevel::L1)) => { range.step_back(); range.skip_l2(); },
+                Err((FrameError::FrameNotPresent, PageTableLevel::L2)) => { range.step_back(); range.skip_l3(); },
+                Err((FrameError::FrameNotPresent, PageTableLevel::L3)) => { range.step_back(); range.skip_l4(); },
 
                 // if a huge page is found take the error location and use it to find the correct table
-                Err((FrameError::HugeFrame, level)) => {
-                    match level {
-                        // The indicated level is what was fetched the error actually
-                        // occurs on the parent table
-                        FrameErrorLevel::L3 => {
-                            // i think the cpu will #GP before this error happens
-                            panic!("this this should never happen\nhuge page reported at l4")
-                        }
 
-                        FrameErrorLevel::L2 => {
-                            let l3 = self.get_l3_for_addr(page.start_address()).unwrap();
-                            let entry = l3[page.p3_index()].clone();
+                // The indicated level is what was fetched the error actually
+                // occurs on the parent
 
-                            if entry.is_unused(){
-                                continue
-                            }
-                            range.step_back();
-                            range.skip_l3();
 
-                            return Some((PageReference{page: page.start_address(), size: PageSizeLevel::L3, entry }, range))
-                        }
+                Err((FrameError::HugeFrame, PageTableLevel::L2)) =>  {
+                    let l3 = self.get_l3_for_addr(page.start_address()).unwrap();
+                    let entry = l3[page.p3_index()].clone();
+                    if entry.is_unused(){
+                        continue
+                    }
+                    range.step_back();
+                    range.skip_l3();
 
-                        FrameErrorLevel::L1 => {
-                            let l2 = self.get_l3_for_addr(page.start_address()).unwrap();
+                    return Some((PageReference{page: page.start_address(), size: PageTableLevel::L3, entry }, range))
+                }
+
+                Err((FrameError::HugeFrame, PageTableLevel::L1)) => {
+                    let l2 = self.get_l3_for_addr(page.start_address()).unwrap();
                             let entry = l2[page.p2_index()].clone();
 
                             if entry.is_unused(){
@@ -95,10 +90,16 @@ impl OffsetPageTable {
                             range.step_back();
                             range.skip_l2();
 
-                            return Some((PageReference{page: page.start_address(), size: PageSizeLevel::L2, entry }, range))
-                        }
-                    }
+                            return Some((PageReference{page: page.start_address(), size: PageTableLevel::L2, entry }, range))
                 }
+
+                // i think the cpu will #GP before this error happens
+                // "this this should never happen huge page reported at l4"
+                Err((FrameError::HugeFrame, PageTableLevel::L3)) => panic!(),
+
+                // this should never be returned
+                Err((_, PageTableLevel::L4)) => panic!(),
+
             }
         }
 
@@ -123,7 +124,7 @@ impl OffsetPageTable {
     fn get_l3_for_addr(
         &self,
         addr: VirtAddr,
-    ) -> Result<&mut PageTable, (FrameError, FrameErrorLevel)> {
+    ) -> Result<&mut PageTable, (FrameError, PageTableLevel)> {
         let l4_index = addr.p4_index();
         let entry = &self.l4_table[l4_index];
 
@@ -133,7 +134,7 @@ impl OffsetPageTable {
                 let table = table_addr.as_mut_ptr::<PageTable>();
                 unsafe { Ok(&mut *table) }
             }
-            Err(err) => Err((err, FrameErrorLevel::L3)),
+            Err(err) => Err((err, PageTableLevel::L3)),
         };
     }
 
@@ -141,7 +142,7 @@ impl OffsetPageTable {
     fn get_l2_for_addr(
         &self,
         addr: VirtAddr,
-    ) -> Result<&mut PageTable, (FrameError, FrameErrorLevel)> {
+    ) -> Result<&mut PageTable, (FrameError, PageTableLevel)> {
         let l3_index = addr.p3_index();
         let l3_table;
         match self.get_l3_for_addr(addr) {
@@ -156,7 +157,7 @@ impl OffsetPageTable {
                 let table = table_addr.as_mut_ptr::<PageTable>();
                 unsafe { Ok(&mut *table) }
             }
-            Err(err) => Err((err, FrameErrorLevel::L2)),
+            Err(err) => Err((err, PageTableLevel::L2)),
         };
     }
 
@@ -164,7 +165,7 @@ impl OffsetPageTable {
     fn get_l1_for_addr(
         &self,
         addr: VirtAddr,
-    ) -> Result<&mut PageTable, (FrameError, FrameErrorLevel)> {
+    ) -> Result<&mut PageTable, (FrameError, PageTableLevel)> {
         let l2_index = addr.p2_index();
         let l2_table;
         match self.get_l2_for_addr(addr) {
@@ -179,7 +180,7 @@ impl OffsetPageTable {
                 let table = table_addr.as_mut_ptr::<PageTable>();
                 unsafe { Ok(&mut *table) }
             }
-            Err(err) => Err((err, FrameErrorLevel::L1)),
+            Err(err) => Err((err, PageTableLevel::L1)),
         };
     }
 
@@ -214,55 +215,10 @@ impl OffsetPageTable {
     }
 }
 
-#[allow(non_snake_case)]
-#[derive(Copy, Clone)]
-struct PageLevelIndex {
-    L1: Option<u16>,
-    L2: Option<u16>,
-    L3: Option<u16>,
-    L4: Option<u16>,
-}
-
-impl PageLevelIndex {
-    fn new() -> Self {
-        Self{
-            L1: None,
-            L2: None,
-            L3: None,
-            L4: None,
-        }
-    }
-
-    fn read(&self, level: PageTableLevel) -> Option<u16>{
-        match level {
-            PageTableLevel::L1 => self.L1,
-            PageTableLevel::L2 => self.L2,
-            PageTableLevel::L3 => self.L3,
-            PageTableLevel::L4 => self.L4,
-        }
-    }
-
-    fn write(&mut self, level: PageTableLevel, write: Option<u16>) {
-        match level {
-            PageTableLevel::L1 => self.L1 = write,
-            PageTableLevel::L2 => self.L2 = write,
-            PageTableLevel::L3 => self.L3 = write,
-            PageTableLevel::L4 => self.L4 = write,
-        }
-    }
-}
-
 // todo move to mem
 #[derive(Debug)]
 pub(super) struct PageReference {
     pub page: VirtAddr,
-    pub size: super::PageSizeLevel,
+    pub size: super::PageTableLevel,
     pub entry: PageTableEntry,
-}
-
-#[derive(Debug)]
-enum FrameErrorLevel {
-    L3,
-    L2,
-    L1,
 }
