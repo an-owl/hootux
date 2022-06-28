@@ -1,10 +1,7 @@
-use crate::mem::{PageIterator, PageSizeLevel};
-use super::PageTableLevel;
-use alloc::vec::Vec;
-use x86_64::structures::paging::page::PageRangeInclusive;
+use super::{PageTableLevel,PageIterator};
 use x86_64::structures::paging::page_table::{FrameError, PageTableEntry};
 use x86_64::structures::paging::{
-    Page, PageSize, PageTable, PageTableFlags, PhysFrame, Size2MiB, Size4KiB,
+    PageTable, PageTableFlags,
 };
 use x86_64::VirtAddr;
 
@@ -29,10 +26,7 @@ impl OffsetPageTable {
         }
     }
 
-    /// Returns base address
-    pub(super) fn get_base_addr(&self) -> VirtAddr {
-        self.offset_base
-    }
+
 
     /// Returns all mapped pages and their frames from `start` to `end`
     pub(super) fn get_allocated_frames_within(&self, mut range: PageIterator) -> Option<(PageReference, PageIterator)> {
@@ -104,14 +98,6 @@ impl OffsetPageTable {
         }
 
         None
-    }
-
-    /// Returns the PageTable at the given frame
-    ///
-    /// This function is unsafe because the caller must ensure that
-    /// `frame` contains a valid PageTable
-    unsafe fn get_table_from_frame(&self, frame: PhysFrame) -> &'static PageTable {
-        &*(self.offset_base + frame.start_address().as_u64()).as_mut_ptr::<PageTable>()
     }
 
     /// Fetches the PageTable at the suggested level containing the given address

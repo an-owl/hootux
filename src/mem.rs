@@ -240,13 +240,6 @@ unsafe impl FrameAllocator<Size4KiB> for VeryUnsafeFrameAllocator {
     }
 }
 
-#[derive(PartialOrd, PartialEq, Debug, Copy, Clone)]
-enum PageSizeLevel{
-    L3,
-    L2,
-    L1,
-}
-
 #[derive(Clone, Copy)]
 struct PageIterator{
     pub start: Page,

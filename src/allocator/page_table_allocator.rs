@@ -1,11 +1,7 @@
 use crate::allocator::Locked;
 use core::alloc::{AllocError, Allocator, Layout};
-use core::borrow::{Borrow, BorrowMut};
 use core::fmt::{Debug, Formatter};
-use core::mem::MaybeUninit;
-use core::ops::{Deref, DerefMut};
 use core::ptr::NonNull;
-use spin::Mutex;
 use x86_64::VirtAddr;
 
 const PAGE_SIZE: usize = 4096;
@@ -167,7 +163,6 @@ impl Node {
 
 #[derive(Debug)]
 pub struct PageTableAllocator {
-    non_recursive_allocator: Option<&'static Self>,
     start_addr: VirtAddr,
     end_addr: VirtAddr,
     head: Option<&'static mut Node>,
@@ -177,7 +172,6 @@ impl PageTableAllocator {
     /// Create an uninitialized instance of PageTableAllocator
     const fn new() -> Self {
         Self {
-            non_recursive_allocator: None,
             start_addr: VirtAddr::new_truncate(0),
             end_addr: VirtAddr::new_truncate(0),
             head: None,
