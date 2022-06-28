@@ -247,18 +247,6 @@ enum PageSizeLevel{
     L1,
 }
 
-impl PageSizeLevel{
-    //const PAGE_SIZE: u32 = 4096;
-    const PAGE_TABLE_ENTRIES: u32 = 512;
-    const fn num_4k_pages(&self) -> u32 {
-        return match self{
-            PageSizeLevel::L3 => Self::PAGE_TABLE_ENTRIES * Self::PAGE_TABLE_ENTRIES,
-            PageSizeLevel::L2 => Self::PAGE_TABLE_ENTRIES,
-            PageSizeLevel::L1 => 1
-        }
-    }
-}
-
 #[derive(Clone, Copy)]
 struct PageIterator{
     pub start: Page,
@@ -370,4 +358,34 @@ pub(crate) const fn addr_from_indices(l4: usize, l3: usize, l2: usize, l1: usize
     ret |= l4 << BITS_PAGE_OFFSET + (BITS_TABLE_OFFSET * 3 );
 
     ret
+}
+
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum PageTableLevel {
+    L1,
+    L2,
+    L3,
+    L4,
+}
+
+impl PageTableLevel {
+    pub fn dec(self) -> Self {
+        use self::PageTableLevel::*;
+        match self {
+            L1 => panic!(),
+            L2 => L1,
+            L3 => L2,
+            L4 => L3,
+        }
+    }
+
+    pub fn get_index(&self, page: Page) -> x86_64::structures::paging::PageTableIndex {
+        use self::PageTableLevel::*;
+        return match self {
+            L1 => page.p1_index(),
+            L2 => page.p2_index(),
+            L3 => page.p3_index(),
+            L4 => page.p4_index(),
+        };
+    }
 }

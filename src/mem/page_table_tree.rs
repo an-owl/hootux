@@ -1,6 +1,6 @@
 use super::PAGE_SIZE;
 use crate::allocator::page_table_allocator::PtAlloc;
-use crate::mem::{addr_from_indices, BootInfoFrameAllocator, PageIterator, PageSizeLevel};
+use crate::mem::{addr_from_indices, BootInfoFrameAllocator, PageIterator};
 use alloc::boxed::Box;
 use core::mem::MaybeUninit;
 use core::ops::{Index, IndexMut};
@@ -11,7 +11,8 @@ use x86_64::structures::paging::{
     FrameAllocator, Mapper, Page, PageTable, PageTableFlags, PageTableIndex,
 };
 use x86_64::{PhysAddr, VirtAddr};
-use PageTableLevel::*;
+use super::PageTableLevel::*;
+use super::PageTableLevel;
 
 /// This struct contains the Page Table tree and is used for Operations on memory.
 /// PageTable Tree Branches are stored on the heap however Page Tables are stored
@@ -94,17 +95,11 @@ impl PageTableTree {
             range = new_range;
 
             // TODO consolidate all the level enum into PageTableLevel
-            let level;
-            match reference.size {
-                PageSizeLevel::L3 => level = L3,
-                PageSizeLevel::L2 => level = L2,
-                PageSizeLevel::L1 => level = L1,
-            }
 
             head.set_page(
                 Page::containing_address(reference.page),
                 reference.entry,
-                level,
+                reference.size,
                 current_mapper,
             );
         }
@@ -119,34 +114,6 @@ impl PageTableTree {
             PhysFrame::containing_address(self.head.page_phy_addr(mapper)),
             flags,
         )
-    }
-}
-
-#[derive(Clone, Copy, PartialEq, Debug)]
-pub enum PageTableLevel {
-    L1,
-    L2,
-    L3,
-    L4,
-}
-
-impl PageTableLevel {
-    pub fn dec(self) -> Self {
-        match self {
-            L1 => panic!(),
-            L2 => L1,
-            L3 => L2,
-            L4 => L3,
-        }
-    }
-
-    pub fn get_index(&self, page: Page) -> PageTableIndex {
-        return match self {
-            L1 => page.p1_index(),
-            L2 => page.p2_index(),
-            L3 => page.p3_index(),
-            L4 => page.p4_index(),
-        };
     }
 }
 

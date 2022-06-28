@@ -1,4 +1,4 @@
-use crate::mem::page_table_tree::{PageTableBranch, PageTableLevel};
+use crate::mem::{page_table_tree::PageTableBranch, PageTableLevel};
 use acpi::{AcpiHandler, PhysicalMapping};
 use core::cell::Cell;
 use core::ptr::NonNull;
