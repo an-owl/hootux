@@ -1,26 +1,32 @@
+use super::PAGE_SIZE;
+use crate::allocator::page_table_allocator::PtAlloc;
+use crate::mem::{addr_from_indices, BootInfoFrameAllocator, PageIterator, PageSizeLevel};
 use alloc::boxed::Box;
 use core::mem::MaybeUninit;
 use core::ops::{Index, IndexMut};
-use x86_64::instructions::tlb::flush_all;
-use x86_64::structures::paging::{FrameAllocator, Mapper, Page, PageTable, PageTableFlags, PageTableIndex};
-use x86_64::{PhysAddr, VirtAddr};
-use x86_64::structures::paging::{PhysFrame,page_table::PageTableEntry};
 use x86_64::structures::paging::page::PageRangeInclusive;
 use x86_64::structures::paging::Size4KiB;
+use x86_64::structures::paging::{page_table::PageTableEntry, PhysFrame};
+use x86_64::structures::paging::{
+    FrameAllocator, Mapper, Page, PageTable, PageTableFlags, PageTableIndex,
+};
+use x86_64::{PhysAddr, VirtAddr};
 use PageTableLevel::*;
-use crate::mem::{addr_from_indices, BootInfoFrameAllocator, PageIterator, PageSizeLevel};
-use crate::allocator::page_table_allocator::PtAlloc;
-use super::PAGE_SIZE;
 
 /// This struct contains the Page Table tree and is used for Operations on memory.
 /// PageTable Tree Branches are stored on the heap however Page Tables are stored
 /// in memory at 0xff8000000000. On an L4 boundary this makes mapping slightly more efficient
-pub struct PageTableTree{
-    head: PageTableBranch
+pub struct PageTableTree {
+    head: PageTableBranch,
 }
-impl PageTableTree{
-    pub unsafe fn from_offset_page_table(phys_offset: VirtAddr, current_mapper: &mut impl Mapper<Size4KiB>, frame_alloc: &mut BootInfoFrameAllocator) -> Self{
-        const PT_HEAP_START: VirtAddr = VirtAddr::new_truncate(addr_from_indices(511,0,0,0) as u64);
+impl PageTableTree {
+    pub unsafe fn from_offset_page_table(
+        phys_offset: VirtAddr,
+        current_mapper: &mut impl Mapper<Size4KiB>,
+        frame_alloc: &mut BootInfoFrameAllocator,
+    ) -> Self {
+        const PT_HEAP_START: VirtAddr =
+            VirtAddr::new_truncate(addr_from_indices(511, 0, 0, 0) as u64);
 
         // calculate number of tables required to map `count` pages
         let tables_to_map = |count: usize| -> usize {
@@ -44,40 +50,48 @@ impl PageTableTree{
             // runs heap size calculation again after updating length
             // this should never run more than a few times even when number of tables is huge
             // todo add warning that this has run too many times like 10 or 15 or something
-            while old_count != new_count{
+            while old_count != new_count {
                 old_count = new_count;
                 new_count = table_count + tables_to_map(old_count);
             }
             heap_size = new_count
         }
 
-        let heap_start = VirtAddr::new( super::addr_from_indices(511, 0, 0, 0) as u64 );
+        let heap_start = VirtAddr::new(super::addr_from_indices(511, 0, 0, 0) as u64);
         let heap_start_page = Page::containing_address(heap_start);
 
-        let pages = PageRangeInclusive{start: heap_start_page, end: Page::containing_address(heap_start + (heap_size * PAGE_SIZE)) };
+        let pages = PageRangeInclusive {
+            start: heap_start_page,
+            end: Page::containing_address(heap_start + (heap_size * PAGE_SIZE)),
+        };
 
-        let mut pages_mapped = 0;
-        for page in pages{
-            pages_mapped += 1;
-            let flags = PageTableFlags::PRESENT | PageTableFlags::NO_EXECUTE | PageTableFlags::WRITABLE;
+
+        for page in pages {
+            let flags =
+                PageTableFlags::PRESENT | PageTableFlags::NO_EXECUTE | PageTableFlags::WRITABLE;
             let frame = frame_alloc.allocate_frame().unwrap(); // cant boot anyway if this fails here
-            current_mapper.map_to(page, frame, flags, frame_alloc).unwrap().flush();
+            current_mapper
+                .map_to(page, frame, flags, frame_alloc)
+                .unwrap()
+                .flush();
         }
 
-        crate::allocator::page_table_allocator::PT_ALLOC.lock().init(PT_HEAP_START, PT_HEAP_START + (PAGE_SIZE * heap_size));
+        crate::allocator::page_table_allocator::PT_ALLOC
+            .lock()
+            .init(PT_HEAP_START, PT_HEAP_START + (PAGE_SIZE * heap_size));
 
         let mut head = PageTableBranch::new(L4);
 
-        let mut count = 0;
 
-        let mut range = PageIterator{
+
+        let mut range = PageIterator {
             start: Page::containing_address(VirtAddr::new(0)),
-            end: Page::containing_address(VirtAddr::new(super::addr_from_indices(511,511,511,511) as u64))
+            end: Page::containing_address(VirtAddr::new(
+                super::addr_from_indices(511, 511, 511, 511) as u64,
+            )),
         };
-        while let Some((reference, new_range)) = offset_table.get_allocated_frames_within(range){
+        while let Some((reference, new_range)) = offset_table.get_allocated_frames_within(range) {
             range = new_range;
-
-            count +=1;
 
             // TODO consolidate all the level enum into PageTableLevel
             let level;
@@ -91,17 +105,20 @@ impl PageTableTree{
                 Page::containing_address(reference.page),
                 reference.entry,
                 level,
-                current_mapper
+                current_mapper,
             );
         }
 
-        Self{head}
+        Self { head }
     }
 
-    pub unsafe fn set_cr3(&self, mapper: &impl Mapper<Size4KiB>){
+    pub unsafe fn set_cr3(&self, mapper: &impl Mapper<Size4KiB>) {
         let flags = x86_64::registers::control::Cr3::read().1;
 
-        x86_64::registers::control::Cr3::write(PhysFrame::containing_address(self.head.page_phy_addr(mapper)), flags)
+        x86_64::registers::control::Cr3::write(
+            PhysFrame::containing_address(self.head.page_phy_addr(mapper)),
+            flags,
+        )
     }
 }
 
@@ -113,8 +130,8 @@ pub enum PageTableLevel {
     L4,
 }
 
-impl PageTableLevel{
-    pub fn dec(self) -> Self{
+impl PageTableLevel {
+    pub fn dec(self) -> Self {
         match self {
             L1 => panic!(),
             L2 => L1,
@@ -123,17 +140,15 @@ impl PageTableLevel{
         }
     }
 
-    pub fn get_index(&self, page: Page) -> PageTableIndex{
-        return match self{
+    pub fn get_index(&self, page: Page) -> PageTableIndex {
+        return match self {
             L1 => page.p1_index(),
             L2 => page.p2_index(),
             L3 => page.p3_index(),
             L4 => page.p4_index(),
-        }
+        };
     }
 }
-
-
 
 /// Stores virtual addresses of Page Tables for reference
 ///
@@ -190,7 +205,7 @@ impl IndexMut<PageTableIndex> for VirtualPageTable {
 // however they are already there taking space so use them?
 pub struct PageTableBranch {
     level: PageTableLevel,
-    page: Box<PageTable,PtAlloc>,
+    page: Box<PageTable, PtAlloc>,
     virt_table: Option<Box<VirtualPageTable>>, // parent_entry: Option<PageTableIndex>?
                                                // todo fast_drop: bool,
                                                // fast drop will be set on children when the
@@ -203,7 +218,7 @@ impl PageTableBranch {
         match level {
             L1 => Self {
                 level,
-                page: Box::new_in(PageTable::new(),PtAlloc),
+                page: Box::new_in(PageTable::new(), PtAlloc),
                 virt_table: None,
             },
             _ => Self {
@@ -229,7 +244,7 @@ impl PageTableBranch {
         None
     }
 
-    /// Creates a child and binds it to index
+    /// Creates a child and binds it to index. this does not flush the TLB
     ///
     /// This function will panic if called on a PageTableBranch marked L1
     pub fn child(
@@ -249,17 +264,13 @@ impl PageTableBranch {
 
         // assign to virt_table
         self.virt_table.as_mut().unwrap().set(index, new_child);
-        flush_all();
 
         // get PhysAddr of child and map to self
         // child is now stored in self.virt_table
         let phys = unsafe { &*self.virt_table.as_mut().as_ref().unwrap()[index].as_ptr() }
             .page_phy_addr(mapper);
 
-        self.page[index].set_addr(
-            phys,
-            PageTableFlags::PRESENT | PageTableFlags::WRITABLE,
-        );
+        self.page[index].set_addr(phys, PageTableFlags::PRESENT | PageTableFlags::WRITABLE);
 
         unsafe { &mut *self.virt_table.as_mut().unwrap()[index].as_mut_ptr() }
     }
@@ -313,26 +324,16 @@ impl PageTableBranch {
     pub fn allocate_frame(&mut self, index: PageTableIndex, frame: PhysFrame) {
         assert_ne!(self.level, PageTableLevel::L4);
         let flags;
-        if let L1 = self.level{
+        if let L1 = self.level {
             flags = PageTableFlags::PRESENT | PageTableFlags::WRITABLE | PageTableFlags::NO_EXECUTE;
         } else {
-            flags = PageTableFlags::PRESENT | PageTableFlags::WRITABLE | PageTableFlags::NO_EXECUTE | PageTableFlags::HUGE_PAGE
+            flags = PageTableFlags::PRESENT
+                | PageTableFlags::WRITABLE
+                | PageTableFlags::NO_EXECUTE
+                | PageTableFlags::HUGE_PAGE
         }
 
-        self.page[index].set_frame(
-            frame,
-            flags
-        )
-    }
-
-    /// Sets the given `index` to `entry`\
-    ///
-    /// This function is unsafe because the virtual table addresses are not updated.
-    /// under **No Circumstances** this is this to be changed to PRESENT without HUGE_PAGE
-    /// on a non L1 without updating virt_table. This will almost definitely cause
-    /// a deref to a *not-present* box
-    unsafe fn set_with_flags(&mut self, index: PageTableIndex, entry: PageTableEntry ){
-        self.page[index] = entry
+        self.page[index].set_frame(frame, flags)
     }
 
     /// Returns a mutable reference to the child at `index`
@@ -356,8 +357,13 @@ impl PageTableBranch {
     ///  * if `level` is L1 and entry.flags() contains HUGE_PAGE
     ///  * if `level` is L3, or L2 and entry.flags() does not contain HUGE_PAGE
     ///  * if an index in `page` below `level` is not 0
-    unsafe fn set_page(&mut self, page: Page, entry: PageTableEntry, level: PageTableLevel, mapper: &impl Mapper<Size4KiB>) -> Option<PageTableEntry>{
-
+    unsafe fn set_page(
+        &mut self,
+        page: Page,
+        entry: PageTableEntry,
+        level: PageTableLevel,
+        mapper: &impl Mapper<Size4KiB>,
+    ) -> Option<PageTableEntry> {
         // sanity checks
         assert_eq!(self.level, L4, "tried to set_page() on {:?} table", entry);
         assert_ne!(level, L4);
@@ -380,8 +386,7 @@ impl PageTableBranch {
             }
         }
 
-
-        let ret = self.set_page_inner(page, entry, level ,mapper);
+        let ret = self.set_page_inner(page, entry, level, mapper);
         ret
     }
 
@@ -391,23 +396,33 @@ impl PageTableBranch {
     ///
     /// it is very unsafe because if `target_level` is not L1 and `entry` is present and *not* huge_page
     /// this will almost definitely cause an invalid pointer dereference.
-    unsafe fn set_page_inner(&mut self, page: Page, entry: PageTableEntry, target_level: PageTableLevel, mapper: &impl Mapper<Size4KiB>) -> Option<PageTableEntry>{
+    unsafe fn set_page_inner(
+        &mut self,
+        page: Page,
+        entry: PageTableEntry,
+        target_level: PageTableLevel,
+        mapper: &impl Mapper<Size4KiB>,
+    ) -> Option<PageTableEntry> {
         let index = self.level.get_index(page);
         let mut ret = None;
         if self.level == target_level {
-            if !self.page.index(index).is_unused(){
+            if !self.page.index(index).is_unused() {
                 ret = Some(self.page.index(index).clone());
             }
             *self.page.index_mut(index) = entry;
         } else {
-            let lower = self.get_or_create_child(index,mapper);
-            lower.set_page_inner(page,entry,target_level,mapper);
+            let lower = self.get_or_create_child(index, mapper);
+            lower.set_page_inner(page, entry, target_level, mapper);
         }
         ret
     }
 
     /// this will only ever need to be used if changing something so there is not immutable version
-    unsafe fn get_or_create_child(&mut self, index: PageTableIndex, mapper: &impl Mapper<Size4KiB>) -> &mut PageTableBranch{
+    unsafe fn get_or_create_child(
+        &mut self,
+        index: PageTableIndex,
+        mapper: &impl Mapper<Size4KiB>,
+    ) -> &mut PageTableBranch {
         if self.is_child_present(index) {
             self.get_child_mut(index).unwrap()
         } else {
@@ -418,15 +433,15 @@ impl PageTableBranch {
     /// checks if a child is present at `index`
     pub fn is_child_present(&self, index: PageTableIndex) -> bool {
         if let L1 = self.level {
-            return false
+            return false;
         }
 
         let flags = self.page.index(index).flags();
-        if flags.contains(PageTableFlags::PRESENT) && !flags.contains(PageTableFlags::HUGE_PAGE){
-            return true
+        if flags.contains(PageTableFlags::PRESENT) && !flags.contains(PageTableFlags::HUGE_PAGE) {
+            return true;
         }
 
-        return false
+        return false;
     }
 }
 
@@ -437,6 +452,7 @@ impl Drop for PageTableBranch {
         if self.level == L4 {
             // just in case
             // though
+            // TODO remove this. dropping L4 tables will be necessary for user mode
             panic!("tried to drop l4 page table")
         }
         let mut flags: [PageTableFlags; 512] = [PageTableFlags::empty(); 512];
