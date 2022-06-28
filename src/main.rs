@@ -39,6 +39,12 @@ fn kernel_main(b: &'static mut bootloader::BootInfo) -> ! {
     let mut frame_alloc = unsafe { mem::BootInfoFrameAllocator::init(&b.memory_regions) };
     allocator::init_heap(&mut mapper,&mut frame_alloc).expect("heap allocation failed");
 
+    let mut ptt;
+    unsafe {
+        ptt = mem::page_table_tree::PageTableTree::from_offset_page_table(phy_mem_offset, &mut mapper, &mut frame_alloc);
+        ptt.set_cr3(&mapper);
+    }
+
     //initialize graphics
     if let Some(buff) = b.framebuffer.as_mut() {
         let mut g = graphics::GraphicalFrame { buff };
