@@ -11,7 +11,6 @@ use hootux::*;
 use bootloader::entry_point;
 use x86_64::VirtAddr;
 use hootux::graphics::basic_output::BasicTTY;
-use hootux::mem;
 use hootux::task::{executor, Task};
 use hootux::task::keyboard;
 use hootux::exit_qemu;
