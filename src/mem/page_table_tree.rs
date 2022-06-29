@@ -408,6 +408,14 @@ impl PageTableBranch {
 
         return false;
     }
+
+    fn get_entry(&self, index: PageTableIndex) -> PageTableEntry{
+        self.page.index(index).clone()
+    }
+
+    fn set_unused(&mut self, index: PageTableIndex) {
+        self.page.index(index).set_unused();
+    }
 }
 
 impl Drop for PageTableBranch {
