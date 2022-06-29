@@ -22,6 +22,15 @@ pub struct PageTableTree {
     head: PageTableBranch,
 }
 impl PageTableTree {
+
+    /// This function creates an instance of Self using an Offset Memory beginning at `phys_offset`
+    /// an instance of the current mapper must be provided to look up physical frame addresses
+    ///
+    /// This function also initializes [hootux::alloc::page_table_allocator::PT_ALLOC]
+    ///
+    /// This function is unsafe because this function initializes PT_ALLOC it can only be called
+    /// once doing so more than once will result in undefined behaviour. It also requires that the
+    /// caller ensures that `phys_offset` points to the start of the offset physical memory.
     pub unsafe fn from_offset_page_table(
         phys_offset: VirtAddr,
         current_mapper: &mut impl Mapper<Size4KiB>,
@@ -105,6 +114,7 @@ impl PageTableTree {
         Self { head }
     }
 
+    /// sets the `cr3` register to the physical address of the contained l4 page table
     pub unsafe fn set_cr3(&self, mapper: &impl Mapper<Size4KiB>) {
         let flags = x86_64::registers::control::Cr3::read().1;
 
