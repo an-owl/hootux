@@ -324,6 +324,18 @@ impl PageTableBranch {
         }
     }
 
+    pub fn get_child(&self, index: PageTableIndex) -> Option<&Self> {
+        if let Some(vpt) = &self.virt_table {
+            if self.page[index].is_unused() {
+                return None;
+            }
+            let r = unsafe { & **vpt[index].as_ptr() };
+            return Some(r);
+        } else {
+            None
+        }
+    }
+
     /// sets a the given entry to the provided one.
     ///
     /// this function will panic under several conditions.
