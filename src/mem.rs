@@ -362,13 +362,25 @@ pub enum PageTableLevel {
 }
 
 impl PageTableLevel {
-    pub fn dec(self) -> Self {
+    /// Decrements Self downward
+    pub const fn dec(self) -> Self {
         use self::PageTableLevel::*;
         match self {
             L1 => panic!(),
             L2 => L1,
             L3 => L2,
             L4 => L3,
+        }
+    }
+
+    /// Increments Self upward
+    pub const fn inc(self) -> Self {
+        use self::PageTableLevel::*;
+        match self {
+            L1 => L2,
+            L2 => L3,
+            L3 => L4,
+            L4 => panic!(),
         }
     }
 
