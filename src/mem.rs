@@ -2,7 +2,8 @@ use bootloader::boot_info::{MemoryRegion, MemoryRegionKind};
 use x86_64::structures::paging::frame::PhysFrameRangeInclusive;
 use x86_64::structures::paging::page::PageRangeInclusive;
 use x86_64::structures::paging::{
-    FrameAllocator, Mapper, OffsetPageTable, Page, PageTableFlags, PhysFrame, Size4KiB,
+    FrameAllocator, Mapper, OffsetPageTable, Page, PageTableFlags, PhysFrame,
+    Size1GiB, Size2MiB, Size4KiB
 };
 use x86_64::{structures::paging::PageTable, PhysAddr, VirtAddr};
 
@@ -48,6 +49,26 @@ unsafe impl FrameAllocator<Size4KiB> for BootInfoFrameAllocator {
         let frame = self.usable_frames().nth(self.next);
         self.next += 1;
         frame
+    }
+}
+
+/// Dummy frame allocator that amy be used with PageTableTree because PageTableTree will
+/// never call the passed &impl FrameAllocator
+pub struct DummyFrameAlloc;
+
+unsafe impl FrameAllocator<Size4KiB> for DummyFrameAlloc{
+    fn allocate_frame(&mut self) -> Option<PhysFrame<Size4KiB>> {
+        unimplemented!()
+    }
+}
+unsafe impl FrameAllocator<Size2MiB> for DummyFrameAlloc{
+    fn allocate_frame(&mut self) -> Option<PhysFrame<Size2MiB>> {
+        unimplemented!()
+    }
+}
+unsafe impl FrameAllocator<Size1GiB> for DummyFrameAlloc{
+    fn allocate_frame(&mut self) -> Option<PhysFrame<Size1GiB>> {
+        unimplemented!()
     }
 }
 
