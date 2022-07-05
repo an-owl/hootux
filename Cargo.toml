@@ -31,7 +31,7 @@ x86 = "0.47.0"
 [package.metadata.bootloader]
 map-physical-memory = true
 physical-memory-offset = 0x0000_4000_0000_0000
-kernel-stack-size = 0x12000
+kernel-stack-size = 0x24000
 
 [[test]]
 name = "should_panic"
@@ -43,7 +43,7 @@ harness = false
 
 
 [profile.dev]
-opt-level = 1
+opt-level = 0
 debug = true
 debug-assertions = false
 overflow-checks = false
