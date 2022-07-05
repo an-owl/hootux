@@ -72,11 +72,13 @@ unsafe impl Allocator for Locked<PageTableAllocator> {
 
         let mut alloc = self.inner.lock();
 
-        // basically alloc.head.take?
+        // basically `alloc.head.take()?`
         let head = {
             if let Some(head) = alloc.head.take() {
                 head
             } else {
+
+                // alloc is at absolute max size
                 return Err(AllocError);
             }
         };
@@ -178,20 +180,34 @@ impl Node {
     }
 }
 
+/// heap manager used exclusively for Page Tables
+///
+/// `end_addr` refers to end of controlled area. end addr may be changed to extend or shrink the heap
+/// `head` contains the next page to be allocated. When `alloc()` is called head is checked against `end_addr`
+/// to check how much space is remaining. 3 pages should remain free so self can be extended.
+/// The last Node in head should always be the highest in memory unless `at_absolute_max` is true.
+/// When `at_absolute_max` is true `extend_self` should also be true
 #[derive(Debug)]
 pub struct PageTableAllocator {
     start_addr: VirtAddr,
     end_addr: VirtAddr,
     head: Option<&'static mut Node>,
+    at_absolute_max: bool,
+    extend_self: bool,
 }
 
 impl PageTableAllocator {
+    // this is exclusive Self may not reach this size
+    const ABSOLUTE_MAX: usize = mem::addr_from_indices(1, 0, 0,0);
+
     /// Create an uninitialized instance of PageTableAllocator
     const fn new() -> Self {
         Self {
             start_addr: VirtAddr::new_truncate(0),
             end_addr: VirtAddr::new_truncate(0),
             head: None,
+            at_absolute_max: false,
+            extend_self: false
         }
     }
 
