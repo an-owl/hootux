@@ -1,10 +1,7 @@
 use bootloader::boot_info::{MemoryRegion, MemoryRegionKind};
 use x86_64::structures::paging::frame::PhysFrameRangeInclusive;
 use x86_64::structures::paging::page::PageRangeInclusive;
-use x86_64::structures::paging::{
-    FrameAllocator, Mapper, OffsetPageTable, Page, PageTableFlags, PhysFrame,
-    Size1GiB, Size2MiB, Size4KiB
-};
+use x86_64::structures::paging::{FrameAllocator, Mapper, OffsetPageTable, Page, PageSize, PageTableFlags, PhysFrame, Size1GiB, Size2MiB, Size4KiB};
 use x86_64::{structures::paging::PageTable, PhysAddr, VirtAddr};
 
 pub mod page_table_tree;
@@ -405,7 +402,9 @@ impl PageTableLevel {
         }
     }
 
-    pub fn get_index(&self, page: Page) -> x86_64::structures::paging::PageTableIndex {
+    pub fn get_index<S:PageSize>(&self, page: Page<S>) -> x86_64::structures::paging::PageTableIndex {
+        // this should compile to nothing required to use with all S types
+        let page = unsafe { Page::from_start_address_unchecked(page.start_address()) };
         use self::PageTableLevel::*;
         return match self {
             L1 => page.p1_index(),
