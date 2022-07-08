@@ -9,13 +9,10 @@ extern crate alloc;
 
 use hootux::*;
 use bootloader::entry_point;
-use x86_64::VirtAddr;
 use hootux::graphics::basic_output::BasicTTY;
 use hootux::task::{executor, Task};
 use hootux::task::keyboard;
 use hootux::exit_qemu;
-
-
 
 
 entry_point!(kernel_main);
@@ -32,16 +29,8 @@ fn kernel_main(b: &'static mut bootloader::BootInfo) -> ! {
     init();
 
     //initialize memory things
-    let phy_mem_offset = VirtAddr::new(b.physical_memory_offset.into_option().unwrap());
-
-    let mut mapper = unsafe { mem::init(phy_mem_offset)};
-    let mut frame_alloc = unsafe { mem::BootInfoFrameAllocator::init(&b.memory_regions) };
-    allocator::init_heap(&mut mapper,&mut frame_alloc).expect("heap allocation failed");
-
-    let mut ptt;
     unsafe {
-        ptt = mem::page_table_tree::PageTableTree::from_offset_page_table(phy_mem_offset, &mut mapper, &mut frame_alloc);
-        ptt.set_cr3(&mapper);
+        init_mem(b.physical_memory_offset.into_option().unwrap(), &b.memory_regions)
     }
 
     //initialize graphics
@@ -51,7 +40,7 @@ fn kernel_main(b: &'static mut bootloader::BootInfo) -> ! {
         let tty = BasicTTY::new(g);
 
         unsafe{
-            hootux::graphics::basic_output::WRITER = spin::Mutex::new(Some(tty));
+            graphics::basic_output::WRITER = spin::Mutex::new(Some(tty));
         }
     };
 
