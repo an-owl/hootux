@@ -26,8 +26,8 @@ pub(crate) static mut LOCAL: Option<&KernelLocals> = None;
 /// It is aligned to 4096
 #[repr(align(4096),C)]
 pub(crate) struct KernelGlobals {
-    frame_alloc: Mutex<BootInfoFrameAllocator>,
-    self_phys_addr: PhysAddr // required to re_map frame; NEVER EVER change after creation.
+    pub frame_alloc: Mutex<BootInfoFrameAllocator>,
+    pub self_phys_addr: PhysAddr // required to re_map frame; NEVER EVER change after creation.
 }
 
 impl KernelGlobals {
@@ -52,8 +52,8 @@ impl KernelGlobals {
 
 #[repr(align(4096),C)]
 pub(crate) struct KernelLocals {
-    page_table_tree: PageTableTree,
-    kernel_globals: &'static KernelGlobals,
+    pub page_table_tree: PageTableTree,
+    pub kernel_globals: &'static KernelGlobals,
 }
 
 impl KernelLocals {
