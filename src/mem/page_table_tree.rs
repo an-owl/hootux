@@ -7,7 +7,7 @@ use alloc::boxed::Box;
 use core::fmt::{Debug, Formatter};
 use core::mem::MaybeUninit;
 use core::ops::{Index, IndexMut};
-use x86_64::structures::paging::mapper::{FlagUpdateError, MapToError, MapperFlush, MapperFlushAll, TranslateError, UnmapError, MapperAllSizes};
+use x86_64::structures::paging::mapper::{FlagUpdateError, MapToError, MapperFlush, MapperFlushAll, TranslateError, UnmapError};
 use x86_64::structures::paging::page_table::FrameError;
 use x86_64::structures::paging::{
     page::PageRangeInclusive, page_table::PageTableEntry, FrameAllocator, Mapper, Page, PageSize,
