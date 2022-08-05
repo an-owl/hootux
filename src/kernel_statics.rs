@@ -1,4 +1,6 @@
 use alloc::boxed::Box;
+use core::cell::RefCell;
+use core::mem::MaybeUninit;
 use x86_64::{PhysAddr, VirtAddr};
 use spin::Mutex;
 use x86_64::structures::paging::{Mapper, Page, Size4KiB};
@@ -8,11 +10,13 @@ use crate::mem::{
 };
 
 
+pub(crate) static mut LOCAL: RefCell<MaybeUninit<KernelLocals>> = RefCell::new(MaybeUninit::uninit());
 
-
-pub(crate) static mut LOCAL: Option<&KernelLocals> = None;
-
-
+/// a wrapper to help remove boilerplate code while fetching `LOCAL`
+#[inline]
+pub(crate) fn fetch_local() -> &'static mut KernelLocals{
+    unsafe { LOCAL.get_mut().assume_init_mut() }
+}
 
 // everything in here should be mutex.
 // thread_local is an exception, it local should never
