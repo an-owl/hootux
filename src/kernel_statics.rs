@@ -53,7 +53,7 @@ impl KernelGlobals {
 #[repr(align(4096),C)]
 pub(crate) struct KernelLocals {
     pub page_table_tree: PageTableTree,
-    pub kernel_globals: &'static KernelGlobals,
+    kernel_globals: &'static KernelGlobals,
 }
 
 impl KernelLocals {
@@ -68,6 +68,10 @@ impl KernelLocals {
             page_table_tree: tree,
             kernel_globals: Box::leak(kernel_globals),
         }
+    }
 
+    /// Returns kernel_globals as a reference
+    pub fn globals(&self) -> &'static KernelGlobals{
+        self.kernel_globals
     }
 }
