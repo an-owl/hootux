@@ -22,6 +22,7 @@ pub mod allocator;
 pub mod task;
 pub mod acpi_driver;
 pub mod apic;
+mod kernel_statics;
 
 pub trait Testable {
     fn run(&self);
@@ -69,6 +70,8 @@ pub fn test_panic(info: &core::panic::PanicInfo) -> ! {
 
 #[cfg(test)]
 use bootloader::{entry_point,BootInfo};
+use bootloader::boot_info::MemoryRegion;
+use x86_64::VirtAddr;
 
 #[cfg(test)]
 entry_point!(kernel_test_main);
