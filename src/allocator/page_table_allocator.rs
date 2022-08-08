@@ -2,7 +2,11 @@ use crate::allocator::Locked;
 use core::alloc::{AllocError, Allocator, Layout};
 use core::fmt::{Debug, Formatter};
 use core::ptr::NonNull;
+use x86_64::structures::paging::{FrameAllocator, Mapper, Page, PageTableFlags, Size4KiB};
+use x86_64::structures::paging::page::PageRangeInclusive;
 use x86_64::VirtAddr;
+use crate::{mem, println};
+use crate::mem::{DummyFrameAlloc, PageTableLevel};
 
 const PAGE_SIZE: usize = 4096;
 
@@ -95,7 +99,7 @@ unsafe impl Allocator for Locked<PageTableAllocator> {
 
             None => {
                 //println!("head.next_addr(): {:x}, alloc.end_addr: {:x}",head.next_addr(),alloc.end_addr.as_u64());
-                if head.next_addr() < alloc.end_addr.as_u64() as usize {
+                if ( head.next_addr() < (alloc.end_addr.as_u64() as usize - (PAGE_SIZE * 3)) ) || alloc.extend_self { // check if there is 3 free pages or extend mode is active
                     alloc.head = Some(unsafe { head.autogen_next() })
                 } else {
                     if let Err(_) = alloc.extend() {
@@ -173,9 +177,7 @@ impl Node {
 
     fn next_addr(&self) -> usize {
         let mut self_addr = VirtAddr::from_ptr(self);
-        //println!("Node addr: {:?}",self_addr);
         self_addr += PAGE_SIZE;
-        //println!("Next Node addr: {:?}", self_addr);
         self_addr.as_u64() as usize
     }
 }
@@ -197,6 +199,7 @@ pub struct PageTableAllocator {
 }
 
 impl PageTableAllocator {
+    const ALIGNMENT_INDEX: PageTableLevel = PageTableLevel::L4;
     // this is exclusive Self may not reach this size
     const ABSOLUTE_MAX: usize = mem::addr_from_indices(1, 0, 0,0);
 
@@ -214,10 +217,10 @@ impl PageTableAllocator {
     /// Initializes self. this is required because the construct for an impl Allocator must be `const`
     ///
     /// This function is unsafe because the caller must ensure that `start_addr`..`end_adr` is
-    /// mapped and writable
+    /// mapped and writable inclusively
     pub unsafe fn init(&mut self, start_addr: VirtAddr, end_addr: VirtAddr) {
         self.start_addr = start_addr;
-        self.end_addr = end_addr;
+        self.end_addr = end_addr + 0x1000u64; // end addr should be exclusive, end_addr is the first byte not mapped
 
         // this drops an initial node as start_addr so alloc may be called.
         // self.head should always be Some otherwise it has reached the end
@@ -231,6 +234,89 @@ impl PageTableAllocator {
     }
 
     fn extend(&mut self) -> Result<(), ()> {
-        unimplemented!()
+        const EXTEND_SIZE: usize = 32; // defines the number of pages allocated per extend()
+        self.extend_self = true;
+        println!("Extended ptalloc");
+
+
+        let flags = PageTableFlags::PRESENT | PageTableFlags::WRITABLE | PageTableFlags::NO_EXECUTE | PageTableFlags::GLOBAL; // todo make const
+
+        let new_end_addr = self.end_addr + EXTEND_SIZE * PAGE_SIZE;
+
+        match self.check_advance_end(new_end_addr.as_u64()) {
+            Ok(_) => {}
+            Err(_) => {
+                self.at_absolute_max = true;
+                return Err(()) // todo check for new extend size and use that
+            }
+        };
+
+        let range = PageRangeInclusive::<Size4KiB>{start: Page::containing_address(self.end_addr), end: Page::containing_address(new_end_addr)};
+
+        // map new memory
+
+        unsafe {
+            for page in range{
+
+                let frame = crate::kernel_statics::fetch_local().globals().frame_alloc.lock().allocate_frame().unwrap();
+
+                println!("mapping {:?}", page);
+
+                let k_local= crate::kernel_statics::fetch_local();
+                k_local.page_table_tree.map_to(page,frame,flags,&mut DummyFrameAlloc).unwrap().flush();
+            }
+        }
+        self.end_addr = new_end_addr;
+        self.extend_self = false;
+
+        Ok(())
     }
+
+    /// calculates whether self can advance the given amount of space.
+    /// returns reason on error
+    ///
+    /// on `Err(_)` the caller should set `self.at_absolute_max" to `true`
+    /// Err(AdvanceError::Overflow) contains how far the new address overflowed
+    // todo calculate amount of space to extend into instead
+    #[inline]
+    fn check_advance_end(&self, increase_by: u64) -> Result<(),AdvanceError>{
+        const MAX_ADDR: u64 = VirtAddr::new_truncate(u64::MAX).as_u64();
+
+
+        if self.at_absolute_max {
+            return Err(AdvanceError::AlreadyAtMaximum)
+        }
+
+        return match VirtAddr::try_new(increase_by + self.end_addr.as_u64()) {
+
+            Ok(new_addr) => {
+                if self.end_addr > VirtAddr::new(increase_by) {
+            return Err(AdvanceError::TriedToDecrease)
+        }
+
+        if Self::ALIGNMENT_INDEX.get_index(
+            Page::<Size4KiB>::containing_address(self.end_addr))
+            ==
+            Self::ALIGNMENT_INDEX.get_index(
+                Page::<Size4KiB>::containing_address(new_addr))
+        {
+            let overflow = new_addr.as_u64() % Self::ABSOLUTE_MAX as u64;
+            return Err(AdvanceError::OverFlow(overflow));
+        }
+
+        Ok(())
+            }
+            Err(err) => {
+                let overflow = MAX_ADDR - err.0;
+                return Err(AdvanceError::OverFlow(overflow))
+            }
+        }
+    }
+}
+
+#[derive(Debug)]
+enum AdvanceError{
+    OverFlow(u64),
+    TriedToDecrease,
+    AlreadyAtMaximum
 }
