@@ -54,6 +54,27 @@ pub fn init() {
     x86_64::instructions::interrupts::enable();
 }
 
+/// Initializes native memory management. Initializes important thread local and global variables
+/// required for proper system management
+///
+/// this function is unsafe because the caller must ensure that the given arguments are accurate
+pub unsafe fn init_mem(phy_mem_offset: u64, mem_map: &'static [MemoryRegion]){
+    let mut mapper = mem::init(VirtAddr::new(phy_mem_offset));
+    let mut frame_alloc = mem::BootInfoFrameAllocator::init(mem_map) ;
+    allocator::init_heap(&mut mapper, &mut frame_alloc).expect("heap allocation failed");
+
+    let ptt;
+    {
+        ptt = mem::page_table_tree::PageTableTree::from_offset_page_table(VirtAddr::new(phy_mem_offset), &mut mapper, &mut frame_alloc);
+        ptt.set_cr3(&mapper)
+    };
+
+    let globals = kernel_statics::KernelGlobals::new_without_addr(frame_alloc);
+    let locals = kernel_statics::KernelLocals::init(globals, ptt);
+    kernel_statics::LOCAL.get_mut().write(locals);
+
+}
+
 #[inline]
 pub fn stop() -> !{
     loop{
