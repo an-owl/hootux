@@ -5,7 +5,7 @@ use core::ptr::NonNull;
 use x86_64::structures::paging::{FrameAllocator, Mapper, Page, PageTableFlags, Size4KiB};
 use x86_64::structures::paging::page::PageRangeInclusive;
 use x86_64::VirtAddr;
-use crate::{mem, println};
+use crate::mem;
 use crate::mem::{DummyFrameAlloc, PageTableLevel};
 
 const PAGE_SIZE: usize = 4096;

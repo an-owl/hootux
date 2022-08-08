@@ -14,6 +14,7 @@ use x86_64::structures::paging::{
     PageTable, PageTableFlags, PageTableIndex, PhysFrame, Size1GiB, Size2MiB, Size4KiB,
 };
 use x86_64::{PhysAddr, VirtAddr};
+use crate::mem;
 
 //TODO unify metrics (i.e page/frame or address)
 
@@ -39,7 +40,7 @@ impl PageTableTree {
     ) -> Self {
         const PT_HEAP_START: VirtAddr =
             VirtAddr::new_truncate(addr_from_indices(511, 0, 0, 0) as u64);
-        const PTALLOC_EXTRA_PAGES: usize = 20;
+        const PTALLOC_EXTRA_PAGES: usize = 6;
 
         // calculate number of tables required to map `count` pages
         let tables_to_map = |count: usize| -> usize {
@@ -1284,5 +1285,32 @@ impl Drop for PageTableBranch {
                 self.drop_child(PageTableIndex::new(i as u16));
             }
         }
+    }
+}
+
+#[test_case]
+fn test_mapper(){
+    let local = crate::kernel_statics::fetch_local();
+    let page_count = 512;
+    let start_page = Page::<Size4KiB>::containing_address(VirtAddr::new(0xdeadbeef));
+    let range = PageRangeInclusive{start: start_page, end: Page::containing_address(start_page.start_address() + (PAGE_SIZE * page_count))};
+    let flags = PageTableFlags::PRESENT | PageTableFlags::WRITABLE | PageTableFlags::BIT_9;
+
+    for page in range {
+        let frame = local.globals().frame_alloc.lock().allocate_frame().unwrap();
+        unsafe { local.page_table_tree.map_to(page, frame, flags,&mut mem::DummyFrameAlloc) }.unwrap().flush();
+    }
+}
+
+pub fn test_mapper_dbg(){
+    let local = crate::kernel_statics::fetch_local();
+    let page_count = 1024;
+    let start_page = Page::<Size4KiB>::containing_address(VirtAddr::new(0xdeadbeef));
+    let range = PageRangeInclusive{start: start_page, end: Page::containing_address(start_page.start_address() + (PAGE_SIZE * page_count))};
+    let flags = PageTableFlags::PRESENT | PageTableFlags::WRITABLE | PageTableFlags::BIT_9;
+
+    for page in range {
+        let frame = local.globals().frame_alloc.lock().allocate_frame().unwrap();
+        unsafe { local.page_table_tree.map_to(page, frame, flags,&mut mem::DummyFrameAlloc) }.unwrap().flush();
     }
 }
