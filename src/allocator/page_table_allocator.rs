@@ -236,8 +236,6 @@ impl PageTableAllocator {
     fn extend(&mut self) -> Result<(), ()> {
         const EXTEND_SIZE: usize = 32; // defines the number of pages allocated per extend()
         self.extend_self = true;
-        println!("Extended ptalloc");
-
 
         let flags = PageTableFlags::PRESENT | PageTableFlags::WRITABLE | PageTableFlags::NO_EXECUTE | PageTableFlags::GLOBAL; // todo make const
 
@@ -259,8 +257,6 @@ impl PageTableAllocator {
             for page in range{
 
                 let frame = crate::kernel_statics::fetch_local().globals().frame_alloc.lock().allocate_frame().unwrap();
-
-                println!("mapping {:?}", page);
 
                 let k_local= crate::kernel_statics::fetch_local();
                 k_local.page_table_tree.map_to(page,frame,flags,&mut DummyFrameAlloc).unwrap().flush();
