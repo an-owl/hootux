@@ -7,7 +7,7 @@ use x86_64::{structures::paging::PageTable, PhysAddr, VirtAddr};
 pub mod page_table_tree;
 pub(self) mod offset_page_table;
 
-const PAGE_SIZE: usize = 4096;
+pub const PAGE_SIZE: usize = 4096;
 
 /// A FrameAllocator that returns usable frames from the bootloader's memory map.
 pub struct BootInfoFrameAllocator {
