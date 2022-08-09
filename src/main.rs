@@ -9,6 +9,7 @@ extern crate alloc;
 
 use hootux::*;
 use bootloader::entry_point;
+use log::info;
 use hootux::graphics::basic_output::BasicTTY;
 use hootux::task::{executor, Task};
 use hootux::task::keyboard;
@@ -28,10 +29,13 @@ fn kernel_main(b: &'static mut bootloader::BootInfo) -> ! {
 
     init();
 
+
+
     //initialize memory things
     unsafe {
         init_mem(b.physical_memory_offset.into_option().unwrap(), &b.memory_regions)
     }
+    init_logger();
 
     //initialize graphics
     if let Some(buff) = b.framebuffer.as_mut() {
@@ -45,6 +49,11 @@ fn kernel_main(b: &'static mut bootloader::BootInfo) -> ! {
     };
 
     say_hi();
+
+
+
+
+
 
 
 
