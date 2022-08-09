@@ -121,6 +121,7 @@ dependencies = [
  "futures-util",
  "lazy_static",
  "linked_list_allocator",
+ "log",
  "noto-sans-mono-bitmap",
  "pc-keyboard",
  "pic8259",

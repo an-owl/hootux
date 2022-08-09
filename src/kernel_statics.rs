@@ -31,7 +31,8 @@ pub(crate) fn fetch_local() -> &'static mut KernelLocals{
 #[repr(align(4096),C)]
 pub(crate) struct KernelGlobals {
     pub frame_alloc: Mutex<BootInfoFrameAllocator>,
-    pub self_phys_addr: PhysAddr // required to re_map frame; NEVER EVER change after creation.
+    pub self_phys_addr: PhysAddr, // required to re_map frame; NEVER EVER change after creation.
+    pub(crate) logger: crate::logger::Logger // internally uses mutex
 }
 
 impl KernelGlobals {
@@ -41,7 +42,8 @@ impl KernelGlobals {
     pub(crate) const fn new_without_addr(frame_alloc: BootInfoFrameAllocator) -> Self {
         Self {
             self_phys_addr: PhysAddr::zero(),
-            frame_alloc: Mutex::new(frame_alloc)
+            frame_alloc: Mutex::new(frame_alloc),
+            logger: crate::logger::Logger::new()
         }
     }
 

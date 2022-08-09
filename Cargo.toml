@@ -27,6 +27,7 @@ acpi = "4.1.0"
 x86_msr = { path  = "./x86_msr" }
 raw-cpuid = "10.3.0"
 x86 = "0.47.0"
+log = "0.4.17"
 
 [package.metadata.bootloader]
 map-physical-memory = true
