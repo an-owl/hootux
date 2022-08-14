@@ -51,7 +51,7 @@ fn kernel_main(b: &'static mut bootloader::BootInfo) -> ! {
 
     say_hi();
 
-
+    debug!("Successfully initialized");
 
 
 
