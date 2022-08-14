@@ -6,6 +6,7 @@ pub mod bump;
 pub mod linked_list;
 pub mod fixed_size_block;
 pub mod page_table_allocator;
+pub mod mmio_bump_alloc;
 
 pub struct Locked<A>{
     inner: spin::Mutex<A>

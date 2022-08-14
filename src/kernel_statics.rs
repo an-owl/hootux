@@ -9,6 +9,8 @@ use crate::mem::{
     page_table_tree::PageTableTree
 };
 
+use crate::allocator::mmio_bump_alloc::MmioBumpHeap;
+
 
 pub(crate) static mut LOCAL: RefCell<MaybeUninit<KernelLocals>> = RefCell::new(MaybeUninit::uninit());
 
@@ -59,6 +61,7 @@ impl KernelGlobals {
 #[repr(align(4096),C)]
 pub(crate) struct KernelLocals {
     pub page_table_tree: PageTableTree,
+    pub mmio_heap_man: MmioBumpHeap,
     kernel_globals: &'static KernelGlobals,
 }
 
@@ -70,8 +73,16 @@ impl KernelLocals {
         let phys_addr = tree.translate_page(Page::<Size4KiB>::containing_address(VirtAddr::from_ptr(&*kernel_globals))).unwrap().start_address();
         unsafe { kernel_globals.set_addr(phys_addr) };
 
+        let mut mmio_heap = MmioBumpHeap::new();
+        mmio_heap.init(
+            VirtAddr::new(MmioBumpHeap::HEAP_START as u64),
+            VirtAddr::new((MmioBumpHeap::HEAP_START + MmioBumpHeap::HEAP_SIZE) as u64),
+        );
+
+
         Self{
             page_table_tree: tree,
+            mmio_heap_man: mmio_heap,
             kernel_globals: Box::leak(kernel_globals),
         }
     }
