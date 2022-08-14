@@ -1,7 +1,6 @@
-use log::{Level, LevelFilter, Log, log_enabled, Metadata, Record, set_logger};
+use log::{Level, LevelFilter, Log, Metadata, Record};
 use spin::RwLock;
 use crate::{println, serial_println};
-use crate::kernel_statics::fetch_local;
 
 pub(crate) struct Logger{
     inner: RwLock<LoggerInner>
@@ -59,10 +58,11 @@ fn set_level(level: LevelFilter){
     log::set_max_level(level)
 }
 
+#[macro_export]
 macro_rules! set_logger_level {
     ($lvl:expr) => {
         unsafe {
-            set_level(lvl)
+            log::set_max_level($lvl)
         }
     }
 }
