@@ -14,6 +14,7 @@ use hootux::graphics::basic_output::BasicTTY;
 use hootux::task::{executor, Task};
 use hootux::task::keyboard;
 use hootux::exit_qemu;
+use log::debug;
 
 
 entry_point!(kernel_main);
