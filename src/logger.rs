@@ -1,4 +1,4 @@
-use log::{Level, LevelFilter, Log, Metadata, Record};
+use log::{LevelFilter, Log, Metadata, Record};
 use spin::RwLock;
 use crate::{println, serial_println};
 
@@ -7,7 +7,6 @@ pub(crate) struct Logger{
 }
 
 struct LoggerInner {
-    level: Level,
     serial: bool,
     graphical: bool,
 }
@@ -21,7 +20,6 @@ impl Logger {
 impl LoggerInner {
     const fn new() -> Self {
         Self{
-            level: Level::Info,
             serial: true,
             graphical: true,
         }
@@ -32,7 +30,7 @@ impl Log for Logger{
 
     fn enabled(&self, metadata: &Metadata) -> bool {
         let logger = self.inner.read();
-        return if logger.level >= metadata.level() && (logger.serial || logger.graphical) {
+        return if log::max_level() >= metadata.level() && (logger.serial || logger.graphical) {
             true
         } else { false }
     }
@@ -52,10 +50,6 @@ impl Log for Logger{
     fn flush(&self) {
         //lmao
     }
-}
-
-fn set_level(level: LevelFilter){
-    log::set_max_level(level)
 }
 
 #[macro_export]
