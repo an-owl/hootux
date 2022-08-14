@@ -77,11 +77,8 @@ pub unsafe fn init_mem(phy_mem_offset: u64, mem_map: &'static [MemoryRegion]){
 }
 
 pub fn init_logger(){
-    unsafe {
-        log::set_logger(&kernel_statics::fetch_local().globals().logger).expect("failed to initialize logger");
-
-        log::set_max_level(log::LevelFilter::Trace);
-    }
+    log::set_logger(&kernel_statics::fetch_local().globals().logger).expect("failed to initialize logger");
+    log::set_max_level(log::LevelFilter::Trace);
 }
 
 #[inline]

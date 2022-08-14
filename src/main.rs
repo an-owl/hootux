@@ -9,7 +9,6 @@ extern crate alloc;
 
 use hootux::*;
 use bootloader::entry_point;
-use log::info;
 use hootux::graphics::basic_output::BasicTTY;
 use hootux::task::{executor, Task};
 use hootux::task::keyboard;

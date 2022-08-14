@@ -1,4 +1,4 @@
-use log::{LevelFilter, Log, Metadata, Record};
+use log::{Log, Metadata, Record};
 use spin::RwLock;
 use crate::{println, serial_println};
 
