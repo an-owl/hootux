@@ -35,7 +35,7 @@ fn kernel_main(b: &'static mut bootloader::BootInfo) -> ! {
     unsafe {
         init_mem(b.physical_memory_offset.into_option().unwrap(), &b.memory_regions)
     }
-    init_logger();
+
 
     //initialize graphics
     if let Some(buff) = b.framebuffer.as_mut() {
@@ -47,6 +47,7 @@ fn kernel_main(b: &'static mut bootloader::BootInfo) -> ! {
             graphics::basic_output::WRITER = spin::Mutex::new(Some(tty));
         }
     };
+    init_logger();
 
     say_hi();
 
