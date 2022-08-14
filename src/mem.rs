@@ -4,6 +4,13 @@ use x86_64::structures::paging::page::PageRangeInclusive;
 use x86_64::structures::paging::{FrameAllocator, Mapper, OffsetPageTable, Page, PageSize, PageTableFlags, PhysFrame, Size1GiB, Size2MiB, Size4KiB};
 use x86_64::{structures::paging::PageTable, PhysAddr, VirtAddr};
 
+// offset 0-11
+// l1 12-2
+// l2 21-29
+// l3 30-38
+// l4 39-47
+// quick maffs
+
 pub mod page_table_tree;
 pub(self) mod offset_page_table;
 
