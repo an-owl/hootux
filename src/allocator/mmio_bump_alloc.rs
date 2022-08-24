@@ -17,6 +17,9 @@ impl MmioAlloc{
     pub const fn new(phys_addr: PhysAddr) -> Self {
         Self{physical_addr: phys_addr}
     }
+    pub const fn new_from_usize(phys_addr: usize) -> Self {
+        Self{ physical_addr: PhysAddr::new(phys_addr as u64) }
+    }
 
     /// Preforms uncorrected alloc. Only returns address aligned to 0x1000.
     /// This fn is required because of a separate allocator returning [acpi::PhysicalMapping]
@@ -88,7 +91,6 @@ unsafe impl Allocator for MmioAlloc{
         for page in pages {
             crate::kernel_statics::fetch_local().page_table_tree.unmap(page).unwrap().1.flush();
         }
-
     }
 }
 
