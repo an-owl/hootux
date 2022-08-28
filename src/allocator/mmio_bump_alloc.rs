@@ -80,6 +80,10 @@ unsafe impl Allocator for MmioAlloc{
 
     }
 
+    fn allocate_zeroed(&self, _layout: Layout) -> Result<NonNull<[u8]>, AllocError> {
+        panic!("Tried to MmioAlloc zeroed");
+    }
+
     unsafe fn deallocate(&self, ptr: NonNull<u8>, layout: Layout) {
         crate::kernel_statics::fetch_local().mmio_heap_man.deallocate(layout);
 
