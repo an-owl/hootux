@@ -121,14 +121,14 @@ impl BasicTTY{
     }
 }
 
-impl fmt::Write for BasicTTY{
+impl Write for BasicTTY{
     fn write_str(&mut self, s: &str) -> fmt::Result {
         self.print_str(s);
         Ok(())
     }
 }
 
-pub fn _print(args: core::fmt::Arguments){
+pub fn _print(args: fmt::Arguments){
     without_interrupts(||
         {
             if let Some(tty) = unsafe { WRITER.lock().as_mut() }{
@@ -136,6 +136,9 @@ pub fn _print(args: core::fmt::Arguments){
             }
         }
     )
+}
+pub unsafe fn _panic_print(){
+    WRITER.force_unlock()
 }
 
 pub fn _clear(){
@@ -162,4 +165,9 @@ macro_rules! println {
 #[macro_export]
 macro_rules! clear{
     () => ($crate::graphics::basic_output::_clear());
+}
+
+#[macro_export]
+macro_rules! panic_unlock {
+    () => {$crate::graphics::basic_output::_panic_print()};
 }
