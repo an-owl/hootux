@@ -115,6 +115,7 @@ name = "hootux"
 version = "0.1.0"
 dependencies = [
  "acpi",
+ "bitflags",
  "bootloader",
  "conquer-once",
  "crossbeam-queue",

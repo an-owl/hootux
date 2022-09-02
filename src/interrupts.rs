@@ -5,6 +5,10 @@ use x86_64::structures::idt::{InterruptDescriptorTable, InterruptStackFrame, Pag
 
 //TODO update to use APIC
 
+static INTERRUPT_COUNTER_TABLE: [u64;256] = [0;256];
+
+pub mod apic;
+
 pub const PIC_0_OFFSET: u8 = 32;
 pub const PIC_1_OFFSET: u8 = PIC_0_OFFSET + 8;
 
