@@ -1,4 +1,5 @@
-use crate::{Apic, gdt};
+use crate::{gdt};
+use apic::Apic;
 use crate::println;
 use lazy_static::lazy_static;
 use log::{error, warn};
