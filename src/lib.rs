@@ -52,8 +52,9 @@ pub fn test_runner(tests: &[&dyn Testable]) {
 pub fn init() {
     gdt::init();
     interrupts::init_exceptions();
-    unsafe { interrupts::PICS.lock().initialize() }
-    x86_64::instructions::interrupts::enable();
+    //unsafe { interrupts::PICS.lock().initialize() }
+    unsafe {interrupts::PICS.lock().disable()}
+    //x86_64::instructions::interrupts::enable();
 }
 
 /// Initializes native memory management. Initializes important thread local and global variables
@@ -61,6 +62,9 @@ pub fn init() {
 ///
 /// this function is unsafe because the caller must ensure that the given arguments are accurate
 pub unsafe fn init_mem(phy_mem_offset: u64, mem_map: &'static [MemoryRegion]){
+
+    interrupts::init_exceptions();
+
     let mut mapper = mem::init(VirtAddr::new(phy_mem_offset));
     let mut frame_alloc = mem::BootInfoFrameAllocator::init(mem_map) ;
     allocator::init_heap(&mut mapper, &mut frame_alloc).expect("heap allocation failed");
@@ -71,9 +75,8 @@ pub unsafe fn init_mem(phy_mem_offset: u64, mem_map: &'static [MemoryRegion]){
         ptt.set_cr3(&mapper)
     };
 
-    let globals = kernel_statics::KernelGlobals::new_without_addr(frame_alloc);
-    let locals = kernel_statics::KernelLocals::init(globals, ptt);
-    kernel_statics::LOCAL.get_mut().write(locals);
+    kernel_statics::init_statics(frame_alloc,ptt);
+    x86_64::instructions::interrupts::enable();
 
 }
 
