@@ -27,15 +27,12 @@ fn kernel_main(b: &'static mut bootloader::BootInfo) -> ! {
         g.buffer_mut().fill_with(||{0xff})
     }
 
-    init();
-
-
-
     //initialize memory things
     unsafe {
         init_mem(b.physical_memory_offset.into_option().unwrap(), &b.memory_regions)
     }
 
+    init();
 
     //initialize graphics
     if let Some(buff) = b.framebuffer.as_mut() {
