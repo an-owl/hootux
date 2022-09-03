@@ -24,6 +24,7 @@ pub mod acpi_driver;
 pub mod apic;
 mod kernel_statics;
 mod logger;
+mod device_check;
 
 pub trait Testable {
     fn run(&self);
