@@ -77,6 +77,7 @@ fn say_hi(){
 #[cfg(not(test))]
 #[panic_handler]
 fn panic_handler(info: &core::panic::PanicInfo) -> ! {
+    unsafe { panic_unlock!(); }
     println!("KERNEL PANIC\nInfo: {}", info);
 
     stop()
