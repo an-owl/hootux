@@ -1,5 +1,7 @@
 use alloc::boxed::Box;
+use core::alloc::{Allocator, Layout};
 use core::cell::RefCell;
+use core::mem;
 use core::mem::MaybeUninit;
 use x86_64::{PhysAddr, VirtAddr};
 use spin::Mutex;
@@ -9,7 +11,9 @@ use crate::mem::{
     page_table_tree::PageTableTree
 };
 
-use crate::allocator::mmio_bump_alloc::MmioBumpHeap;
+use crate::allocator::mmio_bump_alloc::{MmioAlloc, MmioBumpHeap};
+use crate::interrupts::apic::xapic::xApic;
+use crate::interrupts::apic::Apic;
 
 
 pub(crate) static mut LOCAL: RefCell<MaybeUninit<KernelLocals>> = RefCell::new(MaybeUninit::uninit());
@@ -18,6 +22,34 @@ pub(crate) static mut LOCAL: RefCell<MaybeUninit<KernelLocals>> = RefCell::new(M
 #[inline]
 pub(crate) fn fetch_local() -> &'static mut KernelLocals{
     unsafe { LOCAL.get_mut().assume_init_mut() }
+}
+
+pub(crate) fn init_statics(frame_alloc: BootInfoFrameAllocator, ptt: PageTableTree){
+
+    let globals = KernelGlobals::new_without_addr(frame_alloc);
+    let locals = KernelLocals::init(globals, ptt);
+    unsafe {
+        LOCAL.get_mut().write(locals);
+    }
+
+    // get apic
+    let apic = {
+        unsafe {
+            let addr = PhysAddr::new(xApic::fetch_addr().get_apic_base_addr());
+            let ptr = MmioAlloc::new(addr).allocate(
+                Layout::from_size_align_unchecked(
+                    mem::size_of::<xApic>(),
+                    mem::align_of::<xApic>())
+            ).unwrap().cast::<xApic>();
+
+
+            Box::from_raw_in(ptr.as_ptr(),MmioAlloc::new(addr))
+
+        }
+    };
+    unsafe {
+        LOCAL.get_mut().assume_init_mut().local_apic = Some(apic)
+    }
 }
 
 // everything in here should be mutex.
@@ -62,7 +94,9 @@ impl KernelGlobals {
 pub(crate) struct KernelLocals {
     pub page_table_tree: PageTableTree,
     pub mmio_heap_man: MmioBumpHeap,
+    pub local_apic: Option<Box<xApic,MmioAlloc>>,
     kernel_globals: &'static KernelGlobals,
+
 }
 
 impl KernelLocals {
@@ -79,13 +113,15 @@ impl KernelLocals {
             VirtAddr::new((MmioBumpHeap::HEAP_START + MmioBumpHeap::HEAP_SIZE) as u64),
         );
 
-
         Self{
             page_table_tree: tree,
             mmio_heap_man: mmio_heap,
+            local_apic: None,
             kernel_globals: Box::leak(kernel_globals),
         }
     }
+
+
 
     /// Returns kernel_globals as a reference
     pub fn globals(&self) -> &'static KernelGlobals{
