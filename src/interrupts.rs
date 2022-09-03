@@ -1,6 +1,7 @@
-use crate::gdt;
+use crate::{Apic, gdt};
 use crate::println;
 use lazy_static::lazy_static;
+use log::{error, warn};
 use x86_64::structures::idt::{InterruptDescriptorTable, InterruptStackFrame, PageFaultErrorCode};
 
 //TODO update to use APIC
@@ -35,6 +36,8 @@ lazy_static! {
         idt[InterruptIndex::Timer.as_usize()].set_handler_fn(timer_interrupt_handler);
         idt[InterruptIndex::Keyboard.as_usize()].set_handler_fn(keyboard_interrupt_handler);
         idt.general_protection_fault.set_handler_fn(except_general_protection);
+        idt[33].set_handler_fn(apic_error);
+        idt[255].set_handler_fn(spurious);
         idt
     };
 }
@@ -54,10 +57,8 @@ extern "x86-interrupt" fn except_double(stack: InterruptStackFrame, _err: u64) -
 }
 
 extern "x86-interrupt" fn timer_interrupt_handler(_sf: InterruptStackFrame) {
-    unsafe {
-        PICS.lock()
-            .notify_end_of_interrupt(InterruptIndex::Timer.as_u8());
-    }
+    let apic = crate::kernel_statics::fetch_local().local_apic.as_mut().unwrap();
+    apic.declare_eoi();
 }
 extern "x86-interrupt" fn keyboard_interrupt_handler(_sf: InterruptStackFrame) {
     use x86_64::instructions::port::Port;
@@ -95,6 +96,19 @@ extern "x86-interrupt" fn except_general_protection(sf: InterruptStackFrame, e: 
     panic!();
 }
 
+extern "x86-interrupt" fn apic_error(_sf: InterruptStackFrame) {
+    let apic = crate::kernel_statics::fetch_local().local_apic.as_mut().unwrap();
+    let mut err = apic.get_err();
+    while err.bits() != 0 {
+        error!("Apic Error: {err:?}");
+        err = apic.get_err()
+    }
+}
+
+extern "x86-interrupt" fn spurious(sf: InterruptStackFrame) {
+    warn!("spurious Interrupt");
+    println!("{sf:#?}");
+}
 
 
 #[test_case]
