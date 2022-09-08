@@ -1,15 +1,13 @@
-use crate::{gdt};
+use crate::{gdt, kernel_statics};
 use apic::Apic;
 use crate::println;
 use lazy_static::lazy_static;
 use log::{error, warn};
 use x86_64::structures::idt::{InterruptDescriptorTable, InterruptStackFrame, PageFaultErrorCode};
-
-//TODO update to use APIC
-
-static INTERRUPT_COUNTER_TABLE: [u64;256] = [0;256];
+use kernel_interrupts_proc_macro::{gen_interrupt_stubs, set_idt_entries};
 
 pub mod apic;
+pub mod vector_tables;
 
 pub const PIC_0_OFFSET: u8 = 32;
 pub const PIC_1_OFFSET: u8 = PIC_0_OFFSET + 8;

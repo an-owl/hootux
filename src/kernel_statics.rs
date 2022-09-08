@@ -14,6 +14,7 @@ use crate::mem::{
 use crate::allocator::mmio_bump_alloc::{MmioAlloc, MmioBumpHeap};
 use crate::interrupts::apic::xapic::xApic;
 use crate::interrupts::apic::Apic;
+use crate::interrupts::vector_tables::InterruptLog;
 
 
 pub(crate) static mut LOCAL: RefCell<MaybeUninit<KernelLocals>> = RefCell::new(MaybeUninit::uninit());
@@ -95,6 +96,7 @@ pub(crate) struct KernelLocals {
     pub page_table_tree: PageTableTree,
     pub mmio_heap_man: MmioBumpHeap,
     pub local_apic: Option<Box<xApic,MmioAlloc>>,
+    pub interrupt_log: Box<InterruptLog>,
     kernel_globals: &'static KernelGlobals,
 
 }
@@ -117,6 +119,7 @@ impl KernelLocals {
             page_table_tree: tree,
             mmio_heap_man: mmio_heap,
             local_apic: None,
+            interrupt_log: Box::new(InterruptLog::new()),
             kernel_globals: Box::leak(kernel_globals),
         }
     }
