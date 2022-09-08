@@ -36,6 +36,7 @@ lazy_static! {
         idt[InterruptIndex::Keyboard.as_usize()].set_handler_fn(keyboard_interrupt_handler);
         idt.general_protection_fault.set_handler_fn(except_general_protection);
         idt[33].set_handler_fn(apic_error);
+        set_idt_entries!(34);
         idt[255].set_handler_fn(spurious);
         idt
     };
@@ -133,3 +134,5 @@ impl InterruptIndex {
         usize::from(self.as_u8())
     }
 }
+
+gen_interrupt_stubs!(34);
