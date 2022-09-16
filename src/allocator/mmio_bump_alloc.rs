@@ -3,7 +3,7 @@ use core::ptr::NonNull;
 use log::{debug, trace};
 use x86_64::{PhysAddr, VirtAddr};
 use x86_64::structures::paging::{Mapper, Page, PageTableFlags, PhysFrame, Size4KiB};
-use x86_64::structures::paging::page::PageRangeInclusive;
+use x86_64::structures::paging::page::PageRange;
 use crate::mem;
 use crate::mem::DummyFrameAlloc;
 
@@ -40,7 +40,7 @@ impl MmioAlloc{
         let base_page =  Page::<Size4KiB>::containing_address(VirtAddr::from_ptr(alloc_out as *const u8 ));
         let end_page =  Page::containing_address(base_page.start_address() + size);
 
-        let range = PageRangeInclusive{start: base_page, end: end_page};
+        let range = PageRange{start: base_page, end: end_page};
         let phys_addr = self.physical_addr;
 
 
@@ -90,7 +90,7 @@ unsafe impl Allocator for MmioAlloc{
         let start_page =  Page::<Size4KiB>::containing_address(VirtAddr::from_ptr(ptr.as_ptr()));
         let end_page = Page::containing_address( start_page.start_address() + layout.size() );
 
-        let pages = PageRangeInclusive{start: start_page, end: end_page};
+        let pages = PageRange{start: start_page, end: end_page};
 
         for page in pages {
             crate::kernel_statics::fetch_local().page_table_tree.unmap(page).unwrap().1.flush();
