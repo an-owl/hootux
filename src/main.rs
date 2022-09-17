@@ -32,8 +32,6 @@ fn kernel_main(b: &'static mut bootloader::BootInfo) -> ! {
         init_mem(b.physical_memory_offset.into_option().unwrap(), &b.memory_regions)
     }
 
-    init();
-
     //initialize graphics
     if let Some(buff) = b.framebuffer.as_mut() {
         let mut g = graphics::GraphicalFrame { buff };

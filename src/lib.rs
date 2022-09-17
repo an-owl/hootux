@@ -62,7 +62,7 @@ pub fn init() {
 /// this function is unsafe because the caller must ensure that the given arguments are accurate
 pub unsafe fn init_mem(phy_mem_offset: u64, mem_map: &'static [MemoryRegion]){
 
-    interrupts::init_exceptions();
+    init();
 
     let mut mapper = mem::init(VirtAddr::new(phy_mem_offset));
     let mut frame_alloc = mem::BootInfoFrameAllocator::init(mem_map) ;
