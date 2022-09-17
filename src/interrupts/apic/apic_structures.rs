@@ -60,7 +60,7 @@ pub mod registers{
         }
 
         fn get_status(&self) -> bool{
-            return if self.get_reg() & (1 << 12) < 0 {
+            return if self.get_reg() & (1 << 12) > 0 {
                 true
             } else {
                 false
@@ -393,7 +393,7 @@ pub mod apic_types {
 
     impl From<u32> for TriggerMode {
         fn from(input: u32) -> Self {
-        Self::from((input >> 15 & (1)) < 0)
+        Self::from((input >> 15 & (1)) > 0)
     }
     }
 
