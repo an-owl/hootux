@@ -28,7 +28,7 @@ pub trait Apic {
     unsafe fn set_timer(&mut self, mode: TimerMode, time: u32);
 
     /// Declares that the current interrupt has been handled.
-    /// this should be the last thing called before the end of an interupt handler.
+    /// this should be the last thing called before the end of an interrupt handler.
     fn declare_eoi(&mut self);
 
     /// Gets the current error and clears the error register.
