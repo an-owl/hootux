@@ -410,4 +410,49 @@ pub mod apic_types {
         Divide128 = 0o12,
         Divide1 = 0o13, //why is this the highest?
     }
+
+    impl From<u32> for TimerDivisionMode {
+        fn from(n: u32) -> Self {
+            match n {
+                0 => Self::Divide2,
+                0o1 => Self::Divide4,
+                0o2 => Self::Divide8,
+                0o3 => Self::Divide8,
+                0o10 => Self::Divide32,
+                0o11 => Self::Divide64,
+                0o12 => Self::Divide128,
+                0o13 => Self::Divide1,
+                e => panic!("unknown divide_configuration_+register_value {e:}")
+            }
+        }
+    }
+    impl TimerDivisionMode {
+        pub const fn to_divide_value(&self) -> u8 {
+            match self {
+                TimerDivisionMode::Divide1 => 1,
+                TimerDivisionMode::Divide2 => 2,
+                TimerDivisionMode::Divide4 => 4,
+                TimerDivisionMode::Divide8 => 8,
+                TimerDivisionMode::Divide16 => 16,
+                TimerDivisionMode::Divide32 => 32,
+                TimerDivisionMode::Divide64 => 64,
+                TimerDivisionMode::Divide128 => 128,
+            }
+        }
+
+        pub const fn from_divide_value(num: u8) -> Option<Self> {
+            let var  = match num {
+                1 => TimerDivisionMode::Divide1,
+                2 => TimerDivisionMode::Divide2,
+                4 => TimerDivisionMode::Divide4,
+                8 => TimerDivisionMode::Divide8,
+                16 => TimerDivisionMode::Divide16,
+                32 => TimerDivisionMode::Divide32,
+                64 => TimerDivisionMode::Divide64,
+                128 => TimerDivisionMode::Divide128,
+                _ => return None,
+            };
+            Some(var)
+        }
+    }
 }
