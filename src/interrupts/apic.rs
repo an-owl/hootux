@@ -3,7 +3,7 @@ use apic_structures::registers::ApicError;
 use crate::interrupts::apic::apic_structures::apic_types::TimerMode;
 
 pub mod xapic;
-mod apic_structures;
+pub mod apic_structures;
 
 /// Trait for control over the Local Advanced Programmable Interrupt Controller
 ///
