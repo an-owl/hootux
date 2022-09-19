@@ -5,6 +5,10 @@ use super::{Apic};
 use core::fmt::{Debug, Formatter};
 use core::mem::MaybeUninit;
 use core::ops::{Deref, DerefMut};
+use crate::time::{Timer, TimerError, TimerResult};
+
+#[thread_local]
+static mut CLOCKS_PER_USEC: Option<usize> = None;
 
 #[allow(non_camel_case_types)]
 #[repr(C,align(4096))]
@@ -203,6 +207,40 @@ impl Debug for xApic {
 
         builder.finish()
 
+    }
+}
+
+impl Timer for xApic {
+    fn get_period(&self) -> Option<usize> {
+        unsafe { CLOCKS_PER_USEC }
+    }
+
+    fn get_division_mode(&self) -> u32 {
+        let div_value: TimerDivisionMode = self.divide_configuration_register.data.clone().into();
+        div_value.to_divide_value().into()
+
+    }
+
+    /// Supported division modes are `1,2,4,8,16,32,64,128`
+    fn set_division_mode(&mut self, div: u32) -> TimerResult {
+        if div > 128 {
+            return Err(TimerError::DivisionModeUnsupported)
+        }
+        if let Some(mode) = TimerDivisionMode::from_divide_value(div as u8) {
+            self.divide_configuration_register.data = mode;
+            return Ok(())
+        } else { Err(TimerError::DivisionModeUnsupported) }
+    }
+
+    /// Setting the clock on the local APIC starts the clock and setting it to 0 will stop it.
+    fn set_clock_count(&mut self, count: usize, mode: crate::time::TimerMode) -> TimerResult {
+        if count > u32::MAX as usize {
+            return Err(TimerError::CountTooHigh)
+        }
+        let mode: TimerMode = mode.try_into()?;
+        self.timer_vector.data.set_timer_mode(mode);
+        self.initial_timer_count.data = count as u32; // not lossy because of comparison above
+        return Ok(())
     }
 }
 
