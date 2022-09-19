@@ -34,7 +34,8 @@ Convenience functions are provided to build image and run the kernel and may not
 This part is mostly for my own sanity to try to manage what I want to do and to lay out the things I need to to to
 achieve them.
 
- - Clean up memory module 
+ - Remove kernel_statics
+ - Clean up memory module
    - Move allocator into mem
      - that's where it should be
    - unify metrics in page_table_tree.rs
@@ -47,6 +48,8 @@ achieve them.
          - figure out how fast apic timer is
    - pci-e interface
      - preferably backward compatible
+ - Switch to Buddy allocator
+   - because its soo much better than the crap I have now
  - BASIC shell
    - what why? 
    - because it's my kernel
