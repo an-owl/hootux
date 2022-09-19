@@ -10,6 +10,7 @@
 #![feature(inline_const)]
 #![feature(int_roundings)]
 #![feature(allocator_api)]
+#![feature(thread_local)] // TODO remove kernel_statics.rs
 
 extern crate alloc;
 
@@ -21,6 +22,7 @@ pub mod mem;
 pub mod allocator;
 pub mod task;
 pub mod acpi_driver;
+pub mod time;
 mod kernel_statics;
 mod logger;
 mod device_check;
