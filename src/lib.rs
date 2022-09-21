@@ -23,6 +23,7 @@ pub mod allocator;
 pub mod task;
 pub mod acpi_driver;
 pub mod time;
+pub mod system;
 mod kernel_statics;
 mod logger;
 mod device_check;
