@@ -4,7 +4,7 @@ use core::fmt::Formatter;
 /// Checks type U for the presence of T
 pub(crate) struct MaybeExists<T,U:DeviceCheck>{
     inner: T,
-    check: U
+    _check: U
 }
 
 impl<T,U:DeviceCheck> MaybeExists<T,U> {
@@ -14,6 +14,7 @@ impl<T,U:DeviceCheck> MaybeExists<T,U> {
         } else { None }
     }
 
+    #[allow(dead_code)]
     pub fn try_fetch_mut(&mut self) -> Option<&mut T> {
         if U::exists() {
             Some(&mut self.inner)
@@ -25,8 +26,8 @@ impl<T,U:DeviceCheck> core::fmt::Debug for MaybeExists<T,U>
     where T: core::fmt::Debug
 {
     fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
-        if U::exists() {
-            write!(f,"{:?}",self.inner)
+        if let Some(i) = self.try_fetch() {
+            write!(f,"{:?}",i)
         } else {
             write!(f, "Not Present")
         }
