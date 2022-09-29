@@ -61,6 +61,7 @@ pub (crate) mod data_access {
 
 
     use core::alloc::{Allocator, Layout};
+    use core::fmt::{Debug, Formatter};
     use acpi::platform::address::{AccessSize, AddressSpace, GenericAddress};
     use x86_64::VirtAddr;
     use crate::allocator::mmio_bump_alloc::MmioAlloc;
@@ -69,7 +70,7 @@ pub (crate) mod data_access {
     ///
     /// Implements TryInto<u8..64> and TryInto<i8..64> to allow for simple access to the stored data.
     /// These only return Err when `self.size` is less than the size requested
-    pub(crate) struct AcpiData {
+    pub struct AcpiData {
         size: DataSize,
         data: u64,
     }
@@ -169,7 +170,8 @@ pub (crate) mod data_access {
 
 
     #[derive(Debug, Copy, Clone, PartialOrd, PartialEq)]
-    pub(crate) enum DataSize {
+    pub enum DataSize {
+        Undefined,
         Byte,
         Word,
         DWord,
@@ -179,6 +181,7 @@ pub (crate) mod data_access {
     impl Into<u8> for DataSize {
         fn into(self) -> u8 {
             match self {
+                DataSize::Undefined => 0,
                 DataSize::Byte => 1,
                 DataSize::Word => 2,
                 DataSize::DWord => 4,
@@ -190,7 +193,7 @@ pub (crate) mod data_access {
     impl From<AccessSize> for DataSize {
         fn from(o: AccessSize) -> Self {
             match o {
-                AccessSize::Undefined => panic!("Undefined access size"),
+                AccessSize::Undefined => Self::Undefined,
                 AccessSize::ByteAccess => Self::Byte,
                 AccessSize::WordAccess => Self::Word,
                 AccessSize::DWordAccess => Self::DWord,
@@ -201,14 +204,28 @@ pub (crate) mod data_access {
 
 
     /// Trait for accessing Data behind an [acpi::platform::address::GenericAddress]
-    pub(crate) trait DataAccess
+    pub trait DataAccess
         where Self: Sized
     {
         fn new(addr: usize, size: DataSize) -> Self;
         unsafe fn read(&self) -> AcpiData;
         unsafe fn write(&mut self, value: u64);
+        /// Manually sets size for types where size is undefined
+        /// Size is in bytes
+        ///
+        /// #Panics
+        ///
+        /// This fn should panic if self.size is defined ir is invalid the access type.
+        ///
+        /// #Saftey
+        ///
+        /// This fn is unsafe because the programmer ensure that size is correct for the type being
+        /// accessed failure to do so may cause UB
+        unsafe fn set_size(&mut self, size: DataSize);
+        fn is_size_defined(&self) -> bool;
     }
 
+    #[derive(Debug)]
     pub(crate) struct PortAccess {
         data_size: DataSize,
         port_addr: u16,
@@ -225,6 +242,9 @@ pub (crate) mod data_access {
         unsafe fn read(&self) -> AcpiData {
             use x86_64::instructions::port::Port;
             let num = match self.data_size {
+                DataSize::Undefined => {
+                    panic!("Tried to access data with undefined size")
+                }
                 DataSize::Byte => {
                     let data: u8 = Port::new(self.port_addr).read();
                     data as u64
@@ -251,6 +271,9 @@ pub (crate) mod data_access {
         unsafe fn write(&mut self, value: u64) {
             use x86_64::instructions::port::Port;
             match self.data_size {
+                DataSize::Undefined => {
+                    panic!("Tried to access data with undefined size")
+                }
                 DataSize::Byte => {
                     Port::new(self.port_addr).write(value as u8);
                 }
@@ -265,12 +288,35 @@ pub (crate) mod data_access {
                 }
             };
         }
+
+        unsafe fn set_size(&mut self, size: DataSize) {
+            assert_eq!(self.data_size, DataSize::Undefined, "data_size already defined");
+            assert_ne!(size, DataSize::QWord, "Attempted to set PortAccess size to `DataSize::QWord`");
+            self.data_size = size;
+        }
+
+        fn is_size_defined(&self) -> bool {
+            if self.data_size != DataSize::Undefined {
+                true
+            } else {
+                false
+            }
+        }
     }
 
     pub(crate) struct MemoryAccess {
         data_size: DataSize,
         alloc: MmioAlloc,
         ptr: VirtAddr,
+    }
+
+    impl Debug for MemoryAccess {
+        fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
+            let mut b = f.debug_struct("MemoryAccess");
+            b.field("data_size", &self.data_size);
+            b.field("ptr", &self.ptr);
+            b.finish()
+        }
     }
 
     impl DataAccess for MemoryAccess {
@@ -292,6 +338,9 @@ pub (crate) mod data_access {
 
         unsafe fn read(&self) -> AcpiData {
             let data = match self.data_size {
+                DataSize::Undefined => {
+                    panic!("Tried to access data with undefined size")
+                }
                 DataSize::Byte => {
                     let data: *const u8 = self.ptr.as_ptr();
                     *data as u64
@@ -318,6 +367,9 @@ pub (crate) mod data_access {
 
         unsafe fn write(&mut self, value: u64) {
             match self.data_size {
+                DataSize::Undefined => {
+                    panic!("Tried to access data with undefined size")
+                }
                 DataSize::Byte => {
                     *self.ptr.as_mut_ptr() = value as u8
                 }
@@ -330,6 +382,19 @@ pub (crate) mod data_access {
                 DataSize::QWord => {
                     *self.ptr.as_mut_ptr() = value as u64
                 }
+            }
+        }
+
+        unsafe fn set_size(&mut self, size: DataSize) {
+            assert_eq!(self.data_size, DataSize::Undefined, "data_size already defined");
+            self.data_size = size;
+        }
+
+        fn is_size_defined(&self) -> bool {
+            if self.data_size != DataSize::Undefined {
+                true
+            } else {
+                false
             }
         }
     }
@@ -347,6 +412,7 @@ pub (crate) mod data_access {
 
     }
 
+    #[derive(Debug)]
     pub(crate) enum DataAccessType {
         PortAccess(PortAccess),
         MemoryAccess(MemoryAccess),
@@ -365,6 +431,21 @@ pub (crate) mod data_access {
             match self {
                 DataAccessType::PortAccess(acc) => unsafe { acc.write(value) }
                 DataAccessType::MemoryAccess(acc) => unsafe { acc.write(value) }
+            }
+        }
+
+        pub fn is_size_defined(&self) -> bool {
+            match self {
+                DataAccessType::PortAccess(acc) => acc.is_size_defined(),
+                DataAccessType::MemoryAccess(acc) => acc.is_size_defined(),
+            }
+        }
+
+        /// Wrapper for [DataAccess::set_size]
+        pub unsafe fn define_size(&mut self, size: DataSize) {
+            match self {
+                DataAccessType::PortAccess(acc) => acc.set_size(size),
+                DataAccessType::MemoryAccess(acc) => acc.set_size(size),
             }
         }
     }
