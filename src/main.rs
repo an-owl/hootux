@@ -2,11 +2,13 @@
 #![no_main]
 #![feature(const_mut_refs)]
 #![feature(custom_test_frameworks)]
+#![feature(allocator_api)]
 #![test_runner(hootux::test_runner)]
 #![reexport_test_harness_main = "test_main"]
 
 extern crate alloc;
 
+use alloc::boxed::Box;
 use hootux::*;
 use bootloader::entry_point;
 use hootux::graphics::basic_output::BasicTTY;
@@ -14,6 +16,7 @@ use hootux::task::{executor, Task};
 use hootux::task::keyboard;
 use hootux::exit_qemu;
 use log::debug;
+use hootux::time::{kernel_init_timer};
 
 
 entry_point!(kernel_main);
@@ -26,6 +29,8 @@ fn kernel_main(b: &'static mut bootloader::BootInfo) -> ! {
     if let Some(g) = b.framebuffer.as_mut(){
         g.buffer_mut().fill_with(||{0xff})
     }
+
+
 
     //initialize memory things
     unsafe {
@@ -42,6 +47,15 @@ fn kernel_main(b: &'static mut bootloader::BootInfo) -> ! {
             graphics::basic_output::WRITER = spin::Mutex::new(Some(tty));
         }
     };
+
+    unsafe {
+        let t = acpi::AcpiTables::from_rsdp(system::acpi::AcpiGrabber, *b.rsdp_addr.as_mut().unwrap() as usize).unwrap();
+        let fadt = acpi::PlatformInfo::new(&t).unwrap();
+        let pmtimer = fadt.pm_timer.expect("No PmTimer found");
+        let timer = Box::new(time::acpi_pm_timer::AcpiTimer::locate(pmtimer));
+        kernel_init_timer(timer);
+    }
+
     init_logger();
 
     say_hi();
