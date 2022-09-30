@@ -9,6 +9,9 @@
 pub mod high_precision_event_timer;
 pub(crate) type TimerResult = Result<(),TimerError>;
 
+static SYSTEM_TIME: spin::RwLock<SystemTime> = spin::RwLock::new(SystemTime::new());
+static SYSTEM_TIMEKEEPER: spin::RwLock<Option<alloc::boxed::Box<(dyn TimeKeeper + Sync + Send)>>> = spin::RwLock::new(None);
+
 /// This contains a reference to the system timer. Changing the concrete type is VERY UNSAFE and
 /// must be synchronised between threads. Failure to do so may cause missed timer interrupts or
 /// result in timer interrupts too early.
@@ -73,7 +76,7 @@ impl TryInto<crate::interrupts::apic::apic_structures::apic_types::TimerMode> fo
     type Error = TimerError;
 
     /// Returns FeatureUnavailable when mode is not supported by APIC
-    #[allow(unreachable_code)] // Self is non_exhaustive
+    #[allow(unreachable_patterns)] // Self is non_exhaustive
     fn try_into(self) -> Result<crate::interrupts::apic::apic_structures::apic_types::TimerMode, Self::Error> {
 
         return match self {
@@ -146,4 +149,68 @@ impl<T: Timer> Timer for ThreadSafeTimer<T> {
     fn set_clock(&mut self, period: usize, mode: TimerMode) -> TimerResult {
         self.timer.write().set_clock(period,mode)
     }
+}
+
+/// Struct for recording duration since boot
+#[derive(Copy, Clone)]
+struct SystemTime {
+    /// time recorded when self was last updated
+    time: u64,
+
+    /// timer count when self was last updated
+    last_check: u64,
+}
+
+impl SystemTime {
+    const fn new() -> Self {
+        Self {
+            time: 0,
+            last_check: 0,
+        }
+    }
+
+    /// Returns the current time in nanoseconds since boot
+    fn get_system_time(&mut self) -> u64 {
+        self.update();
+        self.time
+    }
+
+    /// Sets self to time 0 and records the clock count
+    fn init(&mut self) {
+        self.last_check = SYSTEM_TIMEKEEPER.read().as_ref().unwrap().time_since(0).1 // panics if called before `kernel_init_timer`
+    }
+
+    /// Syncs the system time with the current clock count
+    fn update(&mut self) {
+
+        let (period, recorded_clock) = SYSTEM_TIMEKEEPER
+            .read()
+            .as_ref()
+            .unwrap()
+            .time_since(self.last_check);
+
+        self.time += period;
+        self.last_check = recorded_clock
+    }
+}
+
+
+/// Trait for calculating durations should be used for system timekeeping
+pub trait TimeKeeper {
+    /// Returns `(duration, clock_read)` since last read. where clock read is the value read from
+    /// the clock used to calculate the duration
+    ///
+    /// Implementations must account for handle rollover
+    fn time_since(&self, old_time: u64) -> (u64,u64);
+}
+
+/// Public interface for [SystemTime::get_system_time]
+pub fn get_sys_time() -> u64 {
+    // todo: speed up with try read. on fail skip update
+    SYSTEM_TIME.write().get_system_time()
+}
+
+pub fn kernel_init_timer(timer: alloc::boxed::Box<(impl TimeKeeper + Sync + Send + 'static )>) { // This takes ownership but does not compile without 'static. WHY?
+    *SYSTEM_TIMEKEEPER.write() = Some(timer);
+    SYSTEM_TIME.write().init();
 }
