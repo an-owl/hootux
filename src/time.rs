@@ -6,7 +6,7 @@
 //! Timers may not all act exactly the same and their module level documentation should reflect
 //! these quirks
 
-pub mod high_precision_event_timer;
+pub mod acpi_pm_timer;
 pub(crate) type TimerResult = Result<(),TimerError>;
 
 static SYSTEM_TIME: spin::RwLock<SystemTime> = spin::RwLock::new(SystemTime::new());
