@@ -102,6 +102,14 @@ impl Apic for xApic {
 }
 
 impl xApic{
+
+    pub fn fetch_addr() -> ApicBaseData {
+        unsafe {
+            use x86_msr::Msr;
+            x86_msr::architecture::ApicBase::read()
+        }
+    }
+
     pub fn gen_err(&mut self) {
         for i in &mut self._reserved{
             i._space.write(20);

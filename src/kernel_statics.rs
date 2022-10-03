@@ -13,7 +13,6 @@ use crate::mem::{
 
 use crate::allocator::mmio_bump_alloc::{MmioAlloc, MmioBumpHeap};
 use crate::interrupts::apic::xapic::xApic;
-use crate::interrupts::apic::Apic;
 use crate::interrupts::vector_tables::InterruptLog;
 
 
