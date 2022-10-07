@@ -217,7 +217,7 @@ impl Debug for xApic {
 }
 
 impl Timer for xApic {
-    fn get_period(&self) -> Option<usize> {
+    fn get_period(&self) -> Option<u64> {
         unsafe { CLOCKS_PER_USEC }
     }
 
@@ -239,8 +239,8 @@ impl Timer for xApic {
     }
 
     /// Setting the clock on the local APIC starts the clock and setting it to 0 will stop it.
-    fn set_clock_count(&mut self, count: usize, mode: crate::time::TimerMode) -> TimerResult {
-        if count > u32::MAX as usize {
+    fn set_clock_count(&mut self, count: u64, mode: crate::time::TimerMode) -> TimerResult {
+        if count > u32::MAX as u64 {
             return Err(TimerError::CountTooHigh)
         }
         let mode: TimerMode = mode.try_into()?;

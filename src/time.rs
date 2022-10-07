@@ -42,15 +42,15 @@ pub enum TimerError {
 pub trait Timer {
 
     /// This function gets the number of clocks for a given period
-    fn get_period(&self) -> Option<usize>;
+    fn get_period(&self) -> Option<u64>;
     fn get_division_mode(&self) -> u32;
     fn set_division_mode(&mut self, div: u32) -> TimerResult;
 
     /// Sets the timer in clocks and timer mode
-    fn set_clock_count(&mut self, count: usize, mode: TimerMode) -> TimerResult;
+    fn set_clock_count(&mut self, count: u64, mode: TimerMode) -> TimerResult;
 
     /// Sets the timer based on a given timer period via [set_clock_count]
-    fn set_clock(&mut self, period: usize, mode: TimerMode) -> TimerResult {
+    fn set_clock(&mut self, period: u64, mode: TimerMode) -> TimerResult {
         if let Some(clocks) = self.get_period(){
             self.set_clock_count(clocks * period,mode)
         } else {
