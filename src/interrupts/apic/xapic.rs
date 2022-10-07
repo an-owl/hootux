@@ -248,6 +248,10 @@ impl Timer for xApic {
         self.initial_timer_count.data = count as u32; // not lossy because of comparison above
         return Ok(())
     }
+
+    fn get_initial_clock(&self) -> Result<u64,TimerError> {
+        Ok(self.initial_timer_count.data as u64)
+    }
 }
 
 struct ThermalVectorCheck;

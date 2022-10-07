@@ -59,6 +59,8 @@ pub trait Timer {
 
 
     }
+
+    fn get_initial_clock(&self) -> Result<u64,TimerError>;
 }
 
 /// All supported Timer modes are listed within this enum. Some modes may be unsupported on some
