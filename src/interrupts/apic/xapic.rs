@@ -7,8 +7,6 @@ use core::mem::MaybeUninit;
 use core::ops::{Deref, DerefMut};
 use crate::time::{Timer, TimerError, TimerResult};
 
-#[thread_local]
-static mut CLOCKS_PER_USEC: Option<usize> = None;
 
 #[allow(non_camel_case_types)]
 #[repr(C,align(4096))]
