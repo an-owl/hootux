@@ -1,9 +1,14 @@
-use x86_msr::Msr;
+use alloc::boxed::Box;
 use apic_structures::registers::ApicError;
 use crate::interrupts::apic::apic_structures::apic_types::TimerMode;
 
 pub mod xapic;
 pub mod apic_structures;
+
+/// Contains the cpus local APIC. Uses mutex in case of mischievous r/w
+#[thread_local]
+pub static LOCAL_APIC: spin::Mutex<Option<Box<dyn Apic>>> = spin::Mutex::new(None);
+
 
 /// Trait for control over the Local Advanced Programmable Interrupt Controller
 ///
@@ -28,6 +33,44 @@ pub trait Apic: crate::time::Timer {
 
     /// Gets the current error and clears the error register.
     fn get_err(&self) -> ApicError;
+
+    /// Calibrates the local APIC timer to [TARGET_FREQ].
+    /// `test_time` is the time used for the clock until the test is complete.
+    ///
+    /// Before this fn returns it will mask the timer. This will need to be re-enabled after
+    /// changing the interrupt handler to a permanent one.
+    ///
+    /// #Panics
+    ///
+    /// Implementations should panic if `super::IHC\[vec\]` is already occupied
+    fn begin_calibration(&mut self, test_time: u32, vec: u8);
 }
 
-//fn get_timer_speed() ->
+const TARGET_FREQ: u32 = 300;
+const TARGET_PERIOD: u64 = (1000000000f64*(1 as f64/ TARGET_FREQ as f64)) as u64; // no touch
+
+//#[thread_local]
+static mut CALI: Option<u64> = None;
+
+/// Interrupt handler used for calibrating the local APIC timer.
+fn handle_timer_and_calibrate(){
+    unsafe { CALI = Some(crate::time::get_sys_time()) }
+    crate::kernel_statics::fetch_local().local_apic.as_mut().unwrap().declare_eoi();
+}
+
+/// Default timer handler. Updates system time then exits.
+fn timer_handler() {
+    crate::time::get_sys_time();
+    crate::kernel_statics::fetch_local().local_apic.as_mut().unwrap().declare_eoi()
+}
+
+/// Calibrates local APIC and sets interrupt handler.
+/// This is temporary and required because of the privacy of [crate::kernel_statics]
+pub fn cal_and_run(time: u32, vec: u8) {
+    crate::kernel_statics::fetch_local().local_apic.as_mut().unwrap().begin_calibration(time,vec);
+
+    unsafe {
+        super::vector_tables::IHR.set(vec, timer_handler).expect("???");
+        crate::kernel_statics::fetch_local().local_apic.as_mut().unwrap().init_timer(vec,false);
+    };
+}

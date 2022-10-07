@@ -132,7 +132,7 @@ impl<T: Timer> Clone for ThreadSafeTimer<T> {
 }
 
 impl<T: Timer> Timer for ThreadSafeTimer<T> {
-    fn get_period(&self) -> Option<usize> {
+    fn get_period(&self) -> Option<u64> {
         self.timer.read().get_period()
     }
 
@@ -144,12 +144,16 @@ impl<T: Timer> Timer for ThreadSafeTimer<T> {
         self.timer.write().set_division_mode(div)
     }
 
-    fn set_clock_count(&mut self, count: usize, mode: TimerMode) -> TimerResult {
+    fn set_clock_count(&mut self, count: u64, mode: TimerMode) -> TimerResult {
         self.timer.write().set_clock_count(count,mode)
     }
 
-    fn set_clock(&mut self, period: usize, mode: TimerMode) -> TimerResult {
+    fn set_clock(&mut self, period: u64, mode: TimerMode) -> TimerResult {
         self.timer.write().set_clock(period,mode)
+    }
+
+    fn get_initial_clock(&self) -> Result<u64, TimerError> {
+        self.timer.read().get_initial_clock()
     }
 }
 

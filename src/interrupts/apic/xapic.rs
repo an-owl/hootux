@@ -5,6 +5,7 @@ use super::{Apic};
 use core::fmt::{Debug, Formatter};
 use core::mem::MaybeUninit;
 use core::ops::{Deref, DerefMut};
+use x86_msr::architecture::ApicBaseData;
 use crate::time::{Timer, TimerError, TimerResult};
 
 
@@ -96,6 +97,55 @@ impl Apic for xApic {
 
     fn get_err(&self) -> ApicError {
         self.error_status.data.clone()
+    }
+
+    fn begin_calibration(&mut self, test_time: u32, vec: u8) {
+        let apic = crate::kernel_statics::fetch_local().local_apic.as_mut().unwrap();
+        unsafe {
+            super::super::vector_tables::IHR.set(vec, super::handle_timer_and_calibrate).expect("Vector already occupied");
+
+            apic.init_timer(50, false);
+            apic.set_timer(TimerMode::Periodic, test_time);
+        }
+
+        let initial_time;
+        let duration;
+
+        // compiler wont like this. Optimizations might cause bugs
+        // this needs to be done twice because the first clock is always very slow
+        loop {
+            if let Some(_) = unsafe { &super::CALI } {
+                initial_time = crate::time::get_sys_time();
+                unsafe { super::CALI = None; }
+                break
+            }
+            x86_64::instructions::hlt()
+        }
+
+        loop {
+            if let Some(new) = unsafe { super::CALI } {
+                duration = new - initial_time;
+                break
+            }
+            x86_64::instructions::hlt()
+        }
+
+        // SAFETY: This is safe because all given vectors are handled
+
+
+        let ratio = super::TARGET_PERIOD as f32/duration as f32;
+        let out = ratio  * test_time as f32; // Uses fp for precision. shouldn't have to big of an effect on performance
+
+        let (time,divide) = TimerDivisionMode::best_try_divide(out as u64);
+        self.divide_configuration_register.data = divide;
+
+        // SAFETY: init_timer(_,true) is safe to use and makes th following fn's to use
+        unsafe {
+            apic.init_timer(vec, true);
+            self.set_timer(TimerMode::Periodic, time);
+            // disable all the stuff this enabled
+            super::super::vector_tables::IHR.unset(vec);
+        }
     }
 }
 
