@@ -460,5 +460,28 @@ pub mod apic_types {
             };
             Some(var)
         }
+
+        /// This calculates a timer count and a Divisor of a given number. The lowest possible
+        /// divisor will be used for the given number.
+        ///
+        /// #Panics
+        ///
+        /// This function will panic if num is greater than 0x7fffffffff. This is because num cannot
+        /// be divided by 128 without still exceeding `u32::MAX`
+        pub const fn best_try_divide(num: u64) -> (u32, Self) {
+            match num {
+                0..=0xffffffff => (num as u32,Self::Divide1),
+                0x100000000..=0x1ffffffff => (num as u32/2,Self::Divide2),
+                0x200000000..=0x3ffffffff => (num as u32/4,Self::Divide4),
+                0x400000000..=0x7ffffffff => (num as u32/8,Self::Divide8),
+                0x800000000..=0xfffffffff => (num as u32/16,Self::Divide16),
+                0x1000000000..=0x1fffffffff => (num as u32/32,Self::Divide32),
+                0x2000000000..=0x3fffffffff => (num as u32/64,Self::Divide64),
+                0x4000000000..=0x7fffffffff => (num as u32/128, Self::Divide128),
+                _ => {
+                    panic!("best_try_divide too high")
+                }
+            }
+        }
     }
 }
