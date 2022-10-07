@@ -55,6 +55,9 @@ fn kernel_main(b: &'static mut bootloader::BootInfo) -> ! {
         let timer = Box::new(time::acpi_pm_timer::AcpiTimer::locate(pmtimer));
         kernel_init_timer(timer);
     }
+    // temporary, until thread local segment is set up
+    interrupts::apic::cal_and_run(0x20000,50);
+
 
     init_logger();
 
