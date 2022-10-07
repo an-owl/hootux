@@ -50,7 +50,13 @@ pub mod registers{
         /// This function is unsafe because if its interrupt vector is not set correctly it will
         /// result in a double fault.
         unsafe fn set_mask(&mut self, mask: bool){
-            *self.get_reg_mut() &= (mask as u32) << 16;
+            if self.get_mask() != mask {
+                if mask {
+                    *self.get_reg_mut() |= 1 << 16;
+                } else {
+                    *self.get_reg_mut() &= !(1 << 16);
+                }
+            }
         }
 
         fn get_mask (&self) -> bool {
