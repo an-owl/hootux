@@ -35,6 +35,7 @@ This part is mostly for my own sanity to try to manage what I want to do and to 
 achieve them.
 
  - Remove kernel_statics
+   - add TLS support
  - Clean up memory module
    - Move allocator into mem
      - that's where it should be
@@ -43,9 +44,9 @@ achieve them.
      - unify functions too, there are a lot in there that do very similar things and should be condensed
  - AHCI driver
    - requires proper scheduling
-     - requires somewhat accurate timer
-       - use apic timer
-         - figure out how fast apic timer is
+     - --requires somewhat accurate timer--
+       - --use apic timer--
+         - --figure out how fast apic timer is--
    - pci-e interface
      - preferably backward compatible
  - Switch to Buddy allocator
