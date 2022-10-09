@@ -267,9 +267,6 @@ impl Debug for xApic {
 }
 
 impl Timer for xApic {
-    fn get_period(&self) -> Option<u64> {
-        unsafe { CLOCKS_PER_USEC }
-    }
 
     fn get_division_mode(&self) -> u32 {
         let div_value: TimerDivisionMode = self.divide_configuration_register.data.clone().into();

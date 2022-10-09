@@ -41,24 +41,11 @@ pub enum TimerError {
 
 pub trait Timer {
 
-    /// This function gets the number of clocks for a given period
-    fn get_period(&self) -> Option<u64>;
     fn get_division_mode(&self) -> u32;
     fn set_division_mode(&mut self, div: u32) -> TimerResult;
 
     /// Sets the timer in clocks and timer mode
     fn set_clock_count(&mut self, count: u64, mode: TimerMode) -> TimerResult;
-
-    /// Sets the timer based on a given timer period via [set_clock_count]
-    fn set_clock(&mut self, period: u64, mode: TimerMode) -> TimerResult {
-        if let Some(clocks) = self.get_period(){
-            self.set_clock_count(clocks * period,mode)
-        } else {
-            Err(TimerError::ClockPeriodUnknown)
-        }
-
-
-    }
 
     fn get_initial_clock(&self) -> Result<u64,TimerError>;
 }
@@ -132,9 +119,6 @@ impl<T: Timer> Clone for ThreadSafeTimer<T> {
 }
 
 impl<T: Timer> Timer for ThreadSafeTimer<T> {
-    fn get_period(&self) -> Option<u64> {
-        self.timer.read().get_period()
-    }
 
     fn get_division_mode(&self) -> u32 {
         self.timer.read().get_division_mode()
@@ -146,10 +130,6 @@ impl<T: Timer> Timer for ThreadSafeTimer<T> {
 
     fn set_clock_count(&mut self, count: u64, mode: TimerMode) -> TimerResult {
         self.timer.write().set_clock_count(count,mode)
-    }
-
-    fn set_clock(&mut self, period: u64, mode: TimerMode) -> TimerResult {
-        self.timer.write().set_clock(period,mode)
     }
 
     fn get_initial_clock(&self) -> Result<u64, TimerError> {
