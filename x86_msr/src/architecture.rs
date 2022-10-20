@@ -160,3 +160,93 @@ impl Msr<ApicBaseData> for ApicBase {
         bits
     }
 }
+
+pub struct FsBase;
+
+pub struct GsBase;
+
+pub struct KernelGsBase;
+
+#[repr(C)]
+#[derive(Debug,Clone)]
+pub struct BaseAddr(u64);
+
+impl MsrFlags for BaseAddr {
+    fn bits(&self) -> (u32, u32) {
+        let high = (self.0 >> 32) as u32;
+        let low = self.0 as u32;
+        (high,low)
+    }
+
+    fn new(high: u32, low: u32) -> Self {
+        let mut n = (high as u64) << 32;
+        n &= low as u64;
+        Self(n)
+    }
+}
+
+impl From<u64> for BaseAddr {
+    fn from(n: u64) -> Self {
+        Self(n)
+    }
+}
+
+impl<T> From<*const T> for BaseAddr {
+    fn from(n: *const T) -> Self {
+        Self(n as usize as u64)
+    }
+}
+
+impl<T> From<*mut T> for BaseAddr {
+    fn from(n: *mut T) -> Self {
+        Self(n as usize as u64)
+    }
+}
+
+impl<T> Into<*const T> for BaseAddr {
+    fn into(self) -> *const T {
+        self.0 as usize as *const T
+    }
+}
+
+impl<T> Into<*mut T> for BaseAddr {
+    fn into(self) -> *mut T {
+        self.0 as usize as *mut T
+    }
+}
+
+impl Msr<BaseAddr> for FsBase {
+    const MSR_ADDR: u32 = 0xc000_0100;
+
+    fn availability() -> MsrAvailability {
+        if raw_cpuid::cpuid!(80000001).edx & (1 << 29) > 0 {
+            MsrAvailability::new(MsrReadWrite::Write)
+        } else {
+            MsrAvailability::new(MsrReadWrite::Reserved)
+        }
+    }
+}
+
+impl Msr<BaseAddr> for GsBase {
+    const MSR_ADDR: u32 = 0xc000_0101;
+
+    fn availability() -> MsrAvailability {
+        if raw_cpuid::cpuid!(80000001).edx & (1 << 29) > 0 {
+            MsrAvailability::new(MsrReadWrite::Write)
+        } else {
+            MsrAvailability::new(MsrReadWrite::Reserved)
+        }
+    }
+}
+
+impl Msr<BaseAddr> for KernelGsBase {
+    const MSR_ADDR: u32 = 0xc000_0102;
+
+    fn availability() -> MsrAvailability {
+        if raw_cpuid::cpuid!(80000001).edx & (1 << 29) > 0 {
+            MsrAvailability::new(MsrReadWrite::Write)
+        } else {
+            MsrAvailability::new(MsrReadWrite::Reserved)
+        }
+    }
+}
