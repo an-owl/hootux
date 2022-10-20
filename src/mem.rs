@@ -13,6 +13,7 @@ use x86_64::{structures::paging::PageTable, PhysAddr, VirtAddr};
 
 pub mod page_table_tree;
 pub(self) mod offset_page_table;
+pub mod thread_local_storage;
 
 pub const PAGE_SIZE: usize = 4096;
 
