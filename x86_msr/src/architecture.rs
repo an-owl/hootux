@@ -96,7 +96,7 @@ impl Msr<SpecCtrlFlags> for SpecCtrl {
 }
 
 /// This register contains information about the Apic including its base physical address
-pub struct ApicBase {}
+pub struct ApicBase;
 
 bitflags! {
     /// see [ApicBase]
