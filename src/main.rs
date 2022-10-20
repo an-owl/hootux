@@ -37,6 +37,18 @@ fn kernel_main(b: &'static mut bootloader::BootInfo) -> ! {
         init_mem(b.physical_memory_offset.into_option().unwrap(), &b.memory_regions)
     }
 
+    if let bootloader::boot_info::Optional::Some(tls) = b.tls_template {
+
+        // SAFETY: this is safe because the data given is correct
+        unsafe {
+            mem::thread_local_storage::init_tls(
+                tls.start_addr as usize as *const u8,
+                tls.file_size as usize,
+                tls.mem_size as usize
+            )
+        }
+    }
+
     //initialize graphics
     if let Some(buff) = b.framebuffer.as_mut() {
         let mut g = graphics::GraphicalFrame { buff };
