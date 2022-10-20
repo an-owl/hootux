@@ -60,7 +60,7 @@ fn handle_timer_and_calibrate(){
 
 /// Default timer handler. Updates system time then exits.
 fn timer_handler() {
-    crate::time::get_sys_time();
+    crate::time::update_timer();
     crate::kernel_statics::fetch_local().local_apic.as_mut().unwrap().declare_eoi()
 }
 

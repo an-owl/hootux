@@ -196,6 +196,12 @@ pub fn get_sys_time() -> u64 {
     SYSTEM_TIME.write().get_system_time()
 }
 
+pub(crate) fn update_timer(){
+    if let Some(mut t) = SYSTEM_TIME.try_write(){
+        t.update()
+    }
+}
+
 pub fn kernel_init_timer(timer: alloc::boxed::Box<(impl TimeKeeper + Sync + Send + 'static )>) { // This takes ownership but does not compile without 'static. WHY?
     *SYSTEM_TIMEKEEPER.write() = Some(timer);
     SYSTEM_TIME.write().init();
