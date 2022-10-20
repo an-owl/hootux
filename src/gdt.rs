@@ -1,5 +1,6 @@
 use lazy_static::lazy_static;
 use x86_64::instructions::segmentation::SS;
+use x86_64::registers::segmentation::FS;
 use x86_64::structures::tss::TaskStateSegment;
 use x86_64::VirtAddr;
 
@@ -56,5 +57,6 @@ pub fn init() {
         CS::set_reg(GDT.1.code_selector);
         load_tss(GDT.1.tss_selector);
         SS::set_reg(GDT.1.data_selector);
+        FS::set_reg(GDT.1.data_selector); // Set base addr using `IA32_FS_BASE`.
     }
 }
