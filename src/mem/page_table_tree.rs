@@ -14,7 +14,6 @@ use x86_64::structures::paging::{
     PageTable, PageTableFlags, PageTableIndex, PhysFrame, Size1GiB, Size2MiB, Size4KiB,
 };
 use x86_64::{PhysAddr, VirtAddr};
-use crate::mem;
 
 //TODO unify metrics (i.e page/frame or address)
 
@@ -1292,19 +1291,6 @@ impl Drop for PageTableBranch {
 fn test_mapper(){
     let local = crate::kernel_statics::fetch_local();
     let page_count = 512;
-    let start_page = Page::<Size4KiB>::containing_address(VirtAddr::new(0xdeadbeef));
-    let range = PageRangeInclusive{start: start_page, end: Page::containing_address(start_page.start_address() + (PAGE_SIZE * page_count))};
-    let flags = PageTableFlags::PRESENT | PageTableFlags::WRITABLE | PageTableFlags::BIT_9;
-
-    for page in range {
-        let frame = local.globals().frame_alloc.lock().allocate_frame().unwrap();
-        unsafe { local.page_table_tree.map_to(page, frame, flags,&mut mem::DummyFrameAlloc) }.unwrap().flush();
-    }
-}
-
-pub fn test_mapper_dbg(){
-    let local = crate::kernel_statics::fetch_local();
-    let page_count = 1024;
     let start_page = Page::<Size4KiB>::containing_address(VirtAddr::new(0xdeadbeef));
     let range = PageRangeInclusive{start: start_page, end: Page::containing_address(start_page.start_address() + (PAGE_SIZE * page_count))};
     let flags = PageTableFlags::PRESENT | PageTableFlags::WRITABLE | PageTableFlags::BIT_9;
