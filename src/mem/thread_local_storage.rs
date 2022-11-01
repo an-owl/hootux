@@ -5,7 +5,8 @@
 
 use alloc::boxed::Box;
 use x86_msr::Msr;
-use crate::println;
+
+const TLS_ALIGN: usize = 8;
 
 /// Creates a region of `mem_size` which contains contains thread local data. This function will
 /// `mem_size` bytes onto the heap. The returned pointer points to the uninitialized Thread Control
@@ -16,16 +17,16 @@ use crate::println;
 /// This function is unsafe because the programmer must ensure that all args correctly describe the
 /// thread local template.
 unsafe fn create_tls(t_data: *const u8, file_size: usize, mem_size: usize) -> *const u8 {
-    let layout = core::alloc::Layout::from_size_align(mem_size,4).unwrap();
+    let layout = core::alloc::Layout::from_size_align(mem_size,TLS_ALIGN).unwrap();
     let region = core::slice::from_raw_parts_mut(alloc::alloc::alloc(layout),mem_size);
 
     let template = core::slice::from_raw_parts(t_data,file_size);
-    region.clone_from_slice(template);
+    region[..file_size].clone_from_slice(template);
     region[file_size..mem_size].fill_with(|| { 0 });
 
     let ptr = region.as_ptr() as usize;
     let tcb_ptr = (ptr + mem_size) as *const u8;
-    let offset = tcb_ptr.align_offset(4);
+    let offset = tcb_ptr.align_offset(TLS_ALIGN);
     let tcb_aligned = (tcb_ptr as usize + offset) as *const u8;
 
     tcb_aligned
