@@ -47,7 +47,10 @@ fn gen_interrupt_stubs_inner(num: u32) -> TokenStream2 {
 
     let this = quote!(
         extern "x86-interrupt" fn #name(_sf: InterruptStackFrame) {
-            kernel_statics::fetch_local().interrupt_log.log(#byte);
+
+            unsafe {
+            crate::interrupts::vector_tables::INT_LOG.log(#byte);
+            }
 
             if let Some(f) = *vector_tables::IHR.get(#byte).read() {
                 f();

@@ -2,6 +2,8 @@ use log::{Log, Metadata, Record};
 use spin::RwLock;
 use crate::{println, serial_println};
 
+pub(crate) static LOGGER: Logger = Logger::new();
+
 pub(crate) struct Logger{
     inner: RwLock<LoggerInner>
 }

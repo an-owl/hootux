@@ -34,7 +34,7 @@ impl MmioAlloc{
         let internal_layout = unsafe { Layout::from_size_align_unchecked(size as usize, mem::PAGE_SIZE) };
 
         //call alloc
-        let alloc_out = crate::kernel_statics::fetch_local().mmio_heap_man.allocate(internal_layout)?;
+        let alloc_out = super::MMIO_HEAP.lock().allocate(internal_layout)?;
 
         //map region
         let base_page =  Page::<Size4KiB>::containing_address(VirtAddr::from_ptr(alloc_out as *const u8 ));
@@ -47,7 +47,7 @@ impl MmioAlloc{
 
         for page in range {
             unsafe {
-                crate::kernel_statics::fetch_local().page_table_tree.map_to(
+                mem::SYS_MEM_TREE.get().map_to(
                     page,
                     PhysFrame::containing_address(phys_addr),
                     PageTableFlags::PRESENT | PageTableFlags::WRITABLE | PageTableFlags::NO_EXECUTE,
@@ -85,7 +85,7 @@ unsafe impl Allocator for MmioAlloc{
     }
 
     unsafe fn deallocate(&self, ptr: NonNull<u8>, layout: Layout) {
-        crate::kernel_statics::fetch_local().mmio_heap_man.deallocate(layout);
+        crate::allocator::MMIO_HEAP.lock().deallocate(layout);
 
         let start_page =  Page::<Size4KiB>::containing_address(VirtAddr::from_ptr(ptr.as_ptr()));
         let end_page = Page::containing_address( start_page.start_address() + layout.size() );
@@ -93,7 +93,7 @@ unsafe impl Allocator for MmioAlloc{
         let pages = PageRange{start: start_page, end: end_page};
 
         for page in pages {
-            crate::kernel_statics::fetch_local().page_table_tree.unmap(page).unwrap().1.flush();
+            mem::SYS_MEM_TREE.get().unmap(page).unwrap().1.flush();
         }
     }
 }

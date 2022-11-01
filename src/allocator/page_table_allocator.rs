@@ -256,10 +256,8 @@ impl PageTableAllocator {
         unsafe {
             for page in range{
 
-                let frame = crate::kernel_statics::fetch_local().globals().frame_alloc.lock().allocate_frame().unwrap();
-
-                let k_local= crate::kernel_statics::fetch_local();
-                k_local.page_table_tree.map_to(page,frame,flags,&mut DummyFrameAlloc).unwrap().flush();
+                let frame = mem::SYS_FRAME_ALLOCATOR.get().allocate_frame().unwrap();
+                mem::SYS_MEM_TREE.get().map_to(page, frame, flags, &mut DummyFrameAlloc).unwrap().flush();
             }
         }
         self.end_addr = new_end_addr;

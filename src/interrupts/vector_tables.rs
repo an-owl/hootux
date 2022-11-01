@@ -1,6 +1,9 @@
 
 pub static IHR: HandleRegistry = HandleRegistry::new();
 
+#[thread_local]
+pub(super) static mut INT_LOG: InterruptLog = InterruptLog::new();
+
 
 /// The InterruptLog is a thread local structure used for counting the number of interrupts that
 /// have occurred  on each cpu. When an interrupt occurs its vector within log should be incremented.

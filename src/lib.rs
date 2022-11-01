@@ -25,7 +25,7 @@ pub mod task;
 pub mod acpi_driver;
 pub mod time;
 pub mod system;
-mod kernel_statics;
+mod kernel_structures;
 mod logger;
 mod device_check;
 
@@ -57,34 +57,11 @@ pub fn init() {
     interrupts::init_exceptions();
     //unsafe { interrupts::PICS.lock().initialize() }
     unsafe {interrupts::PICS.lock().disable()}
-    //x86_64::instructions::interrupts::enable();
-}
-
-/// Initializes native memory management. Initializes important thread local and global variables
-/// required for proper system management
-///
-/// this function is unsafe because the caller must ensure that the given arguments are accurate
-pub unsafe fn init_mem(phy_mem_offset: u64, mem_map: &'static [MemoryRegion]){
-
-    init();
-
-    let mut mapper = mem::init(VirtAddr::new(phy_mem_offset));
-    let mut frame_alloc = mem::BootInfoFrameAllocator::init(mem_map) ;
-    allocator::init_heap(&mut mapper, &mut frame_alloc).expect("heap allocation failed");
-
-    let ptt;
-    {
-        ptt = mem::page_table_tree::PageTableTree::from_offset_page_table(VirtAddr::new(phy_mem_offset), &mut mapper, &mut frame_alloc);
-        ptt.set_cr3(&mapper)
-    };
-
-    kernel_statics::init_statics(frame_alloc,ptt);
     x86_64::instructions::interrupts::enable();
-
 }
 
 pub fn init_logger(){
-    log::set_logger(&kernel_statics::fetch_local().globals().logger).expect("failed to initialize logger");
+    log::set_logger(&logger::LOGGER).expect("failed to initialize logger");
     log::set_max_level(log::LevelFilter::Trace);
 }
 

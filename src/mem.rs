@@ -3,6 +3,7 @@ use x86_64::structures::paging::frame::PhysFrameRangeInclusive;
 use x86_64::structures::paging::page::PageRangeInclusive;
 use x86_64::structures::paging::{FrameAllocator, Mapper, OffsetPageTable, Page, PageSize, PageTableFlags, PhysFrame, Size1GiB, Size2MiB, Size4KiB};
 use x86_64::{structures::paging::PageTable, PhysAddr, VirtAddr};
+use crate::kernel_structures::{KernelStatic, UnlockedStatic};
 
 // offset 0-11
 // l1 12-2
@@ -16,6 +17,27 @@ pub(self) mod offset_page_table;
 pub mod thread_local_storage;
 
 pub const PAGE_SIZE: usize = 4096;
+
+pub(crate) static SYS_FRAME_ALLOCATOR: KernelStatic<BootInfoFrameAllocator> = KernelStatic::new();
+
+pub fn set_sys_frame_alloc(frame_alloc: BootInfoFrameAllocator) {
+    SYS_FRAME_ALLOCATOR.init(frame_alloc)
+}
+
+#[thread_local]
+pub(crate) static SYS_MEM_TREE: UnlockedStatic<page_table_tree::PageTableTree> = UnlockedStatic::new();
+
+/// sets `SYS_MEM_TREE` and sets cr3 register
+///
+/// #Saftey
+///
+/// This fn is unsafe because tree must be correctly initialized
+pub unsafe fn set_sys_mem_tree(tree: page_table_tree::PageTableTree, current_mapper: &impl Mapper<Size4KiB>) {
+    SYS_MEM_TREE.init(tree);
+    unsafe {
+        SYS_MEM_TREE.get().set_cr3(current_mapper)
+    };
+}
 
 /// A FrameAllocator that returns usable frames from the bootloader's memory map.
 pub struct BootInfoFrameAllocator {
@@ -56,6 +78,8 @@ unsafe impl FrameAllocator<Size4KiB> for BootInfoFrameAllocator {
         frame
     }
 }
+
+
 
 /// Dummy frame allocator that amy be used with PageTableTree because PageTableTree will
 /// never call the passed &impl FrameAllocator

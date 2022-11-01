@@ -1,10 +1,10 @@
-use crate::{gdt, kernel_statics};
-use apic::Apic;
+use crate::gdt;
 use crate::println;
 use lazy_static::lazy_static;
 use log::{error, warn};
 use x86_64::structures::idt::{InterruptDescriptorTable, InterruptStackFrame, PageFaultErrorCode};
 use kernel_interrupts_proc_macro::{gen_interrupt_stubs, set_idt_entries};
+use crate::interrupts::apic::LOCAL_APIC;
 
 pub mod apic;
 pub mod vector_tables;
@@ -57,8 +57,9 @@ extern "x86-interrupt" fn except_double(stack: InterruptStackFrame, _err: u64) -
 }
 
 extern "x86-interrupt" fn timer_interrupt_handler(_sf: InterruptStackFrame) {
-    let apic = crate::kernel_statics::fetch_local().local_apic.as_mut().unwrap();
-    apic.declare_eoi();
+    // SAFETY: This is safe because declare_eoi does not violate data safety
+    unsafe { LOCAL_APIC.force_get_mut().declare_eoi() }
+
 }
 extern "x86-interrupt" fn keyboard_interrupt_handler(_sf: InterruptStackFrame) {
     use x86_64::instructions::port::Port;
@@ -97,11 +98,15 @@ extern "x86-interrupt" fn except_general_protection(sf: InterruptStackFrame, e: 
 }
 
 extern "x86-interrupt" fn apic_error(_sf: InterruptStackFrame) {
-    let apic = crate::kernel_statics::fetch_local().local_apic.as_mut().unwrap();
-    let mut err = apic.get_err();
-    while err.bits() != 0 {
-        error!("Apic Error: {err:?}");
-        err = apic.get_err()
+    // SAFETY: This is safe because errors are immediately handled here and should not be
+    // accessed outside of this handler
+    unsafe {
+        let apic = LOCAL_APIC.force_get_mut();
+        let mut err = apic.get_err();
+        while err.bits() != 0 {
+            error!("Apic Error: {err:?}");
+            err = apic.get_err()
+        }
     }
 }
 

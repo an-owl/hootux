@@ -34,8 +34,6 @@ Convenience functions are provided to build image and run the kernel and may not
 This part is mostly for my own sanity to try to manage what I want to do and to lay out the things I need to to to
 achieve them.
 
- - Remove kernel_statics
-   - add TLS support
  - Clean up memory module
    - Move allocator into mem
      - that's where it should be

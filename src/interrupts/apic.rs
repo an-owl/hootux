@@ -1,14 +1,18 @@
 use alloc::boxed::Box;
 use apic_structures::registers::ApicError;
+use crate::allocator::mmio_bump_alloc::MmioAlloc;
 use crate::interrupts::apic::apic_structures::apic_types::TimerMode;
+use crate::interrupts::apic::pub_apic::SysApic;
+use crate::interrupts::apic::xapic::xApic;
+use crate::kernel_structures::KernelStatic;
 
 pub mod xapic;
 pub mod apic_structures;
+pub mod pub_apic;
 
 /// Contains the cpus local APIC. Uses mutex in case of mischievous r/w
 #[thread_local]
-pub static LOCAL_APIC: spin::Mutex<Option<Box<dyn Apic>>> = spin::Mutex::new(None);
-
+pub(crate) static LOCAL_APIC: KernelStatic<Box<dyn Apic,crate::allocator::GenericAlloc>> = KernelStatic::new();
 
 /// Trait for control over the Local Advanced Programmable Interrupt Controller
 ///
@@ -55,22 +59,56 @@ static mut CALI: Option<u64> = None;
 /// Interrupt handler used for calibrating the local APIC timer.
 fn handle_timer_and_calibrate(){
     unsafe { CALI = Some(crate::time::get_sys_time()) }
-    crate::kernel_statics::fetch_local().local_apic.as_mut().unwrap().declare_eoi();
+    apic_eoi();
 }
 
 /// Default timer handler. Updates system time then exits.
 fn timer_handler() {
     crate::time::update_timer();
-    crate::kernel_statics::fetch_local().local_apic.as_mut().unwrap().declare_eoi()
+    apic_eoi();
 }
 
 /// Calibrates local APIC and sets interrupt handler.
 /// This is temporary and required because of the privacy of [crate::kernel_statics]
 pub fn cal_and_run(time: u32, vec: u8) {
-    crate::kernel_statics::fetch_local().local_apic.as_mut().unwrap().begin_calibration(time,vec);
+
+    LOCAL_APIC.get().begin_calibration(time, vec);
 
     unsafe {
         super::vector_tables::IHR.set(vec, timer_handler).expect("???");
-        crate::kernel_statics::fetch_local().local_apic.as_mut().unwrap().init_timer(vec,false);
+        LOCAL_APIC.get().init_timer(vec, false);
     };
+}
+
+/// Determines type of apic and loads it into `LOCAL_APIC`
+pub fn load_apic() {
+    use core::alloc::Allocator;
+    use x86_msr::Msr;
+    let t = unsafe { x86_msr::architecture::ApicBase::read() };
+    let addr = x86_64::PhysAddr::new(t.get_apic_base_addr());
+    let apic;
+    if (raw_cpuid::cpuid!(1).ecx >> 21) & 1 > 0{
+        // todo implement x2apic
+        let alloc = MmioAlloc::new(addr);
+        let mut sec = alloc.allocate(core::alloc::Layout::new::<xApic>()).expect("not enough memory").cast::<xApic>();
+        apic = unsafe { Box::from_raw_in(sec.as_mut(), alloc.into()) };
+    } else {
+        let alloc = MmioAlloc::new(addr);
+        let mut sec = alloc.allocate(core::alloc::Layout::new::<xApic>()).expect("not enough memory").cast::<xApic>();
+        apic = unsafe { Box::from_raw_in(sec.as_mut(), alloc.into()) };
+    }
+    LOCAL_APIC.init(apic)
+}
+
+/// Safely declares End Of Interrupt on apic devices, without potentially causing a deadlock.
+#[inline]
+fn apic_eoi() {
+    unsafe {
+        LOCAL_APIC.force_get_mut().declare_eoi()
+    }
+}
+
+/// Returns an interface for the apic
+pub fn get_apic() -> SysApic {
+    SysApic::new()
 }

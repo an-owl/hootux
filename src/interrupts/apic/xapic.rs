@@ -100,12 +100,11 @@ impl Apic for xApic {
     }
 
     fn begin_calibration(&mut self, test_time: u32, vec: u8) {
-        let apic = crate::kernel_statics::fetch_local().local_apic.as_mut().unwrap();
         unsafe {
             super::super::vector_tables::IHR.set(vec, super::handle_timer_and_calibrate).expect("Vector already occupied");
 
-            apic.init_timer(50, false);
-            apic.set_timer(TimerMode::Periodic, test_time);
+            self.init_timer(50, false);
+            self.set_timer(TimerMode::Periodic, test_time);
         }
 
         let initial_time;
@@ -141,7 +140,7 @@ impl Apic for xApic {
 
         // SAFETY: init_timer(_,true) is safe to use and makes th following fn's to use
         unsafe {
-            apic.init_timer(vec, true);
+            self.init_timer(vec, true);
             self.set_timer(TimerMode::Periodic, time);
             // disable all the stuff this enabled
             super::super::vector_tables::IHR.unset(vec);

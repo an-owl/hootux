@@ -16,7 +16,9 @@ use hootux::task::{executor, Task};
 use hootux::task::keyboard;
 use hootux::exit_qemu;
 use log::debug;
+use x86_64::VirtAddr;
 use hootux::time::{kernel_init_timer};
+use hootux::interrupts::apic::Apic;
 
 
 entry_point!(kernel_main);
@@ -30,12 +32,39 @@ fn kernel_main(b: &'static mut bootloader::BootInfo) -> ! {
         g.buffer_mut().fill_with(||{0xff})
     }
 
-
-
-    //initialize memory things
+    let ptt; // requires tls
+    let mut mapper;
     unsafe {
-        init_mem(b.physical_memory_offset.into_option().unwrap(), &b.memory_regions)
+
+        mapper = mem::init(VirtAddr::new(b.physical_memory_offset.into_option().unwrap()));
+        let mut f_alloc = mem::BootInfoFrameAllocator::init(&b.memory_regions);
+        allocator::init_heap(&mut mapper, &mut f_alloc).unwrap();
+
+        init(); // todo break apart
+
+        ptt = {
+            mem::page_table_tree::PageTableTree::from_offset_page_table(
+                VirtAddr::new(b.physical_memory_offset.into_option().unwrap()),
+                &mut mapper,
+                &mut f_alloc
+            )
+        };
+
+        mem::set_sys_frame_alloc(f_alloc);
+
+
+        // init interrupts
     }
+
+    /*
+    Things that need to be done here
+    -^ initialize frame allocator
+    - initialize interrupts
+        - IDT and HW can be done separately
+    -^ init Page Table tree
+    -^ init logger
+    - init mmio heap
+     */
 
     if let bootloader::boot_info::Optional::Some(tls) = b.tls_template {
 
@@ -48,6 +77,12 @@ fn kernel_main(b: &'static mut bootloader::BootInfo) -> ! {
             )
         }
     }
+    unsafe { mem::set_sys_mem_tree(ptt,&mapper) };
+
+    interrupts::apic::load_apic();
+    // SAFETY: prob safe but i dont want to think rn
+    unsafe { interrupts::apic::get_apic().set_enable(true) }
+
 
     //initialize graphics
     if let Some(buff) = b.framebuffer.as_mut() {
@@ -77,11 +112,6 @@ fn kernel_main(b: &'static mut bootloader::BootInfo) -> ! {
 
     debug!("Successfully initialized");
 
-
-
-
-
-
     #[cfg(test)]
     test_main();
 
@@ -105,7 +135,7 @@ fn say_hi(){
 #[panic_handler]
 fn panic_handler(info: &core::panic::PanicInfo) -> ! {
     unsafe { panic_unlock!(); }
-    println!("KERNEL PANIC\nInfo: {}", info);
+    log::error!("KERNEL PANIC\nInfo: {}", info);
 
     stop()
 }
