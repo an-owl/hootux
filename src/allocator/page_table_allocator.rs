@@ -237,7 +237,7 @@ impl PageTableAllocator {
         const EXTEND_SIZE: usize = 32; // defines the number of pages allocated per extend()
         self.extend_self = true;
 
-        let flags = PageTableFlags::PRESENT | PageTableFlags::WRITABLE | PageTableFlags::NO_EXECUTE | PageTableFlags::GLOBAL; // todo make const
+        let flags = PageTableFlags::PRESENT | PageTableFlags::WRITABLE | PageTableFlags::NO_EXECUTE | PageTableFlags::GLOBAL | PageTableFlags::HUGE_PAGE; // todo make const
 
         let new_end_addr = self.end_addr + EXTEND_SIZE * PAGE_SIZE;
 
