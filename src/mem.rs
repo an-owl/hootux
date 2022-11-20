@@ -446,3 +446,71 @@ impl PageTableLevel {
         };
     }
 }
+
+/// Maps the given pages into memory using frames given by the system frame allocator. This is the
+/// preferred method Mapping memory ranges. This fn will flush all the given pages
+/// from the tlb
+///
+/// #Panics
+///
+/// This fn will panic if a page within range is already mapped
+///
+/// #Safety
+///
+/// see [x86_64::structures::paging::mapper::Mapper::map_to]
+pub unsafe fn map_range<S: PageSize + core::fmt::Debug,I: Iterator<Item = Page<S>>>(pages: I, flags: PageTableFlags)
+    where
+        page_table_tree::PageTableTree: Mapper<S>,
+        BootInfoFrameAllocator: FrameAllocator<S>
+
+{
+    for page in pages {
+        let frame = FrameAllocator::<S>::allocate_frame(
+            &mut *SYS_FRAME_ALLOCATOR.get()
+        ).expect("System ran out of memory");
+
+        match SYS_MEM_TREE.get().map_to(
+            page,
+            frame,
+            flags,
+            &mut DummyFrameAlloc
+        ) {
+            Ok(flush) => {
+                flush.flush()
+            }
+            Err(err) => {
+                panic!("{:?}",err);
+            }
+        }
+    }
+}
+
+/// Maps a single page of memory, flushing the tlb entry for the given page. This is the preferred
+/// method if mapping a single page.
+///
+/// #Panics
+///
+/// This fn will panic if a page within range is already mapped
+///
+/// #Safety
+///
+/// see [x86_64::structures::paging::mapper::Mapper::map_to]
+pub unsafe fn map_page<S: PageSize + core::fmt::Debug>(page: Page<S>, flags: PageTableFlags)
+    where
+        page_table_tree::PageTableTree: Mapper<S>,
+        BootInfoFrameAllocator: FrameAllocator<S>
+{
+    let frame = FrameAllocator::<S>::allocate_frame(
+        &mut *SYS_FRAME_ALLOCATOR.get()
+    ).expect("System ran out of memory");
+
+    match SYS_MEM_TREE.get().map_to(page,frame,flags,&mut DummyFrameAlloc) {
+        Ok(flush) => {
+            flush.flush()
+        }
+        Err(err) => {
+            panic!("{:?}",err);
+        }
+    }
+
+}
