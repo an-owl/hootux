@@ -27,7 +27,8 @@ impl<A> Locked<A>{
     }
 }
 
-pub const HEAP_START: usize = 0x4444_4444_0000;
+// l4: 257 one l4 above half canonical version remove leading f's for non canonical
+pub const HEAP_START: usize = 0xffff808000000000;
 pub const HEAP_SIZE: usize = 1024 * 1024;
 
 #[global_allocator]
