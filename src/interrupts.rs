@@ -1,10 +1,10 @@
 use crate::gdt;
+use crate::interrupts::apic::LOCAL_APIC;
 use crate::println;
+use kernel_interrupts_proc_macro::{gen_interrupt_stubs, set_idt_entries};
 use lazy_static::lazy_static;
 use log::{error, warn};
 use x86_64::structures::idt::{InterruptDescriptorTable, InterruptStackFrame, PageFaultErrorCode};
-use kernel_interrupts_proc_macro::{gen_interrupt_stubs, set_idt_entries};
-use crate::interrupts::apic::LOCAL_APIC;
 
 pub mod apic;
 pub mod vector_tables;
@@ -52,14 +52,13 @@ extern "x86-interrupt" fn except_breakpoint(stack_frame: InterruptStackFrame) {
 
 extern "x86-interrupt" fn except_double(stack: InterruptStackFrame, _err: u64) -> ! {
     println!("***DOUBLE FAULT***");
-    println!("{:#?}",stack);
+    println!("{:#?}", stack);
     panic!("EXCEPTION: DOUBLE FAULT\n{:#?}\n", stack);
 }
 
 extern "x86-interrupt" fn timer_interrupt_handler(_sf: InterruptStackFrame) {
     // SAFETY: This is safe because declare_eoi does not violate data safety
     unsafe { LOCAL_APIC.force_get_mut().declare_eoi() }
-
 }
 extern "x86-interrupt" fn keyboard_interrupt_handler(_sf: InterruptStackFrame) {
     use x86_64::instructions::port::Port;
@@ -74,26 +73,26 @@ extern "x86-interrupt" fn keyboard_interrupt_handler(_sf: InterruptStackFrame) {
     }
 }
 
-extern "x86-interrupt" fn except_page(sf: InterruptStackFrame, e: PageFaultErrorCode){
+extern "x86-interrupt" fn except_page(sf: InterruptStackFrame, e: PageFaultErrorCode) {
     use x86_64::registers::control::Cr2;
     println!("*EXCEPTION: PAGE FAULT*\n");
 
     let fault_addr = Cr2::read();
-    println!("At address {:?}",Cr2::read());
+    println!("At address {:?}", Cr2::read());
 
-    if (fault_addr > sf.stack_pointer) && fault_addr < (sf.stack_pointer + 4096u64){
+    if (fault_addr > sf.stack_pointer) && fault_addr < (sf.stack_pointer + 4096u64) {
         println!("--->Likely Stack overflow")
     }
 
-    println!("Error code {:?}\n",e);
-    println!("{:#?}",sf);
+    println!("Error code {:?}\n", e);
+    println!("{:#?}", sf);
     panic!("page fault");
 }
 
-extern "x86-interrupt" fn except_general_protection(sf: InterruptStackFrame, e: u64){
+extern "x86-interrupt" fn except_general_protection(sf: InterruptStackFrame, e: u64) {
     println!("GENERAL PROTECTION FAULT");
     println!("error: {}", e);
-    println!("{:#?}",sf);
+    println!("{:#?}", sf);
     panic!();
 }
 
@@ -114,7 +113,6 @@ extern "x86-interrupt" fn spurious(sf: InterruptStackFrame) {
     warn!("spurious Interrupt");
     println!("{sf:#?}");
 }
-
 
 #[test_case]
 fn test_breakpoint() {

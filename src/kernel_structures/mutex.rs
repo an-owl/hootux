@@ -1,7 +1,6 @@
 use core::ops::{Deref, DerefMut};
 use core::sync::atomic::Ordering;
 
-
 pub struct Mutex<T> {
     lock: core::sync::atomic::AtomicBool,
     inner: core::cell::UnsafeCell<T>,
@@ -17,7 +16,11 @@ impl<T> Mutex<T> {
     }
 
     pub fn lock(&self) -> MutexGuard<T> {
-        while self.lock.compare_exchange_weak(false, true, Ordering::Acquire, Ordering::Relaxed).is_err(){
+        while self
+            .lock
+            .compare_exchange_weak(false, true, Ordering::Acquire, Ordering::Relaxed)
+            .is_err()
+        {
             while self.is_locked() {
                 core::hint::spin_loop();
             }
@@ -27,7 +30,10 @@ impl<T> Mutex<T> {
     }
 
     pub fn try_lock(&self) -> Option<MutexGuard<T>> {
-        if let Ok(_) = self.lock.compare_exchange_weak(false,true,Ordering::Acquire, Ordering::Relaxed) {
+        if let Ok(_) =
+            self.lock
+                .compare_exchange_weak(false, true, Ordering::Acquire, Ordering::Relaxed)
+        {
             unsafe { Some(self.make_guard()) }
         } else {
             None
@@ -41,13 +47,13 @@ impl<T> Mutex<T> {
     /// This function is unsafe because it generates a reference to `self` regardless of whether
     /// self is locked. The programmer must ensure that `self` is locked before this fn is run
     unsafe fn make_guard(&self) -> MutexGuard<T> {
-        MutexGuard{
+        MutexGuard {
             lock: &self.lock,
-            data: &mut *self.inner.get()
+            data: &mut *self.inner.get(),
         }
     }
 
-    pub fn is_locked(&self) -> bool{
+    pub fn is_locked(&self) -> bool {
         self.lock.load(Ordering::Relaxed)
     }
 
@@ -66,12 +72,12 @@ impl<T> Mutex<T> {
 
 unsafe impl<T> Sync for Mutex<T> {}
 
-pub struct MutexGuard<'a,T> {
+pub struct MutexGuard<'a, T> {
     lock: &'a core::sync::atomic::AtomicBool,
     data: &'a mut T,
 }
 
-impl<'a,T> Deref for MutexGuard<'a,T> {
+impl<'a, T> Deref for MutexGuard<'a, T> {
     type Target = T;
 
     fn deref(&self) -> &Self::Target {

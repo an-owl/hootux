@@ -15,19 +15,19 @@
 
 extern crate alloc;
 
-pub mod gdt;
-pub mod interrupts;
-pub mod serial;
-pub mod graphics;
-pub mod mem;
-pub mod allocator;
-pub mod task;
 pub mod acpi_driver;
-pub mod time;
-pub mod system;
+pub mod allocator;
+mod device_check;
+pub mod gdt;
+pub mod graphics;
+pub mod interrupts;
 mod kernel_structures;
 mod logger;
-mod device_check;
+pub mod mem;
+pub mod serial;
+pub mod system;
+pub mod task;
+pub mod time;
 
 pub trait Testable {
     fn run(&self);
@@ -56,18 +56,18 @@ pub fn init() {
     gdt::init();
     interrupts::init_exceptions();
     //unsafe { interrupts::PICS.lock().initialize() }
-    unsafe {interrupts::PICS.lock().disable()}
+    unsafe { interrupts::PICS.lock().disable() }
     x86_64::instructions::interrupts::enable();
 }
 
-pub fn init_logger(){
+pub fn init_logger() {
     log::set_logger(&logger::LOGGER).expect("failed to initialize logger");
     log::set_max_level(log::LevelFilter::Trace);
 }
 
 #[inline]
-pub fn stop() -> !{
-    loop{
+pub fn stop() -> ! {
+    loop {
         x86_64::instructions::hlt()
     }
 }
@@ -79,9 +79,9 @@ pub fn test_panic(info: &core::panic::PanicInfo) -> ! {
     stop()
 }
 
-#[cfg(test)]
-use bootloader::{entry_point,BootInfo};
 use bootloader::boot_info::MemoryRegion;
+#[cfg(test)]
+use bootloader::{entry_point, BootInfo};
 use x86_64::VirtAddr;
 
 #[cfg(test)]
@@ -92,7 +92,9 @@ entry_point!(kernel_test_main);
 fn kernel_test_main(_b: &'static mut BootInfo) -> ! {
     init();
     test_main();
-    loop {x86_64::instructions::hlt()}
+    loop {
+        x86_64::instructions::hlt()
+    }
 }
 
 #[cfg(test)]
@@ -117,8 +119,7 @@ pub fn exit_qemu(exit_code: QemuExitCode) {
     }
 }
 
-
 #[alloc_error_handler]
-fn alloc_error_handler(layout: alloc::alloc::Layout) -> !{
+fn alloc_error_handler(layout: alloc::alloc::Layout) -> ! {
     panic!("alloc error {:?}", layout)
 }

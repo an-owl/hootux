@@ -7,7 +7,9 @@ use alloc::boxed::Box;
 use core::fmt::{Debug, Formatter};
 use core::mem::MaybeUninit;
 use core::ops::{Index, IndexMut};
-use x86_64::structures::paging::mapper::{FlagUpdateError, MapToError, MapperFlush, MapperFlushAll, TranslateError, UnmapError};
+use x86_64::structures::paging::mapper::{
+    FlagUpdateError, MapToError, MapperFlush, MapperFlushAll, TranslateError, UnmapError,
+};
 use x86_64::structures::paging::page_table::FrameError;
 use x86_64::structures::paging::{
     page::PageRangeInclusive, page_table::PageTableEntry, FrameAllocator, Mapper, Page, PageSize,
@@ -97,7 +99,7 @@ impl PageTableTree {
         let mut range = PageIterator {
             start: Page::containing_address(VirtAddr::new(0)),
             end: Page::containing_address(VirtAddr::new(
-                addr_from_indices(511, 511, 511, 511) as u64,
+                addr_from_indices(511, 511, 511, 511) as u64
             )),
         };
         while let Some((reference, new_range)) = offset_table.get_allocated_frames_within(range) {
@@ -889,8 +891,6 @@ impl Mapper<Size1GiB> for PageTableTree {
     }
 }
 
-
-
 /// Stores virtual addresses of Page Tables for reference
 ///
 /// Addresses contained may be Uninitialized check
@@ -1288,15 +1288,24 @@ impl Drop for PageTableBranch {
 }
 
 #[test_case]
-fn test_mapper(){
+fn test_mapper() {
     let local = crate::kernel_statics::fetch_local();
     let page_count = 512;
     let start_page = Page::<Size4KiB>::containing_address(VirtAddr::new(0xdeadbeef));
-    let range = PageRangeInclusive{start: start_page, end: Page::containing_address(start_page.start_address() + (PAGE_SIZE * page_count))};
+    let range = PageRangeInclusive {
+        start: start_page,
+        end: Page::containing_address(start_page.start_address() + (PAGE_SIZE * page_count)),
+    };
     let flags = PageTableFlags::PRESENT | PageTableFlags::WRITABLE | PageTableFlags::BIT_9;
 
     for page in range {
         let frame = local.globals().frame_alloc.lock().allocate_frame().unwrap();
-        unsafe { local.page_table_tree.map_to(page, frame, flags,&mut mem::DummyFrameAlloc) }.unwrap().flush();
+        unsafe {
+            local
+                .page_table_tree
+                .map_to(page, frame, flags, &mut mem::DummyFrameAlloc)
+        }
+        .unwrap()
+        .flush();
     }
 }

@@ -15,8 +15,10 @@ pub struct KernelStatic<T> {
 }
 
 impl<T> KernelStatic<T> {
-    pub(crate) const fn new() -> Self{
-        Self{inner: super::mutex::Mutex::new(None)}
+    pub(crate) const fn new() -> Self {
+        Self {
+            inner: super::mutex::Mutex::new(None),
+        }
     }
 
     pub fn init(&self, new: T) {
@@ -34,9 +36,9 @@ impl<T> KernelStatic<T> {
 
     pub(crate) unsafe fn force_get_mut(&self) -> &mut T {
         if let Some(t) = self.inner.force_acquire() {
-            return t
+            return t;
         } else {
-             panic!("Tried to get uninitialized kernel static")
+            panic!("Tried to get uninitialized kernel static")
         }
     }
 
@@ -52,9 +54,10 @@ impl<T> KernelStatic<T> {
             } else {
                 panic!("Tried to get uninitialized kernel static")
             }
-        } else { None }
+        } else {
+            None
+        }
     }
-
 }
 
 /// Wrapper for static data, to prevent the need to unwrap the inner data.
@@ -62,15 +65,13 @@ pub struct Ref<'a, T> {
     inner: super::mutex::MutexGuard<'a, Option<T>>,
 }
 
-impl<'a,T> Ref<'a,T> {
-    fn new(mutex: super::mutex::MutexGuard<'a,Option<T>>) -> Self {
-        Self {
-            inner: mutex
-        }
+impl<'a, T> Ref<'a, T> {
+    fn new(mutex: super::mutex::MutexGuard<'a, Option<T>>) -> Self {
+        Self { inner: mutex }
     }
 }
 
-impl<'a, T> Deref for Ref<'a,T> {
+impl<'a, T> Deref for Ref<'a, T> {
     type Target = T;
 
     fn deref(&self) -> &Self::Target {
@@ -78,17 +79,14 @@ impl<'a, T> Deref for Ref<'a,T> {
     }
 }
 
-impl<'a, T> DerefMut for Ref<'a,T> {
+impl<'a, T> DerefMut for Ref<'a, T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         (*self.inner).as_mut().unwrap()
     }
 }
 
-
-
-
 pub struct UnlockedStatic<T> {
-    inner: UnsafeCell<Option<T>>
+    inner: UnsafeCell<Option<T>>,
 }
 
 impl<T> UnlockedStatic<T> {
@@ -99,11 +97,10 @@ impl<T> UnlockedStatic<T> {
     }
 
     pub fn init(&self, data: T) {
-        unsafe { *self.inner.get()  = Some(data)};
+        unsafe { *self.inner.get() = Some(data) };
     }
 
     pub fn get(&self) -> &mut T {
         unsafe { (*self.inner.get()).as_mut().unwrap() }
-
     }
 }

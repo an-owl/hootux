@@ -17,12 +17,12 @@ const TLS_ALIGN: usize = 8;
 /// This function is unsafe because the programmer must ensure that all args correctly describe the
 /// thread local template.
 unsafe fn create_tls(t_data: *const u8, file_size: usize, mem_size: usize) -> *const u8 {
-    let layout = core::alloc::Layout::from_size_align(mem_size,TLS_ALIGN).unwrap();
-    let region = core::slice::from_raw_parts_mut(alloc::alloc::alloc(layout),mem_size);
+    let layout = core::alloc::Layout::from_size_align(mem_size, TLS_ALIGN).unwrap();
+    let region = core::slice::from_raw_parts_mut(alloc::alloc::alloc(layout), mem_size);
 
-    let template = core::slice::from_raw_parts(t_data,file_size);
+    let template = core::slice::from_raw_parts(t_data, file_size);
     region[..file_size].clone_from_slice(template);
-    region[file_size..mem_size].fill_with(|| { 0 });
+    region[file_size..mem_size].fill_with(|| 0);
 
     let ptr = region.as_ptr() as usize;
     let tcb_ptr = (ptr + mem_size) as *const u8;
@@ -41,7 +41,7 @@ unsafe fn create_tls(t_data: *const u8, file_size: usize, mem_size: usize) -> *c
 /// This function is unsafe because the programmer must ensure that the given args properly describe
 /// the thread local template.
 pub unsafe fn init_tls(t_data: *const u8, file_size: usize, mem_size: usize) {
-    let thread_pointer = Box::new(create_tls(t_data,file_size,mem_size));
+    let thread_pointer = Box::new(create_tls(t_data, file_size, mem_size));
 
     let tp = Box::leak(thread_pointer) as *const *const u8;
 

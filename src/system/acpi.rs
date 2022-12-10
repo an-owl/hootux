@@ -1,44 +1,37 @@
+use crate::allocator::alloc_interface::MmioAlloc;
+use acpi::{AcpiHandler, PhysicalMapping};
 use core::alloc::{Allocator, Layout};
 use core::mem;
-use acpi::{AcpiHandler, PhysicalMapping};
-use crate::allocator::alloc_interface::MmioAlloc;
 
 #[derive(Copy, Clone)]
 pub struct AcpiGrabber;
 
 impl AcpiHandler for AcpiGrabber {
-    unsafe fn map_physical_region<T>(&self, physical_address: usize, size: usize) -> PhysicalMapping<Self, T> {
+    unsafe fn map_physical_region<T>(
+        &self,
+        physical_address: usize,
+        size: usize,
+    ) -> PhysicalMapping<Self, T> {
         let alloc = MmioAlloc::new(physical_address);
 
-        let region = alloc.allocate(
-            Layout::from_size_align(
-                size,
-                mem::align_of::<T>())
-                .expect("Failed to create layout for ACPI object"))
+        let region = alloc
+            .allocate(
+                Layout::from_size_align(size, mem::align_of::<T>())
+                    .expect("Failed to create layout for ACPI object"),
+            )
             .expect("ACPI object failed to allocate");
 
         let addr = region.cast::<T>();
 
         let mapped_length = {
-            const MASK: usize = 4096-1;
+            const MASK: usize = 4096 - 1;
             let start = (physical_address | MASK) + 1;
             let end = ((physical_address + size) | MASK) + 1;
 
             end - start
         };
 
-
-        unsafe {
-            PhysicalMapping::new(
-                physical_address,
-                addr,
-                size,
-                mapped_length,
-                self.clone()
-
-            )
-        }
-
+        unsafe { PhysicalMapping::new(physical_address, addr, size, mapped_length, self.clone()) }
     }
 
     fn unmap_physical_region<T>(region: &PhysicalMapping<Self, T>) {
@@ -48,24 +41,22 @@ impl AcpiHandler for AcpiGrabber {
         unsafe {
             alloc.deallocate(
                 start.cast(),
-                Layout::from_size_align(
-                    region.region_length(),
-                    mem::align_of::<T>()).unwrap()) // should not panic. blame acpi if it does
+                Layout::from_size_align(region.region_length(), mem::align_of::<T>()).unwrap(),
+            ) // should not panic. blame acpi if it does
         }
     }
 }
 
-pub (crate) mod data_access {
+pub(crate) mod data_access {
     //! This module if for allowing access to Unsized system data without using `&dyn` that may or
     //! may not be accessed through memory. This is done using a type storing the bus address and size
     //! of the data. [DataAccessType] is provided to allow a universal access to needed data.
 
-
+    use crate::allocator::alloc_interface::MmioAlloc;
+    use acpi::platform::address::{AccessSize, AddressSpace, GenericAddress};
     use core::alloc::{Allocator, Layout};
     use core::fmt::{Debug, Formatter};
-    use acpi::platform::address::{AccessSize, AddressSpace, GenericAddress};
     use x86_64::VirtAddr;
-    use crate::allocator::alloc_interface::MmioAlloc;
 
     /// Contains Data read using [DataAccess] contains u64 along with the length of the data within
     ///
@@ -95,7 +86,9 @@ pub (crate) mod data_access {
         fn try_into(self) -> Result<u8, Self::Error> {
             return if self.size >= DataSize::Byte {
                 Ok(self.data as u8)
-            } else { Err(self.size) }
+            } else {
+                Err(self.size)
+            };
         }
     }
 
@@ -105,7 +98,9 @@ pub (crate) mod data_access {
         fn try_into(self) -> Result<i8, Self::Error> {
             return if self.size >= DataSize::Byte {
                 Ok(self.data as i8)
-            } else { Err(self.size) }
+            } else {
+                Err(self.size)
+            };
         }
     }
 
@@ -115,7 +110,9 @@ pub (crate) mod data_access {
         fn try_into(self) -> Result<u16, Self::Error> {
             return if self.size >= DataSize::Word {
                 Ok(self.data as u16)
-            } else { Err(self.size) }
+            } else {
+                Err(self.size)
+            };
         }
     }
 
@@ -125,7 +122,9 @@ pub (crate) mod data_access {
         fn try_into(self) -> Result<i16, Self::Error> {
             return if self.size >= DataSize::Word {
                 Ok(self.data as i16)
-            } else { Err(self.size) }
+            } else {
+                Err(self.size)
+            };
         }
     }
 
@@ -135,7 +134,9 @@ pub (crate) mod data_access {
         fn try_into(self) -> Result<u32, Self::Error> {
             return if self.size >= DataSize::DWord {
                 Ok(self.data as u32)
-            } else { Err(self.size) }
+            } else {
+                Err(self.size)
+            };
         }
     }
 
@@ -145,7 +146,9 @@ pub (crate) mod data_access {
         fn try_into(self) -> Result<i32, Self::Error> {
             return if self.size >= DataSize::DWord {
                 Ok(self.data as i32)
-            } else { Err(self.size) }
+            } else {
+                Err(self.size)
+            };
         }
     }
 
@@ -155,7 +158,9 @@ pub (crate) mod data_access {
         fn try_into(self) -> Result<u64, Self::Error> {
             return if self.size >= DataSize::QWord {
                 Ok(self.data as u64)
-            } else { Err(self.size) }
+            } else {
+                Err(self.size)
+            };
         }
     }
 
@@ -165,10 +170,11 @@ pub (crate) mod data_access {
         fn try_into(self) -> Result<i64, Self::Error> {
             return if self.size >= DataSize::QWord {
                 Ok(self.data as i64)
-            } else { Err(self.size) }
+            } else {
+                Err(self.size)
+            };
         }
     }
-
 
     #[derive(Debug, Copy, Clone, PartialOrd, PartialEq)]
     pub enum DataSize {
@@ -203,10 +209,10 @@ pub (crate) mod data_access {
         }
     }
 
-
-    /// Trait for accessing Data behind an [acpi::platform::address::GenericAddress]
+    /// Trait for accessing Data behind an [GenericAddress]
     pub trait DataAccess
-        where Self: Sized
+    where
+        Self: Sized,
     {
         fn new(addr: usize, size: DataSize) -> Self;
         unsafe fn read(&self) -> AcpiData;
@@ -291,8 +297,16 @@ pub (crate) mod data_access {
         }
 
         unsafe fn set_size(&mut self, size: DataSize) {
-            assert_eq!(self.data_size, DataSize::Undefined, "data_size already defined");
-            assert_ne!(size, DataSize::QWord, "Attempted to set PortAccess size to `DataSize::QWord`");
+            assert_eq!(
+                self.data_size,
+                DataSize::Undefined,
+                "data_size already defined"
+            );
+            assert_ne!(
+                size,
+                DataSize::QWord,
+                "Attempted to set PortAccess size to `DataSize::QWord`"
+            );
             self.data_size = size;
         }
 
@@ -322,11 +336,9 @@ pub (crate) mod data_access {
 
     impl DataAccess for MemoryAccess {
         fn new(addr: usize, size: DataSize) -> Self {
-
             let alloc = MmioAlloc::new(addr);
-            let ptr = alloc.allocate(
-                Layout::from_size_align(
-                    size as u8 as usize, 1).unwrap()) // should not panic
+            let ptr = alloc
+                .allocate(Layout::from_size_align(size as u8 as usize, 1).unwrap()) // should not panic
                 .expect("allocation failed");
             let ptr = VirtAddr::from_ptr(ptr.cast::<u8>().as_ptr());
 
@@ -371,23 +383,19 @@ pub (crate) mod data_access {
                 DataSize::Undefined => {
                     panic!("Tried to access data with undefined size")
                 }
-                DataSize::Byte => {
-                    *self.ptr.as_mut_ptr() = value as u8
-                }
-                DataSize::Word => {
-                    *self.ptr.as_mut_ptr() = value as u16
-                }
-                DataSize::DWord => {
-                    *self.ptr.as_mut_ptr() = value as u32
-                }
-                DataSize::QWord => {
-                    *self.ptr.as_mut_ptr() = value as u64
-                }
+                DataSize::Byte => *self.ptr.as_mut_ptr() = value as u8,
+                DataSize::Word => *self.ptr.as_mut_ptr() = value as u16,
+                DataSize::DWord => *self.ptr.as_mut_ptr() = value as u32,
+                DataSize::QWord => *self.ptr.as_mut_ptr() = value as u64,
             }
         }
 
         unsafe fn set_size(&mut self, size: DataSize) {
-            assert_eq!(self.data_size, DataSize::Undefined, "data_size already defined");
+            assert_eq!(
+                self.data_size,
+                DataSize::Undefined,
+                "data_size already defined"
+            );
             self.data_size = size;
         }
 
@@ -407,10 +415,10 @@ pub (crate) mod data_access {
             unsafe {
                 alloc.deallocate(
                     addr,
-                    Layout::from_size_align_unchecked(self.data_size as u8 as usize, 1)); // should not fail
+                    Layout::from_size_align_unchecked(self.data_size as u8 as usize, 1),
+                ); // should not fail
             }
         }
-
     }
 
     #[derive(Debug)]
@@ -430,8 +438,8 @@ pub (crate) mod data_access {
         #[allow(dead_code)]
         pub fn write(&mut self, value: u64) {
             match self {
-                DataAccessType::PortAccess(acc) => unsafe { acc.write(value) }
-                DataAccessType::MemoryAccess(acc) => unsafe { acc.write(value) }
+                DataAccessType::PortAccess(acc) => unsafe { acc.write(value) },
+                DataAccessType::MemoryAccess(acc) => unsafe { acc.write(value) },
             }
         }
 
@@ -452,7 +460,6 @@ pub (crate) mod data_access {
     }
 
     impl From<GenericAddress> for DataAccessType {
-
         /// Converts GenericAddress into Type which is accessible without using `&dyn`
         ///
         /// Currently does not support all types. See source
@@ -461,8 +468,12 @@ pub (crate) mod data_access {
 
             // safe casts wont destroy data. If addr is greater than usize::MAX then addr is inaccessible anyway
             match addr.address_space {
-                AddressSpace::SystemMemory => Self::MemoryAccess(MemoryAccess::new(addr.address as usize, size)),
-                AddressSpace::SystemIo => Self::PortAccess(PortAccess::new(addr.address as usize, size)),
+                AddressSpace::SystemMemory => {
+                    Self::MemoryAccess(MemoryAccess::new(addr.address as usize, size))
+                }
+                AddressSpace::SystemIo => {
+                    Self::PortAccess(PortAccess::new(addr.address as usize, size))
+                }
                 AddressSpace::PciConfigSpace => todo!(),
                 AddressSpace::EmbeddedController => todo!(),
                 AddressSpace::SMBus => todo!(),
@@ -475,10 +486,6 @@ pub (crate) mod data_access {
                 AddressSpace::FunctionalFixedHardware => todo!(),
                 AddressSpace::OemDefined(_) => todo!(),
             }
-
-
-
-
         }
     }
 }

@@ -3,11 +3,8 @@
 
 // todo: consider adding closures as args in these fro handling errors
 
-use x86_64::structures::paging::{
-    Mapper,
-    PageTableFlags
-};
 use super::*;
+use x86_64::structures::paging::{Mapper, PageTableFlags};
 
 /// Flags for Normal data in L1 (4K) pages.
 pub const PROGRAM_DATA_FLAGS: PageTableFlags = PageTableFlags::from_bits_truncate((1 << 63) | 0b11);
@@ -25,14 +22,14 @@ pub const MMIO_FLAGS: PageTableFlags = PageTableFlags::from_bits_truncate((1 << 
 ///
 /// #Safety
 ///
-/// see [x86_64::structures::paging::mapper::Mapper::map_to]
-pub unsafe fn map_range<'a, S: PageSize + core::fmt::Debug, I: Iterator<Item=Page<S>>>(
+/// see [Mapper::map_to]
+pub unsafe fn map_range<'a, S: PageSize + core::fmt::Debug, I: Iterator<Item = Page<S>>>(
     pages: I,
     flags: PageTableFlags,
 ) where
     page_table_tree::PageTableTree: Mapper<S>,
     BootInfoFrameAllocator: FrameAllocator<S>,
-    offset_page_table::OffsetPageTable: Mapper<S>
+    offset_page_table::OffsetPageTable: Mapper<S>,
 {
     for page in pages {
         let frame = FrameAllocator::<S>::allocate_frame(&mut *SYS_FRAME_ALLOCATOR.get())
@@ -60,12 +57,11 @@ pub unsafe fn map_range<'a, S: PageSize + core::fmt::Debug, I: Iterator<Item=Pag
 /// #Safety
 ///
 /// This fn is unsafe because it can be used to unmap in use pages that contain in use data.
-pub unsafe fn unmap_range<'a, S: PageSize + core::fmt::Debug, I: Iterator<Item=Page<S>>>(pages: I)
+pub unsafe fn unmap_range<'a, S: PageSize + core::fmt::Debug, I: Iterator<Item = Page<S>>>(pages: I)
 where
     page_table_tree::PageTableTree: Mapper<S>,
     BootInfoFrameAllocator: FrameAllocator<S>,
-    offset_page_table::OffsetPageTable: Mapper<S>
-
+    offset_page_table::OffsetPageTable: Mapper<S>,
 {
     use x86_64::structures::paging::mapper::UnmapError;
     for page in pages {
@@ -90,14 +86,13 @@ where
 ///
 /// #Safety
 ///
-/// see [x86_64::structures::paging::mapper::Mapper::map_to]
+/// see [Mapper::map_to]
 pub unsafe fn map_page<'a, S: PageSize + core::fmt::Debug>(page: Page<S>, flags: PageTableFlags)
 where
     page_table_tree::PageTableTree: Mapper<S>,
     BootInfoFrameAllocator: FrameAllocator<S>,
     offset_page_table::OffsetPageTable: Mapper<S>,
 {
-
     let frame = FrameAllocator::<S>::allocate_frame(&mut *SYS_FRAME_ALLOCATOR.get())
         .expect("System ran out of memory");
 
@@ -127,8 +122,7 @@ pub unsafe fn unmap_page<'a, S: PageSize + core::fmt::Debug>(page: Page<S>)
 where
     page_table_tree::PageTableTree: Mapper<S>,
     BootInfoFrameAllocator: FrameAllocator<S>,
-    offset_page_table::OffsetPageTable: Mapper<S>
-
+    offset_page_table::OffsetPageTable: Mapper<S>,
 {
     match SYS_MAPPER.get().unmap(page) {
         Ok((_, flush)) => flush.flush(),

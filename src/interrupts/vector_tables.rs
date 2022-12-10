@@ -1,9 +1,7 @@
-
 pub static IHR: HandleRegistry = HandleRegistry::new();
 
 #[thread_local]
 pub(super) static mut INT_LOG: InterruptLog = InterruptLog::new();
-
 
 /// The InterruptLog is a thread local structure used for counting the number of interrupts that
 /// have occurred  on each cpu. When an interrupt occurs its vector within log should be incremented.
@@ -14,15 +12,13 @@ pub(super) static mut INT_LOG: InterruptLog = InterruptLog::new();
 /// When the values within this are read and are lower than when they were read previously this can
 /// be guaranteed to either a hardware fault or an overflow and should be treated as the latter,
 /// however is likely the former.
-pub struct InterruptLog{
-    log: [usize;256]
+pub struct InterruptLog {
+    log: [usize; 256],
 }
 
 impl InterruptLog {
     pub const fn new() -> Self {
-        Self{
-            log: [0;256]
-        }
+        Self { log: [0; 256] }
     }
 
     /// Logs an interrupt into internal storage at the given vector
@@ -31,11 +27,11 @@ impl InterruptLog {
     }
 
     /// Returns a copy of the data contained within the given vector
-    pub fn fetch_vec(&self,vector: u8) -> usize {
+    pub fn fetch_vec(&self, vector: u8) -> usize {
         self.log[vector as usize]
     }
 
-    pub fn fetch_all(&self) -> [usize;256]{
+    pub fn fetch_all(&self) -> [usize; 256] {
         self.log.clone()
     }
 }
@@ -50,17 +46,15 @@ impl InterruptLog {
 /// It also enables interrupt handlers to be modified at runtime without disabling interrupts or
 /// risking a double fault.
 pub struct HandleRegistry {
-    arr: [spin::RwLock<Option<fn()>>;256]
+    arr: [spin::RwLock<Option<fn()>>; 256],
 }
-
-
 
 impl HandleRegistry {
     /// Creates a new instance of Self where all entries are `None`
     pub const fn new() -> Self {
-        Self{
+        Self {
             // this is stupid
-            arr: [ const { spin::RwLock::new(None) }; 256 ]
+            arr: [const { spin::RwLock::new(None) }; 256],
         }
     }
 
@@ -72,7 +66,7 @@ impl HandleRegistry {
     ///
     /// `f` must also correctly handle the given interrupt and deliver EOI, failure to do so may
     /// prevent the device form working correctly until it is reset
-    pub unsafe fn set(&self, vector: u8, f: fn()) -> Result<(),()> {
+    pub unsafe fn set(&self, vector: u8, f: fn()) -> Result<(), ()> {
         // required to drop the mutex guard before `if let`
         let contains = self.arr[vector as usize].read().clone();
 
@@ -80,10 +74,10 @@ impl HandleRegistry {
             let mut inner = self.arr[vector as usize].write();
             *inner = Some(f);
             Ok(())
-        } else { Err(()) }
-
+        } else {
+            Err(())
+        };
     }
-
 
     /// unsets the given vector handler.
     pub unsafe fn unset(&self, vector: u8) {
@@ -95,4 +89,3 @@ impl HandleRegistry {
         &self.arr[vector as usize]
     }
 }
-

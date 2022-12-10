@@ -9,17 +9,16 @@
 extern crate alloc;
 
 use alloc::boxed::Box;
-use hootux::*;
 use bootloader::entry_point;
-use hootux::graphics::basic_output::BasicTTY;
-use hootux::task::{executor, Task};
-use hootux::task::keyboard;
 use hootux::exit_qemu;
+use hootux::graphics::basic_output::BasicTTY;
+use hootux::interrupts::apic::Apic;
+use hootux::task::keyboard;
+use hootux::task::{executor, Task};
+use hootux::time::kernel_init_timer;
+use hootux::*;
 use log::debug;
 use x86_64::VirtAddr;
-use hootux::time::{kernel_init_timer};
-use hootux::interrupts::apic::Apic;
-
 
 entry_point!(kernel_main);
 #[no_mangle]
@@ -28,14 +27,15 @@ fn kernel_main(b: &'static mut bootloader::BootInfo) -> ! {
 
     serial_println!("Kernel start");
 
-    if let Some(g) = b.framebuffer.as_mut(){
-        g.buffer_mut().fill_with(||{0xff})
+    if let Some(g) = b.framebuffer.as_mut() {
+        g.buffer_mut().fill_with(|| 0xff)
     }
 
     let mapper;
     unsafe {
-
-        mapper = mem::init(VirtAddr::new(b.physical_memory_offset.into_option().unwrap()));
+        mapper = mem::init(VirtAddr::new(
+            b.physical_memory_offset.into_option().unwrap(),
+        ));
         let f_alloc = mem::BootInfoFrameAllocator::init(&b.memory_regions);
 
         init(); // todo break apart
@@ -48,13 +48,12 @@ fn kernel_main(b: &'static mut bootloader::BootInfo) -> ! {
     }
 
     if let bootloader::boot_info::Optional::Some(tls) = b.tls_template {
-
         // SAFETY: this is safe because the data given is correct
         unsafe {
             mem::thread_local_storage::init_tls(
-            tls.start_addr as usize as *const u8,
-            tls.file_size as usize,
-            tls.mem_size as usize
+                tls.start_addr as usize as *const u8,
+                tls.file_size as usize,
+                tls.mem_size as usize,
             )
         }
     }
@@ -63,28 +62,30 @@ fn kernel_main(b: &'static mut bootloader::BootInfo) -> ! {
     // SAFETY: prob safe but i dont want to think rn
     unsafe { interrupts::apic::get_apic().set_enable(true) }
 
-
     //initialize graphics
     if let Some(buff) = b.framebuffer.as_mut() {
         let mut g = graphics::GraphicalFrame { buff };
         g.clear();
         let tty = BasicTTY::new(g);
 
-        unsafe{
+        unsafe {
             graphics::basic_output::WRITER = spin::Mutex::new(Some(tty));
         }
     };
 
     unsafe {
-        let t = acpi::AcpiTables::from_rsdp(system::acpi::AcpiGrabber, *b.rsdp_addr.as_mut().unwrap() as usize).unwrap();
+        let t = acpi::AcpiTables::from_rsdp(
+            system::acpi::AcpiGrabber,
+            *b.rsdp_addr.as_mut().unwrap() as usize,
+        )
+        .unwrap();
         let fadt = acpi::PlatformInfo::new(&t).unwrap();
         let pmtimer = fadt.pm_timer.expect("No PmTimer found");
         let timer = Box::new(time::acpi_pm_timer::AcpiTimer::locate(pmtimer));
         kernel_init_timer(timer);
     }
     // temporary, until thread local segment is set up
-    interrupts::apic::cal_and_run(0x20000,50);
-
+    interrupts::apic::cal_and_run(0x20000, 50);
 
     init_logger();
 
@@ -100,7 +101,7 @@ fn kernel_main(b: &'static mut bootloader::BootInfo) -> ! {
     executor.run();
 }
 
-fn say_hi(){
+fn say_hi() {
     println!("Starting Hootux");
     println!(r#" |   |   \---/   "#);
     println!(r#"\    |  {{\OvO/}}  "#);
@@ -114,7 +115,9 @@ fn say_hi(){
 #[cfg(not(test))]
 #[panic_handler]
 fn panic_handler(info: &core::panic::PanicInfo) -> ! {
-    unsafe { panic_unlock!(); }
+    unsafe {
+        panic_unlock!();
+    }
     serial_println!("KERNEL PANIC\nInfo: {}", info);
     log::error!("KERNEL PANIC\nInfo: {}", info);
 

@@ -3,15 +3,12 @@
 /// Data stored within register types are stored as MaybeUninit<T> to prevent unwanted access.
 /// It also helps to enforce read/write restrictions. All register data is initialized except
 /// for [EOIRegister] which is Write only
-pub mod registers{
+pub mod registers {
+    use super::apic_types::*;
     use core::fmt::{Debug, Formatter};
     use core::mem::MaybeUninit;
-    use super::apic_types::*;
-
-
 
     pub trait LocalVectorEntry {
-
         fn get_reg(&self) -> &u32;
 
         fn get_reg_mut(&mut self) -> &mut u32;
@@ -28,7 +25,7 @@ pub mod registers{
         /// #Panics
         /// This function will panic if `vector < 16` if a mode is use where the vector should be 0
         /// any vector within 16..=255 may be used and will be corrected internally to 0
-        unsafe fn set_vector(&mut self, vector: u8, mode: InterruptDeliveryMode ){
+        unsafe fn set_vector(&mut self, vector: u8, mode: InterruptDeliveryMode) {
             assert!((vector > 15), "Invalid interrupt vector");
             *self.get_reg_mut() &= !0x3ff;
             *self.get_reg_mut() |= mode.check_vector(vector) as u32;
@@ -49,7 +46,7 @@ pub mod registers{
         /// #Saftey
         /// This function is unsafe because if its interrupt vector is not set correctly it will
         /// result in a double fault.
-        unsafe fn set_mask(&mut self, mask: bool){
+        unsafe fn set_mask(&mut self, mask: bool) {
             if self.get_mask() != mask {
                 if mask {
                     *self.get_reg_mut() |= 1 << 16;
@@ -59,25 +56,26 @@ pub mod registers{
             }
         }
 
-        fn get_mask (&self) -> bool {
+        fn get_mask(&self) -> bool {
             if *self.get_reg() & (1 << 16) > 0 {
-                true
-            } else { false }
-        }
-
-        fn get_status(&self) -> bool{
-            return if self.get_reg() & (1 << 12) > 0 {
                 true
             } else {
                 false
             }
         }
+
+        fn get_status(&self) -> bool {
+            return if self.get_reg() & (1 << 12) > 0 {
+                true
+            } else {
+                false
+            };
+        }
     }
 
-
     /// Represents the LVT entry for controlling timer interrupts
-    pub struct TimerIntVector{
-        inner: MaybeUninit<u32>
+    pub struct TimerIntVector {
+        inner: MaybeUninit<u32>,
     }
 
     impl LocalVectorEntry for TimerIntVector {
@@ -93,7 +91,7 @@ pub mod registers{
     impl Debug for TimerIntVector {
         fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
             let mut b = f.debug_struct("TimerVector");
-            b.field("timer_mode",&self.get_timer_mode());
+            b.field("timer_mode", &self.get_timer_mode());
             b.field("mask", &self.get_mask());
             b.field("delivery_mode", &self.get_mode());
             b.field("vector", &self.get_vector());
@@ -102,7 +100,7 @@ pub mod registers{
         }
     }
 
-    impl TimerIntVector{
+    impl TimerIntVector {
         const TIMER_MODE_MASK: u32 = 3 << 17;
         pub fn set_timer_mode(&mut self, mode: TimerMode) {
             unsafe {
@@ -119,8 +117,8 @@ pub mod registers{
     }
 
     /// Represents local interrupt LVT entries for controlling pins LINT0 and LINT1 on the cpu
-    pub struct LocalInt{
-        inner: MaybeUninit<u32>
+    pub struct LocalInt {
+        inner: MaybeUninit<u32>,
     }
 
     impl LocalVectorEntry for LocalInt {
@@ -137,7 +135,7 @@ pub mod registers{
         fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
             let mut b = f.debug_struct("LocalInt");
             b.field("mask", &self.get_mask());
-            b.field("trigger_mode",&self.get_trigger_mode());
+            b.field("trigger_mode", &self.get_trigger_mode());
             b.field("remote_irr", &self.get_interrupt_request());
             b.field("pin_polarity", &self.get_polarity());
             b.field("delivery_mode", &self.get_mode());
@@ -148,13 +146,14 @@ pub mod registers{
     }
 
     impl LocalInt {
-
         /// Reads the physical pins current polarity.
         fn get_polarity(&self) -> bool {
             let reg = unsafe { self.inner.assume_init().clone() };
             if (reg & (1 << 13)) > 0 {
                 true
-            } else { false }
+            } else {
+                false
+            }
         }
 
         /// Reads the trigger mode of the interrupt handler
@@ -163,7 +162,9 @@ pub mod registers{
             let reg = unsafe { self.inner.assume_init().clone() };
             if (reg & (1 << 15)) > 0 {
                 true
-            } else { false }
+            } else {
+                false
+            }
         }
 
         /// Sets the trigger mode for self where `true` is level sensitive and `false` is edge
@@ -185,13 +186,15 @@ pub mod registers{
             let reg = unsafe { self.inner.assume_init().clone() };
             if (reg & (1 << 14)) > 0 {
                 true
-            } else { false }
+            } else {
+                false
+            }
         }
     }
 
     /// Represents LVT entries for interrupts generated internally be the Local APIC
     pub struct InternalInt {
-        inner: MaybeUninit<u32>
+        inner: MaybeUninit<u32>,
     }
 
     impl Debug for InternalInt {
@@ -208,12 +211,12 @@ pub mod registers{
         }
 
         fn get_reg_mut(&mut self) -> &mut u32 {
-            unsafe {self.inner.assume_init_mut() }
+            unsafe { self.inner.assume_init_mut() }
         }
     }
 
     pub struct ApicErrorInt {
-        inner: MaybeUninit<u32>
+        inner: MaybeUninit<u32>,
     }
 
     impl Debug for ApicErrorInt {
@@ -241,7 +244,6 @@ pub mod registers{
             assert!(vector > 15, "Invalid interrupt vector");
             *self.get_reg_mut() &= !0xff;
             *self.get_reg_mut() |= vector as u32;
-
         }
     }
 
@@ -259,16 +261,16 @@ pub mod registers{
 
             self.bits &= !0xff; // clear lower byte
             self.bits |= vector as u32;
-
         }
     }
 
     pub struct EoiRegister {
-        inner: MaybeUninit<u32> // write only
+        inner: MaybeUninit<u32>, // write only
     }
 
     impl EoiRegister {
-        pub fn notify(&mut self) { // consider changing this sto &self
+        pub fn notify(&mut self) {
+            // consider changing this sto &self
             self.inner.write(0);
         }
     }
@@ -295,13 +297,13 @@ pub mod registers{
 
 pub mod apic_types {
     #[repr(u8)]
-    #[derive(Copy,Clone,Debug,PartialEq)]
-    pub enum InterruptDeliveryMode{
-        Fixed       = 0o00,
-        Smi         = 0o02,
-        Nmi         = 0o04,
+    #[derive(Copy, Clone, Debug, PartialEq)]
+    pub enum InterruptDeliveryMode {
+        Fixed = 0o00,
+        Smi = 0o02,
+        Nmi = 0o04,
         ExternalInt = 0o07,
-        Init        = 0o05,
+        Init = 0o05,
     }
 
     impl InterruptDeliveryMode {
@@ -318,7 +320,7 @@ pub mod apic_types {
         }
     }
 
-    impl From<u32> for  InterruptDeliveryMode {
+    impl From<u32> for InterruptDeliveryMode {
         /// This is for running on an entire **impl LocalVectorTableType and should not be called
         /// anywhere else doing so may cause a panic
         fn from(mut initial: u32) -> Self {
@@ -331,20 +333,20 @@ pub mod apic_types {
                 0o04 => Self::Nmi,
                 0o07 => Self::ExternalInt,
                 0o05 => Self::Init,
-                e => panic!("unable to convert {} into InterruptDeliveryMode",e)
-            }
+                e => panic!("unable to convert {} into InterruptDeliveryMode", e),
+            };
         }
     }
 
     #[repr(u8)]
-    #[derive(Copy,Clone,Debug)]
-    pub enum TimerMode{
+    #[derive(Copy, Clone, Debug)]
+    pub enum TimerMode {
         OneShot = 0,
         Periodic,
         TscDeadline,
     }
 
-    impl From<u32> for TimerMode{
+    impl From<u32> for TimerMode {
         fn from(mut initial: u32) -> Self {
             initial >>= 17;
             initial &= 0x3;
@@ -353,8 +355,8 @@ pub mod apic_types {
                 0 => Self::OneShot,
                 1 => Self::Periodic,
                 2 => Self::TscDeadline,
-                _ => panic!()
-            }
+                _ => panic!(),
+            };
         }
     }
     impl Into<u32> for TimerMode {
@@ -363,10 +365,10 @@ pub mod apic_types {
         }
     }
 
-    #[derive(Copy,Clone,Debug,PartialEq)]
-    enum TriggerMode{
+    #[derive(Copy, Clone, Debug, PartialEq)]
+    enum TriggerMode {
         EdgeSensitive,
-        LevelSensitive
+        LevelSensitive,
     }
 
     impl Into<bool> for TriggerMode {
@@ -374,39 +376,36 @@ pub mod apic_types {
             return match self {
                 TriggerMode::EdgeSensitive => false,
                 TriggerMode::LevelSensitive => true,
-            }
+            };
         }
     }
 
     impl Into<u32> for TriggerMode {
         fn into(self) -> u32 {
-
             let decoded: bool = self.into();
             (decoded as u32) << 15
         }
     }
 
-
     impl From<bool> for TriggerMode {
         fn from(input: bool) -> Self {
-            return if input{
+            return if input {
                 Self::LevelSensitive
             } else {
                 Self::EdgeSensitive
-            }
+            };
         }
     }
 
     impl From<u32> for TriggerMode {
         fn from(input: u32) -> Self {
-        Self::from((input >> 15 & (1)) > 0)
+            Self::from((input >> 15 & (1)) > 0)
+        }
     }
-    }
-
 
     #[repr(u32)]
-    #[derive(PartialEq,Debug,Clone)]
-    pub enum TimerDivisionMode{
+    #[derive(PartialEq, Debug, Clone)]
+    pub enum TimerDivisionMode {
         Divide2 = 0,
         Divide4 = 0o1,
         Divide8 = 0o2,
@@ -428,7 +427,7 @@ pub mod apic_types {
                 0o11 => Self::Divide64,
                 0o12 => Self::Divide128,
                 0o13 => Self::Divide1,
-                e => panic!("unknown divide_configuration_+register_value {e:}")
+                e => panic!("unknown divide_configuration_+register_value {e:}"),
             }
         }
     }
@@ -447,7 +446,7 @@ pub mod apic_types {
         }
 
         pub const fn from_divide_value(num: u8) -> Option<Self> {
-            let var  = match num {
+            let var = match num {
                 1 => TimerDivisionMode::Divide1,
                 2 => TimerDivisionMode::Divide2,
                 4 => TimerDivisionMode::Divide4,
@@ -470,14 +469,14 @@ pub mod apic_types {
         /// be divided by 128 without still exceeding `u32::MAX`
         pub const fn best_try_divide(num: u64) -> (u32, Self) {
             match num {
-                0..=0xffffffff => (num as u32,Self::Divide1),
-                0x100000000..=0x1ffffffff => (num as u32/2,Self::Divide2),
-                0x200000000..=0x3ffffffff => (num as u32/4,Self::Divide4),
-                0x400000000..=0x7ffffffff => (num as u32/8,Self::Divide8),
-                0x800000000..=0xfffffffff => (num as u32/16,Self::Divide16),
-                0x1000000000..=0x1fffffffff => (num as u32/32,Self::Divide32),
-                0x2000000000..=0x3fffffffff => (num as u32/64,Self::Divide64),
-                0x4000000000..=0x7fffffffff => (num as u32/128, Self::Divide128),
+                0..=0xffffffff => (num as u32, Self::Divide1),
+                0x100000000..=0x1ffffffff => (num as u32 / 2, Self::Divide2),
+                0x200000000..=0x3ffffffff => (num as u32 / 4, Self::Divide4),
+                0x400000000..=0x7ffffffff => (num as u32 / 8, Self::Divide8),
+                0x800000000..=0xfffffffff => (num as u32 / 16, Self::Divide16),
+                0x1000000000..=0x1fffffffff => (num as u32 / 32, Self::Divide32),
+                0x2000000000..=0x3fffffffff => (num as u32 / 64, Self::Divide64),
+                0x4000000000..=0x7fffffffff => (num as u32 / 128, Self::Divide128),
                 _ => {
                     panic!("best_try_divide too high")
                 }

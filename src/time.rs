@@ -7,10 +7,11 @@
 //! these quirks
 
 pub mod acpi_pm_timer;
-pub(crate) type TimerResult = Result<(),TimerError>;
+pub(crate) type TimerResult = Result<(), TimerError>;
 
 static SYSTEM_TIME: spin::RwLock<SystemTime> = spin::RwLock::new(SystemTime::new());
-static SYSTEM_TIMEKEEPER: spin::RwLock<Option<alloc::boxed::Box<(dyn TimeKeeper + Sync + Send)>>> = spin::RwLock::new(None);
+static SYSTEM_TIMEKEEPER: spin::RwLock<Option<alloc::boxed::Box<(dyn TimeKeeper + Sync + Send)>>> =
+    spin::RwLock::new(None);
 
 /// This contains a reference to the system timer. Changing the concrete type is VERY UNSAFE and
 /// must be synchronised between threads. Failure to do so may cause missed timer interrupts or
@@ -40,14 +41,13 @@ pub enum TimerError {
 }
 
 pub trait Timer {
-
     fn get_division_mode(&self) -> u32;
     fn set_division_mode(&mut self, div: u32) -> TimerResult;
 
     /// Sets the timer in clocks and timer mode
     fn set_clock_count(&mut self, count: u64, mode: TimerMode) -> TimerResult;
 
-    fn get_initial_clock(&self) -> Result<u64,TimerError>;
+    fn get_initial_clock(&self) -> Result<u64, TimerError>;
 }
 
 /// All supported Timer modes are listed within this enum. Some modes may be unsupported on some
@@ -58,7 +58,7 @@ pub trait Timer {
 pub enum TimerMode {
     OneShot,
     Periodic,
-    TscDeadline
+    TscDeadline,
 }
 
 impl TryInto<crate::interrupts::apic::apic_structures::apic_types::TimerMode> for TimerMode {
@@ -66,14 +66,21 @@ impl TryInto<crate::interrupts::apic::apic_structures::apic_types::TimerMode> fo
 
     /// Returns FeatureUnavailable when mode is not supported by APIC
     #[allow(unreachable_patterns)] // Self is non_exhaustive
-    fn try_into(self) -> Result<crate::interrupts::apic::apic_structures::apic_types::TimerMode, Self::Error> {
-
+    fn try_into(
+        self,
+    ) -> Result<crate::interrupts::apic::apic_structures::apic_types::TimerMode, Self::Error> {
         return match self {
-            TimerMode::OneShot => Ok(crate::interrupts::apic::apic_structures::apic_types::TimerMode::OneShot),
-            TimerMode::Periodic => Ok(crate::interrupts::apic::apic_structures::apic_types::TimerMode::Periodic),
-            TimerMode::TscDeadline => Ok(crate::interrupts::apic::apic_structures::apic_types::TimerMode::TscDeadline),
-            _ => Err(TimerError::FeatureUnavailable)
-        }
+            TimerMode::OneShot => {
+                Ok(crate::interrupts::apic::apic_structures::apic_types::TimerMode::OneShot)
+            }
+            TimerMode::Periodic => {
+                Ok(crate::interrupts::apic::apic_structures::apic_types::TimerMode::Periodic)
+            }
+            TimerMode::TscDeadline => {
+                Ok(crate::interrupts::apic::apic_structures::apic_types::TimerMode::TscDeadline)
+            }
+            _ => Err(TimerError::FeatureUnavailable),
+        };
     }
 }
 
@@ -91,15 +98,13 @@ impl From<crate::interrupts::apic::apic_structures::apic_types::TimerMode> for T
 /// Struct to wrap timers to ensure thread safety for global system timers
 #[derive(Debug)]
 struct ThreadSafeTimer<T: Timer> {
-    timer: alloc::sync::Arc<spin::RwLock<T>>
+    timer: alloc::sync::Arc<spin::RwLock<T>>,
 }
 
 impl<T: Timer> ThreadSafeTimer<T> {
     fn new(timer: T) -> Self {
-        Self{timer: alloc::sync::Arc::new(
-            spin::RwLock::new(
-                timer
-            ))
+        Self {
+            timer: alloc::sync::Arc::new(spin::RwLock::new(timer)),
         }
     }
 }
@@ -114,12 +119,13 @@ impl<T: Timer> core::ops::Deref for ThreadSafeTimer<T> {
 
 impl<T: Timer> Clone for ThreadSafeTimer<T> {
     fn clone(&self) -> Self {
-        Self{ timer: self.timer.clone() }
+        Self {
+            timer: self.timer.clone(),
+        }
     }
 }
 
 impl<T: Timer> Timer for ThreadSafeTimer<T> {
-
     fn get_division_mode(&self) -> u32 {
         self.timer.read().get_division_mode()
     }
@@ -129,7 +135,7 @@ impl<T: Timer> Timer for ThreadSafeTimer<T> {
     }
 
     fn set_clock_count(&mut self, count: u64, mode: TimerMode) -> TimerResult {
-        self.timer.write().set_clock_count(count,mode)
+        self.timer.write().set_clock_count(count, mode)
     }
 
     fn get_initial_clock(&self) -> Result<u64, TimerError> {
@@ -163,12 +169,12 @@ impl SystemTime {
 
     /// Sets self to time 0 and records the clock count
     fn init(&mut self) {
-        self.last_check = SYSTEM_TIMEKEEPER.read().as_ref().unwrap().time_since(0).1 // panics if called before `kernel_init_timer`
+        self.last_check = SYSTEM_TIMEKEEPER.read().as_ref().unwrap().time_since(0).1
+        // panics if called before `kernel_init_timer`
     }
 
     /// Syncs the system time with the current clock count
     fn update(&mut self) {
-
         let (period, recorded_clock) = SYSTEM_TIMEKEEPER
             .read()
             .as_ref()
@@ -180,14 +186,13 @@ impl SystemTime {
     }
 }
 
-
 /// Trait for calculating durations should be used for system timekeeping
 pub trait TimeKeeper {
     /// Returns `(duration, clock_read)` since last read. where clock read is the value read from
     /// the clock used to calculate the duration
     ///
     /// Implementations must account for handle rollover
-    fn time_since(&self, old_time: u64) -> (u64,u64);
+    fn time_since(&self, old_time: u64) -> (u64, u64);
 }
 
 /// Public interface for [SystemTime::get_system_time]
@@ -196,13 +201,14 @@ pub fn get_sys_time() -> u64 {
     SYSTEM_TIME.write().get_system_time()
 }
 
-pub(crate) fn update_timer(){
-    if let Some(mut t) = SYSTEM_TIME.try_write(){
+pub(crate) fn update_timer() {
+    if let Some(mut t) = SYSTEM_TIME.try_write() {
         t.update()
     }
 }
 
-pub fn kernel_init_timer(timer: alloc::boxed::Box<(impl TimeKeeper + Sync + Send + 'static )>) { // This takes ownership but does not compile without 'static. WHY?
+pub fn kernel_init_timer(timer: alloc::boxed::Box<(impl TimeKeeper + Sync + Send + 'static)>) {
+    // This takes ownership but does not compile without 'static. WHY?
     *SYSTEM_TIMEKEEPER.write() = Some(timer);
     SYSTEM_TIME.write().init();
 }

@@ -1,12 +1,12 @@
+use crate::kernel_structures::{static_protected::Ref, KernelStatic};
 use bootloader::boot_info::{MemoryRegion, MemoryRegionKind};
 use x86_64::structures::paging::frame::PhysFrameRangeInclusive;
 use x86_64::structures::paging::page::PageRangeInclusive;
-use x86_64::structures::paging::{FrameAllocator, Mapper, OffsetPageTable, Page, PageSize, PageTableFlags, PhysFrame, Size1GiB, Size2MiB, Size4KiB};
-use x86_64::{structures::paging::PageTable, PhysAddr, VirtAddr};
-use crate::kernel_structures::{
-    KernelStatic,
-    static_protected::Ref
+use x86_64::structures::paging::{
+    FrameAllocator, Mapper, OffsetPageTable, Page, PageSize, PageTableFlags, PhysFrame, Size1GiB,
+    Size2MiB, Size4KiB,
 };
+use x86_64::{structures::paging::PageTable, PhysAddr, VirtAddr};
 
 // offset 0-11
 // l1 12-2
@@ -15,10 +15,10 @@ use crate::kernel_structures::{
 // l4 39-47
 // quick maffs
 
-pub mod page_table_tree;
-pub(self) mod offset_page_table;
-pub mod thread_local_storage;
 pub mod mem_map;
+pub(self) mod offset_page_table;
+pub mod page_table_tree;
+pub mod thread_local_storage;
 
 pub const PAGE_SIZE: usize = 4096;
 
@@ -31,11 +31,10 @@ pub fn get_sys_frame_alloc() -> Ref<'static, BootInfoFrameAllocator> {
     SYS_FRAME_ALLOCATOR.get()
 }
 
-
 /// This is the page table tree for the higher half kernel is shared by all CPU's. It should be used
 /// in the higher half of all user mode programs too.
-pub(crate) static SYS_MAPPER: KernelStatic<offset_page_table::OffsetPageTable> = KernelStatic::new();
-
+pub(crate) static SYS_MAPPER: KernelStatic<offset_page_table::OffsetPageTable> =
+    KernelStatic::new();
 
 pub unsafe fn set_sys_mem_tree_no_cr3(new_mapper: offset_page_table::OffsetPageTable) {
     SYS_MAPPER.init(new_mapper);
@@ -81,23 +80,21 @@ unsafe impl FrameAllocator<Size4KiB> for BootInfoFrameAllocator {
     }
 }
 
-
-
 /// Dummy frame allocator that amy be used with PageTableTree because PageTableTree will
 /// never call the passed &impl FrameAllocator
 pub struct DummyFrameAlloc;
 
-unsafe impl FrameAllocator<Size4KiB> for DummyFrameAlloc{
+unsafe impl FrameAllocator<Size4KiB> for DummyFrameAlloc {
     fn allocate_frame(&mut self) -> Option<PhysFrame<Size4KiB>> {
         SYS_FRAME_ALLOCATOR.get().allocate_frame()
     }
 }
-unsafe impl FrameAllocator<Size2MiB> for DummyFrameAlloc{
+unsafe impl FrameAllocator<Size2MiB> for DummyFrameAlloc {
     fn allocate_frame(&mut self) -> Option<PhysFrame<Size2MiB>> {
         unimplemented!()
     }
 }
-unsafe impl FrameAllocator<Size1GiB> for DummyFrameAlloc{
+unsafe impl FrameAllocator<Size1GiB> for DummyFrameAlloc {
     fn allocate_frame(&mut self) -> Option<PhysFrame<Size1GiB>> {
         unimplemented!()
     }
@@ -292,23 +289,22 @@ unsafe impl FrameAllocator<Size4KiB> for VeryUnsafeFrameAllocator {
 }
 
 #[derive(Clone, Copy)]
-struct PageIterator{
+struct PageIterator {
     pub start: Page,
     pub end: Page,
 }
 
-impl PageIterator{
-
+impl PageIterator {
     /// skips to the next l2 index pretending that next() was never called
-    fn skip_l2(&mut self){
+    fn skip_l2(&mut self) {
         let mut n = self.start;
 
         let base = n.start_address().as_u64();
-        if let Some(val) = base.checked_add(0x200000u64){
+        if let Some(val) = base.checked_add(0x200000u64) {
             n = Page::containing_address(VirtAddr::new(val));
         } else {
             self.start = self.end;
-            return
+            return;
         }
 
         if n > self.end {
@@ -318,16 +314,15 @@ impl PageIterator{
         }
     }
 
-    fn skip_l3(&mut self){
+    fn skip_l3(&mut self) {
         let mut n = self.start;
 
         let base = n.start_address().as_u64();
-        if let Some(val) = base.checked_add(0x40000000u64){
-
+        if let Some(val) = base.checked_add(0x40000000u64) {
             n = Page::containing_address(VirtAddr::new(val));
         } else {
             self.start = self.end;
-            return
+            return;
         }
 
         if n > self.end {
@@ -337,15 +332,15 @@ impl PageIterator{
         }
     }
 
-    fn skip_l4(&mut self){
+    fn skip_l4(&mut self) {
         let mut n = self.start;
 
         let base = n.start_address().as_u64();
-        if let Some(val) = base.checked_add(0x8000000000u64){
+        if let Some(val) = base.checked_add(0x8000000000u64) {
             n = Page::containing_address(VirtAddr::new(val));
         } else {
             self.start = self.end;
-            return
+            return;
         }
 
         if n > self.end {
@@ -354,7 +349,7 @@ impl PageIterator{
             self.start = n
         }
     }
-    fn step_back(&mut self){
+    fn step_back(&mut self) {
         let n = self.start;
         let n = Page::containing_address(n.start_address() - 0x1000u64);
 
@@ -365,24 +360,21 @@ impl PageIterator{
     }
 }
 
-impl Iterator for PageIterator{
+impl Iterator for PageIterator {
     type Item = Page;
 
     fn next(&mut self) -> Option<Self::Item> {
         let ret = self.start;
 
-        if ret == self.end{
-            return None
+        if ret == self.end {
+            return None;
         }
 
         let mut n = ret.start_address().as_u64();
         n = n.checked_add(PAGE_SIZE as u64)?;
 
         self.start = Page::containing_address(VirtAddr::new(n));
-        return Some(ret)
-
-
-
+        return Some(ret);
     }
 }
 
@@ -397,9 +389,9 @@ pub(crate) const fn addr_from_indices(l4: usize, l3: usize, l2: usize, l1: usize
 
     let mut ret = l1 << BITS_PAGE_OFFSET;
 
-    ret |= l2 << BITS_PAGE_OFFSET + (BITS_TABLE_OFFSET * 1 );
-    ret |= l3 << BITS_PAGE_OFFSET + (BITS_TABLE_OFFSET * 2 );
-    ret |= l4 << BITS_PAGE_OFFSET + (BITS_TABLE_OFFSET * 3 );
+    ret |= l2 << BITS_PAGE_OFFSET + (BITS_TABLE_OFFSET * 1);
+    ret |= l3 << BITS_PAGE_OFFSET + (BITS_TABLE_OFFSET * 2);
+    ret |= l4 << BITS_PAGE_OFFSET + (BITS_TABLE_OFFSET * 3);
 
     ret
 }
@@ -435,7 +427,10 @@ impl PageTableLevel {
         }
     }
 
-    pub fn get_index<S:PageSize>(&self, page: Page<S>) -> x86_64::structures::paging::PageTableIndex {
+    pub fn get_index<S: PageSize>(
+        &self,
+        page: Page<S>,
+    ) -> x86_64::structures::paging::PageTableIndex {
         // this should compile to nothing required to use with all S types
         let page = unsafe { Page::from_start_address_unchecked(page.start_address()) };
         use self::PageTableLevel::*;
@@ -447,4 +442,3 @@ impl PageTableLevel {
         };
     }
 }
-

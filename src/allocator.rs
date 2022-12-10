@@ -1,33 +1,34 @@
+use crate::mem;
 use core::alloc::{AllocError, Layout};
 use core::ptr::NonNull;
-use x86_64::structures::paging::{
-    mapper::MapToError, FrameAllocator,Mapper,Page,PageTableFlags,Size4KiB};
-use x86_64::VirtAddr;
-use crate::mem;
 use mem::mem_map::*;
+use x86_64::structures::paging::{
+    mapper::MapToError, FrameAllocator, Mapper, Page, PageTableFlags, Size4KiB,
+};
+use x86_64::VirtAddr;
 
 pub mod bump;
-pub mod linked_list;
 pub mod fixed_size_block;
+pub mod linked_list;
 pub mod page_table_allocator;
 //pub mod mmio_bump_alloc;
-mod buddy_alloc;
-pub(self) mod allocator_linked_list;
-pub(self) mod combined_allocator;
 pub mod alloc_interface;
+pub(self) mod allocator_linked_list;
+mod buddy_alloc;
+pub(self) mod combined_allocator;
 
-pub struct Locked<A>{
-    inner: spin::Mutex<A>
+pub struct Locked<A> {
+    inner: spin::Mutex<A>,
 }
 
-impl<A> Locked<A>{
-    pub const fn new(inner: A) -> Self{
-        Self{
-            inner: spin::Mutex::new(inner)
+impl<A> Locked<A> {
+    pub const fn new(inner: A) -> Self {
+        Self {
+            inner: spin::Mutex::new(inner),
         }
     }
 
-    pub fn lock (&self) -> spin::MutexGuard<A> {
+    pub fn lock(&self) -> spin::MutexGuard<A> {
         self.inner.lock()
     }
 }
@@ -36,40 +37,35 @@ impl<A> Locked<A>{
 pub const HEAP_START: usize = 0xffff808000000000;
 pub const HEAP_SIZE: usize = 1024 * 1024;
 
-
-static ALLOCATOR: Locked<fixed_size_block::FixedBlockAllocator> = Locked::new(fixed_size_block::FixedBlockAllocator::new());
+static ALLOCATOR: Locked<fixed_size_block::FixedBlockAllocator> =
+    Locked::new(fixed_size_block::FixedBlockAllocator::new());
 
 #[global_allocator]
 static COMBINED_ALLOCATOR: crate::kernel_structures::Mutex<
-    combined_allocator::DualHeap<
-        buddy_alloc::BuddyHeap,
-        fixed_size_block::NewFixedBlockAllocator
-    >
+    combined_allocator::DualHeap<buddy_alloc::BuddyHeap, fixed_size_block::NewFixedBlockAllocator>,
 > = crate::kernel_structures::Mutex::new(combined_allocator::DualHeap::new(
     buddy_alloc::BuddyHeap::new(),
-    fixed_size_block::NewFixedBlockAllocator::new()
-    )
-);
+    fixed_size_block::NewFixedBlockAllocator::new(),
+));
 
 pub fn init_heap(
     mapper: &mut impl Mapper<Size4KiB>,
-    frame_allocator: &mut impl FrameAllocator<Size4KiB>
-) -> Result<(),MapToError<Size4KiB>>{
+    frame_allocator: &mut impl FrameAllocator<Size4KiB>,
+) -> Result<(), MapToError<Size4KiB>> {
     let page_range = {
         let heap_start = VirtAddr::new(HEAP_START as u64);
         let heap_end = heap_start + HEAP_SIZE - 1u64;
         let heap_start_page = Page::containing_address(heap_start);
         let heap_end_page = Page::containing_address(heap_end);
-        Page::range_inclusive(heap_start_page,heap_end_page)
+        Page::range_inclusive(heap_start_page, heap_end_page)
     };
 
-    for page in page_range{
+    for page in page_range {
         let frame = frame_allocator
-            .allocate_frame().ok_or(MapToError::FrameAllocationFailed)?;
-        let flags = PageTableFlags::PRESENT| PageTableFlags::WRITABLE;
-        unsafe {
-            mapper.map_to(page, frame, flags, frame_allocator)?.flush()
-        };
+            .allocate_frame()
+            .ok_or(MapToError::FrameAllocationFailed)?;
+        let flags = PageTableFlags::PRESENT | PageTableFlags::WRITABLE;
+        unsafe { mapper.map_to(page, frame, flags, frame_allocator)?.flush() };
     }
     unsafe { ALLOCATOR.lock().init(HEAP_START, HEAP_SIZE) };
 
@@ -84,21 +80,21 @@ pub unsafe fn init_comb_heap(addr: usize) {
     let mut lock = COMBINED_ALLOCATOR.lock();
 
     // map mem
-    map_page(Page::from_start_address(VirtAddr::from_ptr(ptr)).unwrap(), PROGRAM_DATA_FLAGS); // unwrap shouldn't panic
-    let ptr = addr as *mut [u8;mem::PAGE_SIZE];
+    map_page(
+        Page::from_start_address(VirtAddr::from_ptr(ptr)).unwrap(),
+        PROGRAM_DATA_FLAGS,
+    ); // unwrap shouldn't panic
+    let ptr = addr as *mut [u8; mem::PAGE_SIZE];
     lock.init(ptr);
-
 }
 
 fn align_up(addr: usize, align: usize) -> usize {
     (addr + align - 1) & !(align - 1)
 }
 
-
-
 pub(crate) enum GenericAlloc {
     Global(alloc::alloc::Global),
-    Mmio(alloc_interface::MmioAlloc)
+    Mmio(alloc_interface::MmioAlloc),
 }
 
 unsafe impl core::alloc::Allocator for GenericAlloc {
@@ -108,14 +104,14 @@ unsafe impl core::alloc::Allocator for GenericAlloc {
             GenericAlloc::Mmio(a) => a.allocate(layout),
         }
     }
-    
+
     fn allocate_zeroed(&self, layout: Layout) -> Result<NonNull<[u8]>, AllocError> {
         match self {
             GenericAlloc::Global(a) => a.allocate_zeroed(layout),
             GenericAlloc::Mmio(a) => a.allocate_zeroed(layout),
         }
     }
-    
+
     unsafe fn deallocate(&self, ptr: NonNull<u8>, layout: Layout) {
         match self {
             GenericAlloc::Global(a) => a.deallocate(ptr, layout),
@@ -123,24 +119,39 @@ unsafe impl core::alloc::Allocator for GenericAlloc {
         }
     }
 
-    unsafe fn grow(&self, ptr: NonNull<u8>, old_layout: Layout, new_layout: Layout) -> Result<NonNull<[u8]>, AllocError> {
+    unsafe fn grow(
+        &self,
+        ptr: NonNull<u8>,
+        old_layout: Layout,
+        new_layout: Layout,
+    ) -> Result<NonNull<[u8]>, AllocError> {
         match self {
             GenericAlloc::Global(a) => a.grow(ptr, old_layout, new_layout),
-            GenericAlloc::Mmio(a) => a.grow(ptr, old_layout, new_layout)
+            GenericAlloc::Mmio(a) => a.grow(ptr, old_layout, new_layout),
         }
     }
-    
-    unsafe fn grow_zeroed(&self, ptr: NonNull<u8>, old_layout: Layout, new_layout: Layout) -> Result<NonNull<[u8]>, AllocError> {
+
+    unsafe fn grow_zeroed(
+        &self,
+        ptr: NonNull<u8>,
+        old_layout: Layout,
+        new_layout: Layout,
+    ) -> Result<NonNull<[u8]>, AllocError> {
         match self {
             GenericAlloc::Global(a) => a.grow_zeroed(ptr, old_layout, new_layout),
             GenericAlloc::Mmio(a) => a.grow_zeroed(ptr, old_layout, new_layout),
         }
     }
 
-    unsafe fn shrink(&self, ptr: NonNull<u8>, old_layout: Layout, new_layout: Layout) -> Result<NonNull<[u8]>, AllocError> {
+    unsafe fn shrink(
+        &self,
+        ptr: NonNull<u8>,
+        old_layout: Layout,
+        new_layout: Layout,
+    ) -> Result<NonNull<[u8]>, AllocError> {
         match self {
             GenericAlloc::Global(a) => a.shrink(ptr, old_layout, new_layout),
-            GenericAlloc::Mmio(a) => a.shrink(ptr, old_layout, new_layout)
+            GenericAlloc::Mmio(a) => a.shrink(ptr, old_layout, new_layout),
         }
     }
 }
@@ -174,7 +185,7 @@ mod memory_counter {
         pub const fn new(size: usize) -> Self {
             Self {
                 free: 0,
-                used: size
+                used: size,
             }
         }
 
@@ -184,7 +195,7 @@ mod memory_counter {
         /// #Panics
         ///
         /// This fn will panic if `self.free + count` overflows
-        pub fn free(&mut self, count: usize) -> Result<usize,usize> {
+        pub fn free(&mut self, count: usize) -> Result<usize, usize> {
             if self.used >= count {
                 self.free += count;
                 self.used -= count;
@@ -195,7 +206,7 @@ mod memory_counter {
         }
 
         /// Acts the same as [Self::free] but adding memory to used and removing it from free.
-        pub fn reserve(&mut self, count: usize) -> Result<usize,usize> {
+        pub fn reserve(&mut self, count: usize) -> Result<usize, usize> {
             if self.free >= count {
                 self.used += count;
                 self.free -= count;
@@ -217,5 +228,4 @@ mod memory_counter {
             self.free
         }
     }
-
 }

@@ -3,12 +3,12 @@ use acpi::{AcpiHandler, PhysicalMapping};
 use core::cell::Cell;
 use core::ptr::NonNull;
 use linked_list_allocator::align_down;
+use x86_64::structures::paging::mapper::MapperFlushAll;
 use x86_64::structures::paging::{PageTableIndex, PhysFrame};
 use x86_64::{PhysAddr, VirtAddr};
-use x86_64::structures::paging::mapper::MapperFlushAll;
 
 #[allow(dead_code)]
-fn init(){
+fn init() {
     todo!();
 }
 
@@ -37,7 +37,11 @@ impl<'a> AcpiGrabber<'a> {
     /// finds a free region of `frame_count` within th local page table
     fn find_free(&self, frame_count: usize) -> Option<usize> {
         let mut base = None;
-        for (i, e) in (unsafe { &*self.page_table.as_ptr() }).get_page().iter().enumerate() {
+        for (i, e) in (unsafe { &*self.page_table.as_ptr() })
+            .get_page()
+            .iter()
+            .enumerate()
+        {
             if e.is_unused() {
                 if let None = base {
                     // sets base if it is not set
@@ -76,8 +80,10 @@ impl<'a> AcpiHandler for AcpiGrabber<'a> {
         let mut p_addr = new_phy;
 
         for p in start_page..start_page + frame_count {
-            unsafe { &mut *self.page_table.as_ptr() }
-                .allocate_frame(PageTableIndex::new(p as u16), PhysFrame::containing_address(PhysAddr::new(p_addr as u64)));
+            unsafe { &mut *self.page_table.as_ptr() }.allocate_frame(
+                PageTableIndex::new(p as u16),
+                PhysFrame::containing_address(PhysAddr::new(p_addr as u64)),
+            );
             MapperFlushAll::new().flush_all();
             p_addr += Self::PAGE_SIZE
         }
@@ -103,7 +109,8 @@ impl<'a> AcpiHandler for AcpiGrabber<'a> {
         };
 
         for i in table_index..table_index + page_count {
-            unsafe { &mut *region.handler().page_table.as_ptr() }.drop_child(PageTableIndex::new(i)) // this shouldn't panic
+            unsafe { &mut *region.handler().page_table.as_ptr() }.drop_child(PageTableIndex::new(i))
+            // this shouldn't panic
         }
     }
 }

@@ -1,13 +1,12 @@
 //! This crate contain procedural macros for hootux
 
 use proc_macro::TokenStream;
-use syn::__private::quote::format_ident;
 use quote::quote;
-use syn::__private::TokenStream2;
 use syn::Lit;
+use syn::__private::quote::format_ident;
+use syn::__private::TokenStream2;
 
 const MAX_INT_VECTOR: u32 = 255;
-
 
 /// This macro is for generating interrupt stub functions starting at the number given and ending at [MAX_VECTOR].
 /// The code generated for each fn is as follows
@@ -31,7 +30,9 @@ pub fn gen_interrupt_stubs(start: TokenStream) -> TokenStream {
     if let Lit::Int(int) = p {
         let num: u32 = int.base10_digits().parse().unwrap();
         gen_interrupt_stubs_inner(num).into()
-    } else { panic!() }
+    } else {
+        panic!()
+    }
 }
 
 fn gen_interrupt_stubs_inner(num: u32) -> TokenStream2 {
@@ -41,7 +42,7 @@ fn gen_interrupt_stubs_inner(num: u32) -> TokenStream2 {
 
     let byte = num as u8;
 
-    let next = gen_interrupt_stubs_inner(num+1);
+    let next = gen_interrupt_stubs_inner(num + 1);
 
     let name = format_ident!("__proc_interrupt_stub_fn_vector_{num:}");
 
@@ -73,7 +74,9 @@ pub fn set_idt_entries(start: TokenStream) -> TokenStream {
     if let Lit::Int(int) = p {
         let num: u32 = int.base10_digits().parse().unwrap();
         gen_idt_load(num).into()
-    } else { panic!() }
+    } else {
+        panic!()
+    }
 }
 
 fn gen_idt_load(num: u32) -> TokenStream2 {
@@ -85,7 +88,7 @@ fn gen_idt_load(num: u32) -> TokenStream2 {
 
     let name = format_ident!("__proc_interrupt_stub_fn_vector_{num:}");
 
-    let next = gen_idt_load(num+1);
+    let next = gen_idt_load(num + 1);
     let this = quote!(
         idt[#t].set_handler_fn(#name);
     );

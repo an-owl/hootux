@@ -28,7 +28,7 @@ impl Msr<TimeStampCounterValue> for TimeStampCounter {
         return if cpuid_lookup_bit(CpuidRegister::edx, 1, 0, 4) {
             MsrAvailability::new(MsrReadWrite::Write)
         } else {
-            MsrAvailability::new(MsrReadWrite::Reserved)
+            MsrAvailability::new(Reserved)
         };
     }
 }
@@ -116,7 +116,7 @@ impl ApicBaseData {
     /// This returns the apic base address
     pub fn set_apic_base_addr(&mut self, base_addr: u64) {
         assert!(base_addr < *MAXPHYADDR_MASK);
-        let mut mask = *MAXPHYADDR_MASK >> 12 ;
+        let mut mask = *MAXPHYADDR_MASK >> 12;
         mask = mask << 12;
         self.bits &= !mask; // clear bits in address range
         let base_addr = base_addr >> 12;
@@ -146,7 +146,7 @@ impl Msr<ApicBaseData> for ApicBase {
             .get_feature_info()
             .expect("unable to get feature info");
 
-        let mut bits = MsrAvailability::new(MsrReadWrite::Reserved);
+        let mut bits = MsrAvailability::new(Reserved);
         if ((feature.family_id() == 6) && (feature.model_id() >= 1)) || feature.family_id() > 6 {
             bits.0[8] = MsrReadWrite::Write;
             bits.0[11..*MAXPHYADDR as usize - 1].fill_with(|| MsrReadWrite::Write);
@@ -168,14 +168,14 @@ pub struct GsBase;
 pub struct KernelGsBase;
 
 #[repr(C)]
-#[derive(Debug,Clone)]
+#[derive(Debug, Clone)]
 pub struct BaseAddr(u64);
 
 impl MsrFlags for BaseAddr {
     fn bits(&self) -> (u32, u32) {
         let high = (self.0 >> 32) as u32;
         let low = self.0 as u32;
-        (high,low)
+        (high, low)
     }
 
     fn new(high: u32, low: u32) -> Self {
@@ -222,7 +222,7 @@ impl Msr<BaseAddr> for FsBase {
         if raw_cpuid::cpuid!(80000001).edx & (1 << 29) > 0 {
             MsrAvailability::new(MsrReadWrite::Write)
         } else {
-            MsrAvailability::new(MsrReadWrite::Reserved)
+            MsrAvailability::new(Reserved)
         }
     }
 }
@@ -234,7 +234,7 @@ impl Msr<BaseAddr> for GsBase {
         if raw_cpuid::cpuid!(80000001).edx & (1 << 29) > 0 {
             MsrAvailability::new(MsrReadWrite::Write)
         } else {
-            MsrAvailability::new(MsrReadWrite::Reserved)
+            MsrAvailability::new(Reserved)
         }
     }
 }

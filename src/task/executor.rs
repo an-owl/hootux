@@ -1,17 +1,17 @@
+use crate::task::{Task, TaskId};
 use alloc::collections::BTreeMap;
 use alloc::sync::Arc;
+use alloc::task::Wake;
 use core::task::{Context, Poll, Waker};
 use crossbeam_queue::ArrayQueue;
-use crate::task::{Task, TaskId};
-use alloc::task::Wake;
 
-pub struct Executor{
+pub struct Executor {
     tasks: BTreeMap<TaskId, Task>,
     task_queue: Arc<ArrayQueue<TaskId>>,
-    waker_cache: BTreeMap<TaskId,Waker>
+    waker_cache: BTreeMap<TaskId, Waker>,
 }
 
-impl Executor{
+impl Executor {
     pub fn new() -> Self {
         Self {
             tasks: BTreeMap::new(),
@@ -21,22 +21,24 @@ impl Executor{
     }
     pub fn spawn(&mut self, task: Task) {
         let task_id = task.id;
-        if self.tasks.insert(task.id, task).is_some(){
+        if self.tasks.insert(task.id, task).is_some() {
             panic!("ERROR: Task ID Already exists");
         }
-        self.task_queue.push(task_id).expect("Kernel task queue ful")
+        self.task_queue
+            .push(task_id)
+            .expect("Kernel task queue ful")
     }
     fn run_ready(&mut self) {
-        let Self{
+        let Self {
             tasks,
             task_queue,
             waker_cache,
         } = self; //maybe undo this
 
         while let Some(task_id) = task_queue.pop() {
-            let task = match tasks.get_mut(&task_id){
+            let task = match tasks.get_mut(&task_id) {
                 None => continue,
-                Some(task) => task
+                Some(task) => task,
             };
 
             let waker = waker_cache
@@ -47,13 +49,13 @@ impl Executor{
                 Poll::Ready(()) => {
                     tasks.remove(&task_id);
                     waker_cache.remove(&task_id);
-                },
+                }
                 Poll::Pending => {}
             }
         }
     }
 
-    pub fn run(&mut self) -> !{
+    pub fn run(&mut self) -> ! {
         loop {
             self.run_ready();
             self.seep_if_idle();
@@ -61,11 +63,11 @@ impl Executor{
     }
 
     #[inline]
-    fn seep_if_idle(&self){
+    fn seep_if_idle(&self) {
         use x86_64::instructions::interrupts;
 
         interrupts::disable();
-        if self.task_queue.is_empty(){
+        if self.task_queue.is_empty() {
             interrupts::enable_and_hlt();
         } else {
             interrupts::enable();
@@ -73,30 +75,31 @@ impl Executor{
     }
 }
 
-struct TaskWaker{
+struct TaskWaker {
     task_id: TaskId,
-    task_queue: Arc<ArrayQueue<TaskId>>
+    task_queue: Arc<ArrayQueue<TaskId>>,
 }
 
-impl TaskWaker{
-
-    fn new (task_id: TaskId, task_queue: Arc<ArrayQueue<TaskId>>) -> Waker{
-        Waker::from(Arc::new(TaskWaker{
+impl TaskWaker {
+    fn new(task_id: TaskId, task_queue: Arc<ArrayQueue<TaskId>>) -> Waker {
+        Waker::from(Arc::new(TaskWaker {
             task_id,
-            task_queue
+            task_queue,
         }))
     }
 
     fn wake_task(&self) {
-        self.task_queue.push(self.task_id).expect("Kernel task queue full")
+        self.task_queue
+            .push(self.task_id)
+            .expect("Kernel task queue full")
     }
 }
 
-impl Wake for TaskWaker{
-    fn wake(self: Arc<Self>){
+impl Wake for TaskWaker {
+    fn wake(self: Arc<Self>) {
         self.wake_task()
     }
-    fn wake_by_ref(self: & Arc<Self>) {
+    fn wake_by_ref(self: &Arc<Self>) {
         self.wake_task()
     }
 }

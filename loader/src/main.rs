@@ -9,9 +9,11 @@ const OVMF_BIN: &str = "OVMF_CODE.fd";
 
 const RUN_ARGS: &[&str] = &[
     "--no-reboot",
-    "-serial", "stdio",
-    "-d", "int",
-    "--no-reboot"
+    "-serial",
+    "stdio",
+    "-d",
+    "int",
+    "--no-reboot",
 ];
 
 const TEST_ARGS: &[&str] = &[
@@ -24,7 +26,6 @@ const TEST_ARGS: &[&str] = &[
     "--no-reboot",
 ];
 const TEST_TIMEOUT: u64 = 10;
-
 
 fn main() {
     let mut args = std::env::args().skip(1); // skip executable name
@@ -49,34 +50,36 @@ fn main() {
     //build image
     let efi = create_images(&kernel_binary_path);
     if no_boot {
-        println!("efi image created at {}",efi.display());
-        return
+        println!("efi image created at {}", efi.display());
+        return;
     }
 
     let mut qemu_cmd = Command::new("qemu-system-x86_64");
-    qemu_cmd.arg("-bios").arg(format!("{}{}",OVMF_DIR,OVMF_BIN));
-    qemu_cmd.arg("-kernel").arg(format!("{}",efi.display()));
+    qemu_cmd
+        .arg("-bios")
+        .arg(format!("{}{}", OVMF_DIR, OVMF_BIN));
+    qemu_cmd.arg("-kernel").arg(format!("{}", efi.display()));
 
     let binary_kind = runner_utils::binary_kind(&kernel_binary_path);
 
     //run
-    if binary_kind.is_test(){
+    if binary_kind.is_test() {
         qemu_cmd.args(TEST_ARGS);
         qemu_cmd.stdout(Stdio::inherit());
         qemu_cmd.stderr(Stdio::inherit());
 
-        let exit_status = runner_utils::run_with_timeout(
-            &mut qemu_cmd,
-            Duration::from_secs(TEST_TIMEOUT)).unwrap();
+        let exit_status =
+            runner_utils::run_with_timeout(&mut qemu_cmd, Duration::from_secs(TEST_TIMEOUT))
+                .unwrap();
 
-        match exit_status.code(){
+        match exit_status.code() {
             Some(33) => {}
-            e => panic!("Failed: exit code: {:?}", e)
+            e => panic!("Failed: exit code: {:?}", e),
         }
     } else {
         qemu_cmd.args(RUN_ARGS);
         let exit_status = qemu_cmd.status().unwrap();
-        if !exit_status.success(){
+        if !exit_status.success() {
             std::process::exit(exit_status.code().unwrap_or(1));
         }
     }
@@ -93,18 +96,25 @@ fn create_images(kernel_binary_path: &Path) -> PathBuf {
     img_cmd.arg("builder");
     img_cmd.arg("--kernel-manifest").arg(&kernel_manifest_path);
     img_cmd.arg("--kernel-binary").arg(&kernel_binary_path);
-    img_cmd.arg("--out-dir").arg(kernel_binary_path.parent().unwrap().parent().unwrap()); //this dir should be target/$TARGET/
+    img_cmd
+        .arg("--out-dir")
+        .arg(kernel_binary_path.parent().unwrap().parent().unwrap()); //this dir should be target/$TARGET/
 
-    if !img_cmd.status().unwrap().success(){
+    if !img_cmd.status().unwrap().success() {
         panic!("build failed");
     }
 
     //return .efi
     let kernel_binary_name = kernel_binary_path.file_name().unwrap().to_str().unwrap();
-    let efi = kernel_binary_path.parent().unwrap().parent().unwrap().join(format!("boot-uefi-{}.efi",kernel_binary_name));
-    println!("{},",efi.display());
+    let efi = kernel_binary_path
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .join(format!("boot-uefi-{}.efi", kernel_binary_name));
+    println!("{},", efi.display());
 
-    if !efi.exists(){
+    if !efi.exists() {
         panic!("Disk image not found")
     }
 

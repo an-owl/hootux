@@ -1,18 +1,18 @@
+use super::LOCAL_APIC;
 use crate::interrupts::apic::apic_structures::registers::ApicError;
 use crate::time::{Timer, TimerError, TimerMode, TimerResult};
-use super::LOCAL_APIC;
 
 /// This struct is for used to provide a public interface for the local apic~
-pub struct SysApic{
-    _h: Hidden
+pub struct SysApic {
+    _h: Hidden,
 }
 
 /// Does Nothing, prevents instancing `SysApic` using `SysApic{}`
 struct Hidden;
 
-impl SysApic{
+impl SysApic {
     pub(super) const fn new() -> Self {
-        SysApic{_h:Hidden}
+        SysApic { _h: Hidden }
     }
 }
 
@@ -26,7 +26,7 @@ impl Timer for SysApic {
     }
 
     fn set_clock_count(&mut self, count: u64, mode: TimerMode) -> TimerResult {
-        LOCAL_APIC.get().set_clock_count(count,mode)
+        LOCAL_APIC.get().set_clock_count(count, mode)
     }
 
     fn get_initial_clock(&self) -> Result<u64, TimerError> {
@@ -40,15 +40,19 @@ impl super::Apic for SysApic {
     }
 
     unsafe fn init_err(&mut self, vector: u8, mask: bool) {
-        LOCAL_APIC.get().init_err(vector,mask)
+        LOCAL_APIC.get().init_err(vector, mask)
     }
 
     unsafe fn init_timer(&mut self, vector: u8, mask: bool) {
         LOCAL_APIC.get().init_timer(vector, mask)
     }
 
-    unsafe fn set_timer(&mut self, mode: crate::interrupts::apic::apic_structures::apic_types::TimerMode, time: u32) {
-        LOCAL_APIC.get().set_timer(mode,time)
+    unsafe fn set_timer(
+        &mut self,
+        mode: crate::interrupts::apic::apic_structures::apic_types::TimerMode,
+        time: u32,
+    ) {
+        LOCAL_APIC.get().set_timer(mode, time)
     }
 
     /// Do not call this fn it will panic. `declare_eoi` is not available via this interface. You may want to use [super::declare_eoi]
@@ -62,6 +66,6 @@ impl super::Apic for SysApic {
     }
 
     fn begin_calibration(&mut self, test_time: u32, vec: u8) {
-        LOCAL_APIC.get().begin_calibration(test_time,vec)
+        LOCAL_APIC.get().begin_calibration(test_time, vec)
     }
 }
