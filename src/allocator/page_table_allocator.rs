@@ -257,7 +257,7 @@ impl PageTableAllocator {
             for page in range{
 
                 let frame = mem::SYS_FRAME_ALLOCATOR.get().allocate_frame().unwrap();
-                mem::SYS_MEM_TREE.get().map_to(page, frame, flags, &mut DummyFrameAlloc).unwrap().flush();
+                mem::SYS_MAPPER.get().map_to(page, frame, flags, &mut DummyFrameAlloc).unwrap().flush();
             }
         }
         self.end_addr = new_end_addr;

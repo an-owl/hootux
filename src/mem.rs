@@ -3,7 +3,10 @@ use x86_64::structures::paging::frame::PhysFrameRangeInclusive;
 use x86_64::structures::paging::page::PageRangeInclusive;
 use x86_64::structures::paging::{FrameAllocator, Mapper, OffsetPageTable, Page, PageSize, PageTableFlags, PhysFrame, Size1GiB, Size2MiB, Size4KiB};
 use x86_64::{structures::paging::PageTable, PhysAddr, VirtAddr};
-use crate::kernel_structures::{KernelStatic, UnlockedStatic};
+use crate::kernel_structures::{
+    KernelStatic,
+    static_protected::Ref
+};
 
 // offset 0-11
 // l1 12-2
@@ -24,20 +27,18 @@ pub(crate) static SYS_FRAME_ALLOCATOR: KernelStatic<BootInfoFrameAllocator> = Ke
 pub fn set_sys_frame_alloc(frame_alloc: BootInfoFrameAllocator) {
     SYS_FRAME_ALLOCATOR.init(frame_alloc)
 }
+pub fn get_sys_frame_alloc() -> Ref<'static, BootInfoFrameAllocator> {
+    SYS_FRAME_ALLOCATOR.get()
+}
 
-#[thread_local]
-pub(crate) static SYS_MEM_TREE: UnlockedStatic<page_table_tree::PageTableTree> = UnlockedStatic::new();
 
-/// sets `SYS_MEM_TREE` and sets cr3 register
-///
-/// #Saftey
-///
-/// This fn is unsafe because tree must be correctly initialized
-pub unsafe fn set_sys_mem_tree(tree: page_table_tree::PageTableTree, current_mapper: &impl Mapper<Size4KiB>) {
-    SYS_MEM_TREE.init(tree);
-    unsafe {
-        SYS_MEM_TREE.get().set_cr3(current_mapper)
-    };
+/// This is the page table tree for the higher half kernel is shared by all CPU's. It should be used
+/// in the higher half of all user mode programs too.
+pub(crate) static SYS_MAPPER: KernelStatic<offset_page_table::OffsetPageTable> = KernelStatic::new();
+
+
+pub unsafe fn set_sys_mem_tree_no_cr3(new_mapper: offset_page_table::OffsetPageTable) {
+    SYS_MAPPER.init(new_mapper);
 }
 
 /// A FrameAllocator that returns usable frames from the bootloader's memory map.
@@ -88,7 +89,7 @@ pub struct DummyFrameAlloc;
 
 unsafe impl FrameAllocator<Size4KiB> for DummyFrameAlloc{
     fn allocate_frame(&mut self) -> Option<PhysFrame<Size4KiB>> {
-        unimplemented!()
+        SYS_FRAME_ALLOCATOR.get().allocate_frame()
     }
 }
 unsafe impl FrameAllocator<Size2MiB> for DummyFrameAlloc{
@@ -125,9 +126,8 @@ unsafe fn active_l4_table(physical_memory_offset: VirtAddr) -> &'static mut Page
 /// complete physical memory is mapped to virtual memory at the passed
 /// `physical_memory_offset`. Also, this function must be only called once
 /// to avoid aliasing `&mut` references (which is undefined behavior).
-pub unsafe fn init(offset: VirtAddr) -> OffsetPageTable<'static> {
-    let l4 = active_l4_table(offset);
-    OffsetPageTable::new(l4, offset)
+pub unsafe fn init(offset: VirtAddr) -> offset_page_table::OffsetPageTable {
+    offset_page_table::OffsetPageTable::new(offset)
 }
 
 /// This is here to break safety and should only be used under very

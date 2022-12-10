@@ -1,14 +1,21 @@
-use super::{PageTableLevel,PageIterator};
+use super::{PageTableLevel, PageIterator};
 use x86_64::structures::paging::page_table::{FrameError, PageTableEntry};
-use x86_64::structures::paging::{
-    PageTable, PageTableFlags,
-};
-use x86_64::VirtAddr;
+use x86_64::structures::paging::{FrameAllocator, Mapper, Page, PageSize, PageTable, PageTableFlags, PhysFrame, Size1GiB, Size2MiB, Size4KiB};
+use x86_64::structures::paging::mapper::{FlagUpdateError, MapperFlush, MapperFlushAll, MapToError, TranslateError, UnmapError};
+use x86_64::{PhysAddr, VirtAddr};
 
-pub(super) struct OffsetPageTable {
+pub struct OffsetPageTable {
     offset_base: VirtAddr,
     l4_table: &'static mut PageTable,
 }
+
+#[derive(Copy, Clone, Debug)]
+enum InternalError {
+    ParentEntryHugePage(PageTableLevel),
+    PageNotMapped(PageTableLevel),
+    PageAlreadyMapped(PhysAddr),
+}
+
 
 impl OffsetPageTable {
     /// Initializes OffsetPageTable
@@ -199,12 +206,500 @@ impl OffsetPageTable {
 
         count
     }
+
+    fn traverse_mut<S: PageSize>(&mut self, level: PageTableLevel, page: Page<S>) -> Result<&mut PageTable, InternalError> {
+        if level == PageTableLevel::L4 {
+            return Ok(self.l4_table);
+        }
+        let page = Page::containing_address(page.start_address());
+        let l4 = unsafe  { &mut *(self.l4_table as *mut PageTable) };
+        self.traverse_inner_mut(PageTableLevel::L4, level, page, l4)
+    }
+
+    fn traverse_inner_mut(&mut self, curr_level: PageTableLevel, target_level: PageTableLevel, page: Page, table: &mut PageTable) -> Result<&mut PageTable, InternalError> {
+        // get addr
+        let index = curr_level.get_index(page);
+        let entry = table[index].clone();
+
+        // check for table's existence
+        if entry.is_unused() {
+            return Err(InternalError::PageNotMapped(curr_level.dec()))
+        } else if entry.flags().contains(PageTableFlags::HUGE_PAGE) {
+            return Err(InternalError::ParentEntryHugePage(curr_level.dec()))
+        }
+
+        let addr = entry.addr();
+        let table_addr = self.offset_base + addr.as_u64();
+
+        let table = unsafe  { &mut *table_addr.as_mut_ptr::<PageTable>() };
+
+        // return or continue
+
+        return if curr_level.dec() == target_level {
+            Ok(table)
+        } else {
+            self.traverse_inner_mut(curr_level.dec(), target_level, page, table)
+        }
+    }
+
+    fn traverse<S: PageSize>(&self, level: PageTableLevel, page: Page<S>) -> Result<&PageTable, InternalError> {
+        if level == PageTableLevel::L4 {
+            return Ok(self.l4_table);
+        }
+        let page = Page::containing_address(page.start_address());
+        self.traverse_inner(PageTableLevel::L4, level, page, self.l4_table)
+    }
+
+    fn traverse_inner(&self, curr_level: PageTableLevel, target_level: PageTableLevel, page: Page, table: &PageTable) -> Result<&PageTable, InternalError> {
+        // get addr
+        let index = curr_level.get_index(page);
+        let entry = table[index].clone();
+
+        // check for table's existence
+        if entry.is_unused() {
+            return Err(InternalError::PageNotMapped(curr_level.dec()))
+        } else if entry.flags().contains(PageTableFlags::HUGE_PAGE) {
+            return Err(InternalError::ParentEntryHugePage(curr_level.dec()))
+        }
+
+        let addr = entry.addr();
+        let table_addr = self.offset_base + addr.as_u64();
+
+        let table = unsafe  { &*table_addr.as_mut_ptr::<PageTable>() };
+
+        // return or continue
+
+        return if curr_level.dec() == target_level {
+            Ok(table)
+        } else {
+            self.traverse_inner(curr_level.dec(), target_level, page, table)
+        }
+    }
+
+
+
+    /// Allocates a new table into memory without mapping it
+    fn new_table(&self) -> *mut PageTable {
+        let frame = super::SYS_FRAME_ALLOCATOR.get().allocate_frame().expect("System ran out of memory");
+        // offset addr + new frame as MaybeUninit<PageTable>
+        let new_table = unsafe {
+            let pt_ref = &mut *((self.offset_base.as_u64() as usize + frame.start_address().as_u64() as usize) as *mut core::mem::MaybeUninit<PageTable>);
+            let tab = pt_ref.write(PageTable::new());
+            tab as *mut PageTable
+
+        };
+        new_table
+    }
+
+    /// Attaches a page table to the currently mapped tree. At the give level and page, The page
+    /// will be rounded down for huge pages.
+    ///
+    /// #Safety
+    ///
+    /// This fn is unsafe because the reference to `new_table` is assumed to be within the offset
+    /// memory. A pointer to a PageTable outside of the offset memory is UB
+    unsafe fn attach<S: PageSize>(&mut self, new_table: *mut PageTable, level: PageTableLevel, page: Page<S>, flags: PageTableFlags) -> Result<(), InternalError> {
+
+        let page = unsafe { Page::<Size4KiB>::from_start_address_unchecked(page.start_address()) };
+
+        let frame_addr  = new_table as usize - self.offset_base.as_u64() as usize;
+        let phys_addr = PhysAddr::new(frame_addr as u64);
+        let index = level.inc().get_index(page);
+
+        let table = match self.traverse_mut(level.inc(), page) {
+            Ok(table) => table,
+
+            Err(InternalError::PageNotMapped(_)) => {
+
+                // recursively makes new
+                let nt = self.new_table();
+                self.attach(nt, level.inc(),page,flags).expect("???");
+                self.traverse_mut(level.inc(), page).expect("???")
+            }
+
+            Err(InternalError::ParentEntryHugePage(l)) => return Err(InternalError::ParentEntryHugePage(l)),
+            _ => unreachable!()
+        };
+
+        if table[index].is_unused() {
+            table[index].set_addr(phys_addr,flags);
+            Ok(())
+        } else {
+            Err(InternalError::PageAlreadyMapped(table[index].addr()))
+        }
+    }
+
 }
 
+impl Mapper<Size4KiB> for OffsetPageTable {
+    unsafe fn map_to_with_table_flags<A>(&mut self, page: Page<Size4KiB>, frame: PhysFrame<Size4KiB>, flags: PageTableFlags, parent_table_flags: PageTableFlags, _frame_allocator: &mut A) -> Result<MapperFlush<Size4KiB>, MapToError<Size4KiB>> where Self: Sized, A: FrameAllocator<Size4KiB> + ?Sized {
+
+        let table = match self.traverse_mut(PageTableLevel::L1, page) {
+            Ok(table) => table,
+
+            Err(InternalError::PageNotMapped(_)) => {
+                self.attach(self.new_table(),PageTableLevel::L1,page,parent_table_flags).unwrap(); // Shouldn't panic
+                self.traverse_mut(PageTableLevel::L1, page).unwrap() // Shouldn't panic
+            }
+
+            Err(InternalError::ParentEntryHugePage(_)) => {
+                return Err(MapToError::ParentEntryHugePage)
+            }
+            _ => unreachable!()
+        };
+
+        let entry = &mut table[PageTableLevel::L1.get_index(page)];
+        return if entry.is_unused() {
+            entry.set_addr(frame.start_address(), flags);
+            Ok(MapperFlush::new(page))
+        } else {
+            Err(MapToError::PageAlreadyMapped(entry.frame().unwrap())) // Is never huge page
+        }
+
+    }
+
+    fn unmap(&mut self, page: Page<Size4KiB>) -> Result<(PhysFrame<Size4KiB>, MapperFlush<Size4KiB>), UnmapError> {
+        match self.traverse_mut(PageTableLevel::L1, page){
+            Ok(table) => {
+                let entry = &mut table[PageTableLevel::L1.get_index(page)];
+
+                if entry.is_unused() {
+                    return Err(UnmapError::PageNotMapped);
+                }
+
+                let old = core::mem::replace(entry,PageTableEntry::new());
+                Ok((old.frame().unwrap(),MapperFlush::new(page))) // all errors checked cannot panic
+
+            }
+
+            Err(InternalError::PageNotMapped(_)) => Err(UnmapError::PageNotMapped),
+            Err(InternalError::ParentEntryHugePage(_)) => Err(UnmapError::ParentEntryHugePage),
+            _ => unreachable!()
+        }
+    }
+
+    unsafe fn update_flags(&mut self, page: Page<Size4KiB>, flags: PageTableFlags) -> Result<MapperFlush<Size4KiB>, FlagUpdateError> {
+        match self.traverse_mut(PageTableLevel::L1,page) {
+            Ok(table) => {
+                table[PageTableLevel::L1.get_index(page)].set_flags(flags);
+                Ok(MapperFlush::new(page))
+            }
+            Err(InternalError::PageNotMapped(_)) => Err(FlagUpdateError::PageNotMapped),
+            Err(InternalError::ParentEntryHugePage(_)) => Err(FlagUpdateError::ParentEntryHugePage),
+            _ => unreachable!()
+        }
+
+    }
+
+    unsafe fn set_flags_p4_entry(&mut self, page: Page<Size4KiB>, flags: PageTableFlags) -> Result<MapperFlushAll, FlagUpdateError> {
+        self.l4_table[PageTableLevel::L4.get_index(page)].set_flags(flags);
+        Ok(MapperFlushAll::new())
+    }
+
+    unsafe fn set_flags_p3_entry(&mut self, page: Page<Size4KiB>, flags: PageTableFlags) -> Result<MapperFlushAll, FlagUpdateError> {
+        const LEVEL: PageTableLevel = PageTableLevel::L3;
+        match self.traverse_mut(LEVEL,page) {
+            Ok(table) => {
+                table[LEVEL.get_index(page)].set_flags(flags);
+                Ok(MapperFlushAll::new())
+            }
+            Err(InternalError::PageNotMapped(_)) => Err(FlagUpdateError::PageNotMapped),
+            _ => unreachable!() // huge page is not handled here because the system will fault if it is set
+        }
+    }
+
+    unsafe fn set_flags_p2_entry(&mut self, page: Page<Size4KiB>, flags: PageTableFlags) -> Result<MapperFlushAll, FlagUpdateError> {
+        const LEVEL: PageTableLevel = PageTableLevel::L2;
+        match self.traverse_mut(LEVEL,page) {
+            Ok(table) => {
+                table[LEVEL.get_index(page)].set_flags(flags);
+                Ok(MapperFlushAll::new())
+            }
+            Err(InternalError::PageNotMapped(_)) => Err(FlagUpdateError::PageNotMapped),
+            Err(InternalError::ParentEntryHugePage(_)) => Err(FlagUpdateError::ParentEntryHugePage),
+            _ => unreachable!(),
+        }
+    }
+
+    fn translate_page(&self, page: Page<Size4KiB>) -> Result<PhysFrame<Size4KiB>, TranslateError> {
+        match self.traverse(PageTableLevel::L1,page) {
+            Ok(table) => {
+                let entry = &table[PageTableLevel::L1.get_index(page)];
+
+                if entry.is_unused() {
+                    return Err(TranslateError::PageNotMapped)
+                }
+
+                Ok(entry.frame().unwrap()) // all errs are checked
+
+            }
+            Err(InternalError::PageNotMapped(_)) => Err(TranslateError::PageNotMapped),
+            Err(InternalError::ParentEntryHugePage(_)) => Err(TranslateError::ParentEntryHugePage),
+            _ => unreachable!()
+        }
+    }
+}
+
+impl Mapper<Size2MiB> for OffsetPageTable {
+    unsafe fn map_to_with_table_flags<A>(&mut self, page: Page<Size2MiB>, frame: PhysFrame<Size2MiB>, flags: PageTableFlags, parent_table_flags: PageTableFlags, _frame_allocator: &mut A) -> Result<MapperFlush<Size2MiB>, MapToError<Size2MiB>> where Self: Sized, A: FrameAllocator<Size4KiB> + ?Sized {
+        const LEVEL: PageTableLevel = PageTableLevel::L2;
+        let table = match self.traverse_mut(LEVEL, page) {
+            Ok(table) => table,
+
+            Err(InternalError::PageNotMapped(_)) => {
+                self.attach(self.new_table(),LEVEL,page,parent_table_flags).unwrap(); // Shouldn't panic
+                self.traverse_mut(PageTableLevel::L2, page).unwrap() // Shouldn't panic
+            }
+
+            Err(InternalError::ParentEntryHugePage(_)) => {
+                return Err(MapToError::ParentEntryHugePage)
+            }
+            _ => unreachable!()
+        };
+
+        let entry = &mut table[PageTableLevel::L1.get_index(page)];
+        return if entry.is_unused() {
+            entry.set_addr(frame.start_address(), flags);
+            Ok(MapperFlush::new(page))
+        } else {
+            unsafe {
+                Err(
+                    MapToError::PageAlreadyMapped(
+                        PhysFrame::from_start_address_unchecked(
+                            entry
+                                .frame()
+                                .unwrap()
+                                .start_address()
+                        )
+                    )
+                )
+            } // Is never huge page
+        }
+    }
+
+    fn unmap(&mut self, page: Page<Size2MiB>) -> Result<(PhysFrame<Size2MiB>, MapperFlush<Size2MiB>), UnmapError> {
+        const LEVEL: PageTableLevel = PageTableLevel::L2;
+        match self.traverse_mut(LEVEL, page){
+            Ok(table) => {
+                let entry = &mut table[LEVEL.get_index(page)];
+
+                if entry.is_unused() {
+                    return Err(UnmapError::PageNotMapped);
+                }
+
+                let old = core::mem::replace(entry,PageTableEntry::new());
+                Ok(
+                    (
+                        unsafe { PhysFrame::from_start_address_unchecked(old.frame().unwrap().start_address()) },
+                        MapperFlush::new(page)
+                    )
+                ) // all errors checked cannot panic
+
+            }
+
+            Err(InternalError::PageNotMapped(_)) => Err(UnmapError::PageNotMapped),
+            Err(InternalError::ParentEntryHugePage(_)) => Err(UnmapError::ParentEntryHugePage),
+            _ => unreachable!()
+        }
+    }
+
+    unsafe fn update_flags(&mut self, page: Page<Size2MiB>, flags: PageTableFlags) -> Result<MapperFlush<Size2MiB>, FlagUpdateError> {
+        const LEVEL: PageTableLevel = PageTableLevel::L2;
+        match self.traverse_mut(LEVEL,page) {
+            Ok(table) => {
+                table[LEVEL.get_index(page)].set_flags(flags);
+                Ok(MapperFlush::new(page))
+            }
+            Err(InternalError::PageNotMapped(_)) => Err(FlagUpdateError::PageNotMapped),
+            Err(InternalError::ParentEntryHugePage(_)) => Err(FlagUpdateError::ParentEntryHugePage),
+            _ => unreachable!()
+        }
+    }
+
+    unsafe fn set_flags_p4_entry(&mut self, page: Page<Size2MiB>, flags: PageTableFlags) -> Result<MapperFlushAll, FlagUpdateError> {
+        self.l4_table[PageTableLevel::L4.get_index(page)].set_flags(flags);
+        Ok(MapperFlushAll::new())
+    }
+
+    unsafe fn set_flags_p3_entry(&mut self, page: Page<Size2MiB>, flags: PageTableFlags) -> Result<MapperFlushAll, FlagUpdateError> {
+        const LEVEL: PageTableLevel = PageTableLevel::L3;
+        match self.traverse_mut(LEVEL,page) {
+            Ok(table) => {
+                table[LEVEL.get_index(page)].set_flags(flags);
+                Ok(MapperFlushAll::new())
+            }
+            Err(InternalError::PageNotMapped(_)) => Err(FlagUpdateError::PageNotMapped),
+            _ => unreachable!() // huge page is not handled here because the system will fault if it is set
+        }
+    }
+
+    unsafe fn set_flags_p2_entry(&mut self, page: Page<Size2MiB>, flags: PageTableFlags) -> Result<MapperFlushAll, FlagUpdateError> {
+        const LEVEL: PageTableLevel = PageTableLevel::L2;
+        match self.traverse_mut(LEVEL,page) {
+            Ok(table) => {
+                table[LEVEL.get_index(page)].set_flags(flags);
+                Ok(MapperFlushAll::new())
+            }
+            Err(InternalError::PageNotMapped(_)) => Err(FlagUpdateError::PageNotMapped),
+            _ => unreachable!() // huge page is not handled here because the system will fault if it is set
+        }
+
+    }
+
+    fn translate_page(&self, page: Page<Size2MiB>) -> Result<PhysFrame<Size2MiB>, TranslateError> {
+        const LEVEL: PageTableLevel = PageTableLevel::L2;
+        match self.traverse(LEVEL,page) {
+            Ok(table) => {
+                let entry = &table[LEVEL.get_index(page)];
+
+                if entry.is_unused() {
+                    return Err(TranslateError::PageNotMapped)
+                }
+
+                Ok(
+                    unsafe {
+                        PhysFrame::from_start_address_unchecked(
+                            entry.frame().unwrap().start_address()
+                        )
+                    }
+
+                ) // all errs are checked
+
+            }
+            Err(InternalError::PageNotMapped(_)) => Err(TranslateError::PageNotMapped),
+            Err(InternalError::ParentEntryHugePage(_)) => Err(TranslateError::ParentEntryHugePage),
+            _ => unreachable!()
+        }
+    }
+}
+
+impl Mapper<Size1GiB> for OffsetPageTable {
+    unsafe fn map_to_with_table_flags<A>(&mut self, page: Page<Size1GiB>, frame: PhysFrame<Size1GiB>, flags: PageTableFlags, parent_table_flags: PageTableFlags, _frame_allocator: &mut A) -> Result<MapperFlush<Size1GiB>, MapToError<Size1GiB>> where Self: Sized, A: FrameAllocator<Size4KiB> + ?Sized {
+        const LEVEL: PageTableLevel = PageTableLevel::L3;
+        let table = match self.traverse_mut(LEVEL, page) {
+            Ok(table) => table,
+
+            Err(InternalError::PageNotMapped(_)) => {
+                self.attach(self.new_table(),LEVEL,page,parent_table_flags).unwrap(); // Shouldn't panic
+                self.traverse_mut(PageTableLevel::L2, page).unwrap() // Shouldn't panic
+            }
+
+            Err(InternalError::ParentEntryHugePage(_)) => {
+                return Err(MapToError::ParentEntryHugePage)
+            }
+            _ => unreachable!()
+        };
+
+        let entry = &mut table[PageTableLevel::L1.get_index(page)];
+        return if entry.is_unused() {
+            entry.set_addr(frame.start_address(), flags);
+            Ok(MapperFlush::new(page))
+        } else {
+            unsafe {
+                Err(
+                    MapToError::PageAlreadyMapped(
+                        PhysFrame::from_start_address_unchecked(
+                            entry
+                                .frame()
+                                .unwrap()
+                                .start_address()
+                        )
+                    )
+                )
+            } // Is never huge page
+        }
+    }
+
+    fn unmap(&mut self, page: Page<Size1GiB>) -> Result<(PhysFrame<Size1GiB>, MapperFlush<Size1GiB>), UnmapError> {
+        const LEVEL: PageTableLevel = PageTableLevel::L3;
+        match self.traverse_mut(LEVEL, page){
+            Ok(table) => {
+                let entry = &mut table[LEVEL.get_index(page)];
+
+                if entry.is_unused() {
+                    return Err(UnmapError::PageNotMapped);
+                }
+
+                let old = core::mem::replace(entry,PageTableEntry::new());
+                Ok(
+                    (
+                        unsafe { PhysFrame::from_start_address_unchecked(old.frame().unwrap().start_address()) },
+                        MapperFlush::new(page)
+                    )
+                ) // all errors checked cannot panic
+
+            }
+
+            Err(InternalError::PageNotMapped(_)) => Err(UnmapError::PageNotMapped),
+            Err(InternalError::ParentEntryHugePage(_)) => Err(UnmapError::ParentEntryHugePage),
+            _ => unreachable!()
+        }
+    }
+
+    unsafe fn update_flags(&mut self, page: Page<Size1GiB>, flags: PageTableFlags) -> Result<MapperFlush<Size1GiB>, FlagUpdateError> {
+        const LEVEL: PageTableLevel = PageTableLevel::L3;
+        match self.traverse_mut(LEVEL,page) {
+            Ok(table) => {
+                table[LEVEL.get_index(page)].set_flags(flags);
+                Ok(MapperFlush::new(page))
+            }
+            Err(InternalError::PageNotMapped(_)) => Err(FlagUpdateError::PageNotMapped),
+            Err(InternalError::ParentEntryHugePage(_)) => Err(FlagUpdateError::ParentEntryHugePage),
+            _ => unreachable!()
+        }
+    }
+
+    unsafe fn set_flags_p4_entry(&mut self, page: Page<Size1GiB>, flags: PageTableFlags) -> Result<MapperFlushAll, FlagUpdateError> {
+        self.l4_table[PageTableLevel::L4.get_index(page)].set_flags(flags);
+        Ok(MapperFlushAll::new())
+    }
+
+    unsafe fn set_flags_p3_entry(&mut self, page: Page<Size1GiB>, flags: PageTableFlags) -> Result<MapperFlushAll, FlagUpdateError> {
+        const LEVEL: PageTableLevel = PageTableLevel::L3;
+        match self.traverse_mut(LEVEL,page) {
+            Ok(table) => {
+                table[LEVEL.get_index(page)].set_flags(flags);
+                Ok(MapperFlushAll::new())
+            }
+            Err(InternalError::PageNotMapped(_)) => Err(FlagUpdateError::PageNotMapped),
+            _ => unreachable!() // huge page is not handled here because the system will fault if it is set
+        }
+    }
+
+    unsafe fn set_flags_p2_entry(&mut self, _page: Page<Size1GiB>, _flags: PageTableFlags) -> Result<MapperFlushAll, FlagUpdateError> {
+        Err(FlagUpdateError::ParentEntryHugePage)
+    }
+
+    fn translate_page(&self, page: Page<Size1GiB>) -> Result<PhysFrame<Size1GiB>, TranslateError> {
+        const LEVEL: PageTableLevel = PageTableLevel::L3;
+        match self.traverse(LEVEL,page) {
+            Ok(table) => {
+                let entry = &table[LEVEL.get_index(page)];
+
+                if entry.is_unused() {
+                    return Err(TranslateError::PageNotMapped)
+                }
+
+                Ok(
+                    unsafe {
+                        PhysFrame::from_start_address_unchecked(
+                            entry.frame().unwrap().start_address()
+                        )
+                    }
+
+                ) // all errs are checked
+
+            }
+            Err(InternalError::PageNotMapped(_)) => Err(TranslateError::PageNotMapped),
+            Err(InternalError::ParentEntryHugePage(_)) => Err(TranslateError::ParentEntryHugePage),
+            _ => unreachable!()
+        }
+    }
+}
 // todo move to mem
 #[derive(Debug)]
 pub(super) struct PageReference {
     pub page: VirtAddr,
-    pub size: super::PageTableLevel,
+    pub size: PageTableLevel,
     pub entry: PageTableEntry,
 }
