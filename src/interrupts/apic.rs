@@ -1,6 +1,6 @@
 use alloc::boxed::Box;
 use apic_structures::registers::ApicError;
-use crate::allocator::mmio_bump_alloc::MmioAlloc;
+use crate::allocator::alloc_interface::MmioAlloc;
 use crate::interrupts::apic::apic_structures::apic_types::TimerMode;
 use crate::interrupts::apic::pub_apic::SysApic;
 use crate::interrupts::apic::xapic::xApic;
@@ -89,11 +89,11 @@ pub fn load_apic() {
     let apic;
     if (raw_cpuid::cpuid!(1).ecx >> 21) & 1 > 0{
         // todo implement x2apic
-        let alloc = MmioAlloc::new(addr);
+        let alloc = MmioAlloc::new_from_phys_addr(addr);
         let mut sec = alloc.allocate(core::alloc::Layout::new::<xApic>()).expect("not enough memory").cast::<xApic>();
         apic = unsafe { Box::from_raw_in(sec.as_mut(), alloc.into()) };
     } else {
-        let alloc = MmioAlloc::new(addr);
+        let alloc = MmioAlloc::new_from_phys_addr(addr);
         let mut sec = alloc.allocate(core::alloc::Layout::new::<xApic>()).expect("not enough memory").cast::<xApic>();
         apic = unsafe { Box::from_raw_in(sec.as_mut(), alloc.into()) };
     }

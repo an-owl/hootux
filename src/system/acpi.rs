@@ -1,14 +1,15 @@
 use core::alloc::{Allocator, Layout};
 use core::mem;
 use acpi::{AcpiHandler, PhysicalMapping};
-use crate::allocator::mmio_bump_alloc::MmioAlloc;
+use crate::allocator::alloc_interface::MmioAlloc;
 
 #[derive(Copy, Clone)]
 pub struct AcpiGrabber;
 
 impl AcpiHandler for AcpiGrabber {
     unsafe fn map_physical_region<T>(&self, physical_address: usize, size: usize) -> PhysicalMapping<Self, T> {
-        let alloc = MmioAlloc::new_from_usize(physical_address);
+        let alloc = MmioAlloc::new(physical_address);
+
         let region = alloc.allocate(
             Layout::from_size_align(
                 size,
@@ -21,7 +22,7 @@ impl AcpiHandler for AcpiGrabber {
         let mapped_length = {
             const MASK: usize = 4096-1;
             let start = (physical_address | MASK) + 1;
-            let end = (physical_address + size) & (!MASK - 1);
+            let end = ((physical_address + size) | MASK) + 1;
 
             end - start
         };
@@ -41,7 +42,7 @@ impl AcpiHandler for AcpiGrabber {
     }
 
     fn unmap_physical_region<T>(region: &PhysicalMapping<Self, T>) {
-        let alloc = MmioAlloc::new_from_usize(region.physical_start());
+        let alloc = MmioAlloc::new(region.physical_start());
         let start = region.virtual_start();
 
         unsafe {
@@ -64,7 +65,7 @@ pub (crate) mod data_access {
     use core::fmt::{Debug, Formatter};
     use acpi::platform::address::{AccessSize, AddressSpace, GenericAddress};
     use x86_64::VirtAddr;
-    use crate::allocator::mmio_bump_alloc::MmioAlloc;
+    use crate::allocator::alloc_interface::MmioAlloc;
 
     /// Contains Data read using [DataAccess] contains u64 along with the length of the data within
     ///
@@ -322,7 +323,7 @@ pub (crate) mod data_access {
     impl DataAccess for MemoryAccess {
         fn new(addr: usize, size: DataSize) -> Self {
 
-            let alloc = MmioAlloc::new_from_usize(addr);
+            let alloc = MmioAlloc::new(addr);
             let ptr = alloc.allocate(
                 Layout::from_size_align(
                     size as u8 as usize, 1).unwrap()) // should not panic

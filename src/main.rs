@@ -32,52 +32,32 @@ fn kernel_main(b: &'static mut bootloader::BootInfo) -> ! {
         g.buffer_mut().fill_with(||{0xff})
     }
 
-    let ptt; // requires tls
-    let mut mapper;
+    let mapper;
     unsafe {
 
         mapper = mem::init(VirtAddr::new(b.physical_memory_offset.into_option().unwrap()));
-        let mut f_alloc = mem::BootInfoFrameAllocator::init(&b.memory_regions);
-        allocator::init_heap(&mut mapper, &mut f_alloc).unwrap();
+        let f_alloc = mem::BootInfoFrameAllocator::init(&b.memory_regions);
 
         init(); // todo break apart
 
-        ptt = {
-            mem::page_table_tree::PageTableTree::from_offset_page_table(
-                VirtAddr::new(b.physical_memory_offset.into_option().unwrap()),
-                &mut mapper,
-                &mut f_alloc
-            )
-        };
-
         mem::set_sys_frame_alloc(f_alloc);
 
+        mem::set_sys_mem_tree_no_cr3(mapper);
 
-        // init interrupts
+        allocator::init_comb_heap(0x4444_4000_0000);
     }
-
-    /*
-    Things that need to be done here
-    -^ initialize frame allocator
-    - initialize interrupts
-        - IDT and HW can be done separately
-    -^ init Page Table tree
-    -^ init logger
-    - init mmio heap
-     */
 
     if let bootloader::boot_info::Optional::Some(tls) = b.tls_template {
 
         // SAFETY: this is safe because the data given is correct
         unsafe {
             mem::thread_local_storage::init_tls(
-                tls.start_addr as usize as *const u8,
-                tls.file_size as usize,
-                tls.mem_size as usize
+            tls.start_addr as usize as *const u8,
+            tls.file_size as usize,
+            tls.mem_size as usize
             )
         }
     }
-    unsafe { mem::set_sys_mem_tree(ptt,&mapper) };
 
     interrupts::apic::load_apic();
     // SAFETY: prob safe but i dont want to think rn
@@ -135,6 +115,7 @@ fn say_hi(){
 #[panic_handler]
 fn panic_handler(info: &core::panic::PanicInfo) -> ! {
     unsafe { panic_unlock!(); }
+    serial_println!("KERNEL PANIC\nInfo: {}", info);
     log::error!("KERNEL PANIC\nInfo: {}", info);
 
     stop()

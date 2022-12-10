@@ -14,9 +14,14 @@ pub struct MmioAlloc{
 }
 
 impl MmioAlloc{
-    pub const fn new(phys_addr: PhysAddr) -> Self {
+    const unsafe fn new(addr: usize) -> Self {
+        let addr = PhysAddr::new(addr as u64);
+        Self{physical_addr: addr}
+    }
+    const unsafe fn new_from_phys(phys_addr: PhysAddr) -> Self {
         Self{physical_addr: phys_addr}
     }
+
     pub const fn new_from_usize(phys_addr: usize) -> Self {
         Self{ physical_addr: PhysAddr::new(phys_addr as u64) }
     }
@@ -47,7 +52,7 @@ impl MmioAlloc{
 
         for page in range {
             unsafe {
-                mem::SYS_MEM_TREE.get().map_to(
+                mem::SYS_MAPPER.get().map_to(
                     page,
                     PhysFrame::containing_address(phys_addr),
                     PageTableFlags::PRESENT | PageTableFlags::WRITABLE | PageTableFlags::NO_EXECUTE,
@@ -93,7 +98,7 @@ unsafe impl Allocator for MmioAlloc{
         let pages = PageRange{start: start_page, end: end_page};
 
         for page in pages {
-            mem::SYS_MEM_TREE.get().unmap(page).unwrap().1.flush();
+            mem::SYS_MAPPER.get().unmap(page).unwrap().1.flush();
         }
     }
 }

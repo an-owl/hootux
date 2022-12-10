@@ -5,7 +5,8 @@ edition = "2021"
 readme = "README.md"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-
+[features]
+alloc-debug-serial = [] #This is for debugging the memory allocator
 
 [workspace]
 members = ["loader","x86_msr"]
