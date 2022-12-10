@@ -47,8 +47,9 @@ achieve them.
          - --figure out how fast apic timer is--
    - pci-e interface
      - preferably backward compatible
- - Switch to Buddy allocator
-   - because its soo much better than the crap I have now
+ - Enhance Allocator
+   - Add optimizations where possible
+   - Allow allocations greater than 4Mib
  - BASIC shell
    - what why? 
    - because it's my kernel
