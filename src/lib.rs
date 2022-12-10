@@ -10,7 +10,7 @@
 #![feature(inline_const)]
 #![feature(int_roundings)]
 #![feature(allocator_api)]
-#![feature(thread_local)] // TODO remove kernel_statics.rs
+#![feature(thread_local)]
 #![feature(optimize_attribute)]
 
 extern crate alloc;
