@@ -15,7 +15,6 @@
 
 extern crate alloc;
 
-pub mod acpi_driver;
 pub mod allocator;
 mod device_check;
 pub mod gdt;
