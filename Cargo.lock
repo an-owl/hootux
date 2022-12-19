@@ -32,12 +32,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bef38d45163c2f1dde094a7dfd33ccf595c92905c8f8f4fdc18d06fb1037718a"
 
 [[package]]
-name = "bootloader"
-version = "0.10.12"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f2d9b14b92a825ecc3b24e4c163a578af473fbba5f190bfaf48092b29b604504"
-
-[[package]]
 name = "bootloader-locator"
 version = "0.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -45,6 +39,12 @@ checksum = "aaaa9db3339d32c2622f2e5d0731eb82a468d3439797c9d4fe426744fe2bd551"
 dependencies = [
  "json",
 ]
+
+[[package]]
+name = "bootloader_api"
+version = "0.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "babfb07dea4565842980315ad530a023aa348db43d03dfa104a70fdaca97d48e"
 
 [[package]]
 name = "cfg-if"
@@ -116,7 +116,7 @@ version = "0.1.0"
 dependencies = [
  "acpi",
  "bitflags",
- "bootloader",
+ "bootloader_api",
  "conquer-once",
  "crossbeam-queue",
  "futures-util",

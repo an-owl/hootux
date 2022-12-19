@@ -32,8 +32,8 @@ impl BasicTTY {
             noto_sans_mono_bitmap::get_bitmap_width(Self::FONT_WEIGHT, Self::FONT_SIZE);
         let char_height = Self::FONT_SIZE.val();
 
-        let cursor_x_max = buff.info().horizontal_resolution / char_width;
-        let cursor_y_max = (buff.info().vertical_resolution / char_height) - 1;
+        let cursor_x_max = buff.info().width / char_width;
+        let cursor_y_max = (buff.info().height / char_height) - 1;
 
         Self {
             framebuffer: buff,

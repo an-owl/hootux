@@ -1,5 +1,5 @@
 use alloc::vec::Vec;
-use bootloader::boot_info::FrameBuffer;
+use bootloader_api::info::FrameBuffer;
 use core::mem::size_of;
 use core::ops::{Deref, DerefMut};
 use core::slice::{from_raw_parts, from_raw_parts_mut};
@@ -34,8 +34,8 @@ impl GraphicalFrame {
         let mut mod_w = sprite.width;
         let mut mod_h = sprite.height;
 
-        let width = self.buff.info().horizontal_resolution;
-        let height = self.buff.info().vertical_resolution;
+        let width = self.buff.info().width;
+        let height = self.buff.info().height;
 
         // check sizes
         if (x > width) || (y > height) {
@@ -103,7 +103,7 @@ impl GraphicalFrame {
     ///
     /// values above `self.buff.info().vertical_resolution` will clear the screen
     pub fn scroll_up(&mut self, lines: usize) {
-        if lines > self.buff.info().vertical_resolution {
+        if lines > self.buff.info().height {
             self.clear();
         } else {
             let start = self.index_of((0, lines));

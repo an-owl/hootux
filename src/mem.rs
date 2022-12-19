@@ -1,5 +1,5 @@
 use crate::kernel_structures::{static_protected::Ref, KernelStatic};
-use bootloader::boot_info::{MemoryRegion, MemoryRegionKind};
+use bootloader_api::info::{MemoryRegion, MemoryRegionKind};
 use x86_64::structures::paging::frame::PhysFrameRangeInclusive;
 use x86_64::structures::paging::page::PageRangeInclusive;
 use x86_64::structures::paging::{

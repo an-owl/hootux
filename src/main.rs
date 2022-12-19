@@ -9,7 +9,7 @@
 extern crate alloc;
 
 use alloc::boxed::Box;
-use bootloader::entry_point;
+use bootloader_api::entry_point;
 use hootux::exit_qemu;
 use hootux::graphics::basic_output::BasicTTY;
 use hootux::interrupts::apic::Apic;
@@ -22,7 +22,7 @@ use x86_64::VirtAddr;
 
 entry_point!(kernel_main);
 #[no_mangle]
-fn kernel_main(b: &'static mut bootloader::BootInfo) -> ! {
+fn kernel_main(b: &'static mut bootloader_api::BootInfo) -> ! {
     //initialize system
 
     serial_println!("Kernel start");
@@ -47,7 +47,7 @@ fn kernel_main(b: &'static mut bootloader::BootInfo) -> ! {
         allocator::init_comb_heap(0x4444_4000_0000);
     }
 
-    if let bootloader::boot_info::Optional::Some(tls) = b.tls_template {
+    if let bootloader_api::info::Optional::Some(tls) = b.tls_template {
         // SAFETY: this is safe because the data given is correct
         unsafe {
             mem::thread_local_storage::init_tls(
