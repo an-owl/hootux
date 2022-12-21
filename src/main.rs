@@ -1,140 +1,155 @@
-#![no_std]
-#![no_main]
-#![feature(const_mut_refs)]
-#![feature(custom_test_frameworks)]
-#![feature(allocator_api)]
-#![test_runner(hootux::test_runner)]
-#![reexport_test_harness_main = "test_main"]
+use getopts::Fail;
 
-extern crate alloc;
+const QEMU: &str = "qemu-system-x86_64";
+const EDK: &str = "/usr/share/edk2/x64/OVMF_CODE.fd";
 
-use alloc::boxed::Box;
-use bootloader_api::entry_point;
-use hootux::exit_qemu;
-use hootux::graphics::basic_output::BasicTTY;
-use hootux::interrupts::apic::Apic;
-use hootux::task::keyboard;
-use hootux::task::{executor, Task};
-use hootux::time::kernel_init_timer;
-use hootux::*;
-use log::debug;
-use x86_64::VirtAddr;
+static BRIEF: &str =
+r#"\
+Usage `cargo run -- [SUBCOMMAND] [OPTIONS]`
+Supported subcommands are:
+uefi: boots a uefi image using qemu
+bios: boots a bios image using qemu\
+"#;
 
-entry_point!(kernel_main);
-#[no_mangle]
-fn kernel_main(b: &'static mut bootloader_api::BootInfo) -> ! {
-    //initialize system
+fn main() {
 
-    serial_println!("Kernel start");
+    let opts= get_opts();
+    let mut qemu = std::process::Command::new(QEMU);
+    opts.qemu_args(&mut qemu);
 
-    if let Some(g) = b.framebuffer.as_mut() {
-        g.buffer_mut().fill_with(|| 0xff)
+    let mut c = qemu.spawn().unwrap();
+    c.wait().unwrap();
+}
+
+#[non_exhaustive]
+enum Subcommand{
+    Bios,
+    Uefi,
+}
+
+impl Subcommand {
+    fn fetch() -> Self {
+        let args: Vec<String> = std::env::args().collect();
+        let subcommand = args[1].clone();
+
+        match &*subcommand {
+            "bios" => Subcommand::Bios,
+            "uefi" => Subcommand::Uefi,
+
+            e => {
+                eprintln!(r#"Err command not found "{e} use --help for more info"#);
+                std::process::exit(1);
+            },
+        }
     }
-
-    let mapper;
-    unsafe {
-        mapper = mem::init(VirtAddr::new(
-            b.physical_memory_offset.into_option().unwrap(),
-        ));
-        let f_alloc = mem::BootInfoFrameAllocator::init(&b.memory_regions);
-
-        init(); // todo break apart
-
-        mem::set_sys_frame_alloc(f_alloc);
-
-        mem::set_sys_mem_tree_no_cr3(mapper);
-
-        allocator::init_comb_heap(0x4444_4000_0000);
-    }
-
-    if let bootloader_api::info::Optional::Some(tls) = b.tls_template {
-        // SAFETY: this is safe because the data given is correct
-        unsafe {
-            mem::thread_local_storage::init_tls(
-                tls.start_addr as usize as *const u8,
-                tls.file_size as usize,
-                tls.mem_size as usize,
-            )
+    fn append_args(&self, command: &mut std::process::Command) {
+        let uefi_path = env!("UEFI_PATH");
+        let bios_path = env!("BIOS_PATH");
+        match self {
+            Subcommand::Bios => {
+                command.arg("-drive").arg(format!("format=raw,file={bios_path}"));
+            }
+            Subcommand::Uefi => {
+                command.arg("-bios").arg(EDK);
+                command.arg("-drive").arg(format!("format=raw,file={uefi_path}"));
+            }
         }
     }
 
-    interrupts::apic::load_apic();
-    // SAFETY: prob safe but i dont want to think rn
-    unsafe { interrupts::apic::get_apic().set_enable(true) }
+    fn is_vm(&self) -> bool {
+        match self {
+            Subcommand::Bios => true,
+            Subcommand::Uefi => true,
+        }
+    }
+}
 
-    //initialize graphics
-    if let Some(buff) = b.framebuffer.as_mut() {
-        let mut g = graphics::GraphicalFrame { buff };
-        g.clear();
-        let tty = BasicTTY::new(g);
+struct Options {
+    subcommand: Subcommand,
+    debug: bool,
+    d_int: bool,
+    serial: Option<String>,
+}
 
-        unsafe {
-            graphics::basic_output::WRITER = spin::Mutex::new(Some(tty));
+impl Options {
+    fn qemu_args(&self, command: &mut std::process::Command) {
+
+        if self.subcommand.is_vm() {
+            self.subcommand.append_args(command);
+        } else {
+            panic!("Tried to start qemu with non vm subcommand");
+        }
+
+        if self.debug {
+            command.arg("-S").arg("-s");
+        }
+
+        if self.d_int {
+            command.arg("-d").arg("int");
+        }
+
+        if let Some(s) = &self.serial {
+            command.arg("-serial");
+            if s.is_empty() {
+                command.arg("stdio");
+            } else {
+                command.arg(s);
+            }
+        }
+    }
+}
+
+fn get_opts() -> Options {
+    let mut opts = getopts::Options::new();
+    opts.optflag("d","debug","pauses the the VM on startup with debug enabled on 'localhost:1234'");
+    opts.optflag("","display-interrupts", "Display interrupts on stdout");
+    opts.optflagopt("s", "serial", "Enables serial output, argument is directly given to qemu via `-serial [FILE]` defaults to stdio ", "FILE");
+    opts.optflag("h","help", "Displays a help message");
+
+
+
+    let matches = match opts.parse(std::env::args_os()) {
+        Ok(matches) => {
+            if matches.opt_present("help") {
+                println!("{}",opts.usage(BRIEF));
+                std::process::exit(0);
+            }
+
+            matches
+        }
+        Err(Fail::OptionDuplicated(o)) => {
+            eprintln!("Expected {o} once");
+            std::process::exit(2);
+        }
+
+        Err(Fail::UnrecognizedOption(o)) =>  {
+            eprintln!("Argument {o} not recognised");
+            eprintln!("{}",opts.usage(BRIEF));
+            std::process::exit(2);
+        }
+
+        Err(Fail::ArgumentMissing(o)) => {
+            eprintln!("Required argument {o} missing");
+            std::process::exit(2);
+        }
+        Err(Fail::OptionMissing(o)) => {
+            eprintln!("Required argument {o} missing");
+            eprintln!("{}",opts.usage(BRIEF));
+            std::process::exit(2);
+
+        }
+        Err(Fail::UnexpectedArgument(o)) =>  {
+            eprintln!("Unexpected argument {o} missing");
+            std::process::exit(2);
         }
     };
 
-    unsafe {
-        let t = acpi::AcpiTables::from_rsdp(
-            system::acpi::AcpiGrabber,
-            *b.rsdp_addr.as_mut().unwrap() as usize,
-        )
-        .unwrap();
-        let fadt = acpi::PlatformInfo::new(&t).unwrap();
-        let pmtimer = fadt.pm_timer.expect("No PmTimer found");
-        let timer = Box::new(time::acpi_pm_timer::AcpiTimer::locate(pmtimer));
-        kernel_init_timer(timer);
+    let s = Subcommand::fetch();
+
+    Options{
+        subcommand: s,
+        debug: matches.opt_present("debug"),
+        d_int: matches.opt_present("display-interrupts"),
+        serial: matches.opt_str("serial"),
     }
-    // temporary, until thread local segment is set up
-    interrupts::apic::cal_and_run(0x20000, 50);
-
-    init_logger();
-
-    say_hi();
-
-    debug!("Successfully initialized");
-
-    #[cfg(test)]
-    test_main();
-
-    let mut executor = executor::Executor::new();
-    executor.spawn(Task::new(keyboard::print_key()));
-    executor.run();
-}
-
-fn say_hi() {
-    println!("Starting Hootux");
-    println!(r#" |   |   \---/   "#);
-    println!(r#"\    |  {{\OvO/}}  "#);
-    println!(r#"\    |  '/_o_\'  "#);
-    println!(r#" | _  >===;=;===="#);
-    println!(r#" |( )/ "#);
-    println!(r#" | " | "#);
-    println!(r#" /    \"#);
-}
-
-#[cfg(not(test))]
-#[panic_handler]
-fn panic_handler(info: &core::panic::PanicInfo) -> ! {
-    unsafe {
-        panic_unlock!();
-    }
-    serial_println!("KERNEL PANIC\nInfo: {}", info);
-    log::error!("KERNEL PANIC\nInfo: {}", info);
-
-    stop()
-}
-
-#[allow(dead_code)]
-fn test_runner(tests: &[&dyn Testable]) {
-    serial_println!("Running {} tests", tests.len());
-    for test in tests {
-        test.run()
-    }
-    exit_qemu(QemuExitCode::Success);
-}
-
-#[cfg(test)]
-#[panic_handler]
-fn panic(info: &core::panic::PanicInfo) -> ! {
-    test_panic(info)
 }
