@@ -7,9 +7,3 @@ bindeps = true
 
 [target.'cfg(target_os = "none")']
 runner = "cargo +nightly run --package loader --target x86_64-unknown-linux-gnu"
-
-[alias]
-kbuild = "build -Zbuild-std=core,compiler_builtins,alloc -Zbuild-std-features=compiler-builtins-mem"
-image = "run -Zbuild-std=core,compiler_builtins,alloc -Zbuild-std-features=compiler-builtins-mem -- --no-run"
-krun = "run -Zbuild-std=core,compiler_builtins,alloc -Zbuild-std-features=compiler-builtins-mem"
-ktest = "test -Zbuild-std=core,compiler_builtins,alloc -Zbuild-std-features=compiler-builtins-mem"
