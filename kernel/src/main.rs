@@ -20,7 +20,17 @@ use hootux::*;
 use log::debug;
 use x86_64::VirtAddr;
 
-entry_point!(kernel_main);
+const BOOT_CONFIG: bootloader_api::BootloaderConfig = {
+    use bootloader_api::config::Mapping;
+    let mut cfg = bootloader_api::BootloaderConfig::new_default();
+    cfg.kernel_stack_size = 0x48000u64;
+    cfg.mappings.physical_memory = Some(Mapping::Dynamic);
+
+    cfg
+
+};
+
+entry_point!(kernel_main,config = &BOOT_CONFIG);
 #[no_mangle]
 fn kernel_main(b: &'static mut bootloader_api::BootInfo) -> ! {
     //initialize system
