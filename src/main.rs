@@ -17,8 +17,16 @@ fn main() {
     let mut qemu = std::process::Command::new(QEMU);
     opts.qemu_args(&mut qemu);
 
-    let mut c = qemu.spawn().unwrap();
-    c.wait().unwrap();
+    let mut children = Vec::new();
+    children.push(qemu.spawn().unwrap());
+    if let Some(mut c) = opts.run_debug() {
+        children.push(c.spawn().unwrap());
+    }
+
+    for mut c in children {
+        #[allow(unused_must_use)]
+        c.wait();
+    }
 }
 
 #[non_exhaustive]
@@ -69,6 +77,9 @@ struct Options {
     debug: bool,
     d_int: bool,
     serial: Option<String>,
+    launch_debug: Option<String>,
+    debug_args: Option<String>,
+    term: Option<String>,
 }
 
 impl Options {
@@ -97,6 +108,31 @@ impl Options {
             }
         }
     }
+
+    fn run_debug(&self) -> Option<std::process::Command>{
+        let name = self.launch_debug.as_ref()?;
+        let term_name = self.term.as_ref().unwrap_or_else(|| {
+            eprintln!("debugger enabled without -t specified");
+            std::process::exit(3)
+        });
+
+        let dbg_args = self.debug_args.as_ref().unwrap_or(&String::new()).clone();
+
+        let term = match &**term_name {
+            "konsole" => {
+                let mut term = std::process::Command::new("konsole");
+                term.arg("-e").arg(format!("{name} {0:} {dbg_args}",env!("KERNEL_BIN")));
+                term
+            }
+            t => {
+                eprintln!("Terminal {t} unsupported");
+                std::process::exit(4);
+            }
+        };
+        Some(term)
+
+
+    }
 }
 
 fn get_opts() -> Options {
@@ -105,6 +141,9 @@ fn get_opts() -> Options {
     opts.optflag("","display-interrupts", "Display interrupts on stdout");
     opts.optflagopt("s", "serial", "Enables serial output, argument is directly given to qemu via `-serial [FILE]` defaults to stdio ", "FILE");
     opts.optflag("h","help", "Displays a help message");
+    opts.optopt("l","launch-debugger","launches the specified debugger with the kernel binary as first argument","DEBUG");
+    opts.optopt("a", "debug-args", "specifies debug arguments hnded to the debugger", "ARGS");
+    opts.optopt("t","terminal", "Sets which terminal window to open when the debugger is enabled (only konsole is supported at the moment)", "TERM");
 
 
 
@@ -151,5 +190,8 @@ fn get_opts() -> Options {
         debug: matches.opt_present("debug"),
         d_int: matches.opt_present("display-interrupts"),
         serial: matches.opt_str("serial"),
+        launch_debug: matches.opt_str("launch-debugger"),
+        debug_args: matches.opt_str("debug-args"),
+        term: matches.opt_str("terminal"),
     }
 }
