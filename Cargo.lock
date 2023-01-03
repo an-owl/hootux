@@ -348,7 +348,6 @@ dependencies = [
  "spin",
  "uart_16550",
  "volatile 0.2.7",
- "x86",
  "x86_64",
  "x86_msr",
 ]
@@ -925,17 +924,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "05f360fc0b24296329c78fda852a1e9ae82de9cf7b27dae4b7f62f118f77b9ed"
 dependencies = [
  "tap",
-]
-
-[[package]]
-name = "x86"
-version = "0.47.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "55b5be8cc34d017d8aabec95bc45a43d0f20e8b2a31a453cabc804fe996f8dca"
-dependencies = [
- "bit_field",
- "bitflags",
- "raw-cpuid",
 ]
 
 [[package]]
