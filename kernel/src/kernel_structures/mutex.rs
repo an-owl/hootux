@@ -1,8 +1,10 @@
+use core::cell::{Cell, RefCell};
 use core::ops::{Deref, DerefMut};
 use core::sync::atomic::Ordering;
+use core::sync::atomic;
 
 pub struct Mutex<T> {
-    lock: core::sync::atomic::AtomicBool,
+    lock: atomic::AtomicBool,
     inner: core::cell::UnsafeCell<T>,
 }
 
@@ -11,7 +13,7 @@ impl<T> Mutex<T> {
     pub const fn new(data: T) -> Self {
         Self {
             inner: core::cell::UnsafeCell::new(data),
-            lock: core::sync::atomic::AtomicBool::new(false),
+            lock: atomic::AtomicBool::new(false),
         }
     }
 
@@ -73,7 +75,7 @@ impl<T> Mutex<T> {
 unsafe impl<T> Sync for Mutex<T> {}
 
 pub struct MutexGuard<'a, T> {
-    lock: &'a core::sync::atomic::AtomicBool,
+    lock: &'a atomic::AtomicBool,
     data: &'a mut T,
 }
 
@@ -94,5 +96,152 @@ impl<'a, T> DerefMut for MutexGuard<'a, T> {
 impl<'a, T> Drop for MutexGuard<'a, T> {
     fn drop(&mut self) {
         self.lock.store(false, Ordering::Release);
+    }
+}
+
+/// A Reentrant Mutex allows multiple locks within the same thread this is useful for memory
+/// allocators which may require each other allocators to operate correctly which may cause a
+/// deadlock.
+///
+/// This struct works by using a control bit to manage access to the lock metadata if the owner is
+/// unset then the current thread may set itself, if the owner is set and the current owner is the
+/// current thread it may lock the contained data if it is not then the current thread must wait.
+///
+/// #Safety
+/// While this type is safe it should not be used in interrupts as the contained data may cause UB.
+/// This may occur when an interrupt is called while modifying `self.data`
+pub struct ReentrantMutex<T: Sync> {
+    data: core::cell::UnsafeCell<T>,
+    control: atomic::AtomicBool,
+    owner: Cell<Option<u32>>,
+    lock_count: Cell<usize>,
+}
+
+pub struct ReentrantMutexGuard<'a, T: Sync> {
+    master: &'a ReentrantMutex<T>,
+    _marker: core::marker::PhantomData<T>
+}
+
+impl<'a,T:Sync> ReentrantMutex<T> {
+    pub fn new(data: T) -> Self {
+        Self{
+            data: data.into(),
+            lock_count: Cell::new(0),
+            owner: Cell::new(None),
+            control: false.into(),
+        }
+    }
+
+    /// Spins until control lock bit can be acquired
+    ///
+    /// #Safety
+    ///
+    /// [Self::desync] must be called afterward. Failure to do so is not UB will almost definitely
+    /// deadlock. `desync` must also be called only after all modifications are made making making
+    /// changes without sync is UB.
+    unsafe fn sync(&self) {
+        while let Err(_) = self.control.compare_exchange_weak(false,true,Ordering::Acquire,Ordering::Relaxed) {
+            core::hint::spin_loop();
+        }
+    }
+
+    /// Safely unlocks control of self. [Self::sync] should've been called before this
+    fn desync(&self) {
+        self.control.store(false,Ordering::Release);
+    }
+
+    /// Attempts to lock control bit returns None if control bit is locked.
+    #[inline]
+    pub fn try_lock_inner(&self) -> Option<ReentrantMutexGuard<T>> {
+        if let Ok(_) = self.control.compare_exchange_weak(false,true,Ordering::Acquire,Ordering::Relaxed) {
+            match self.owner.get() {
+                None => {
+                    let r = ReentrantMutexGuard{
+                        master: &self,
+                        _marker: core::marker::PhantomData,
+                    };
+
+                    self.owner.set(Some(crate::who_am_i()));
+                    self.lock_count.set(1);
+                    self.control.store(false,Ordering::Release);
+                    return Some(r)
+                }
+
+                Some(owner) if owner == crate::who_am_i()  => {
+                    let r = ReentrantMutexGuard{
+                        master: &self,
+                        _marker: core::marker::PhantomData,
+                    };
+
+                    let nc = self.lock_count.get().checked_add(1).expect("ReentrantMutex lock overflow");
+                    self.lock_count.set(nc);
+
+                    self.control.store(false,Ordering::Release);
+                    return Some(r)
+                }
+
+                _ => {}
+            }
+        }
+        None
+    }
+
+    /// Attempts to lock the inner data returns `None` if data is already locked.
+    /// This fn is different from [Self::try_lock_inner] because it will spin while waiting for the
+    /// control bit, and exits if the mutex is already locked.
+    #[inline]
+    pub fn try_lock(&self) -> Option<ReentrantMutexGuard<T>> {
+        loop {
+            if let Some(t) = self.try_lock_inner() {
+                return Some(t);
+            } else {
+                core::hint::spin_loop();
+            }
+        }
+    }
+
+    #[inline]
+    pub fn lock(&self) -> ReentrantMutexGuard<T> {
+        loop {
+            if let Some(t) = self.try_lock() {
+                return t
+            } else {
+                core::hint::spin_loop();
+            }
+        }
+    }
+}
+
+impl<'a,T:Sync> Deref for ReentrantMutexGuard<'a,T> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        // SAFETY: This is safe because the inner data may only be locked by a single thread
+        unsafe { &*self.master.data.get() }
+    }
+}
+
+impl<'a,T: Sync> DerefMut for ReentrantMutexGuard<'a,T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        // SAFETY: This is safe because the inner data may only be locked by a single thread
+        unsafe { &mut *self.master.data.get() }
+    }
+}
+
+impl<'a,T: Sync> Drop for ReentrantMutexGuard<'a,T> {
+    fn drop(&mut self) {
+        // could possibly store original count for error checking
+        // SAFETY: this is safe because desync is called
+        unsafe { self.master.sync() };
+
+        let nc = self.master.lock_count.get() - 1 ;
+        self.master.lock_count.set(nc);
+
+        if nc == 0 {
+            self.master.owner.set(None);
+        }
+
+        self.master.desync()
+
     }
 }
