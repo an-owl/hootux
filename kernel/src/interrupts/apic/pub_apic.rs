@@ -68,4 +68,9 @@ impl super::Apic for SysApic {
     fn begin_calibration(&mut self, test_time: u32, vec: u8) {
         LOCAL_APIC.get().begin_calibration(test_time, vec)
     }
+
+    /// Allowed but not recommended, use [crate::who_am_i] instead.
+    fn get_id(&self) -> u32 {
+        LOCAL_APIC.get().get_id()
+    }
 }

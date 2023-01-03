@@ -48,6 +48,8 @@ pub trait Apic: crate::time::Timer {
     ///
     /// Implementations should panic if `super::IHC\[vec\]` is already occupied
     fn begin_calibration(&mut self, test_time: u32, vec: u8);
+
+    fn get_id(&self) -> u32;
 }
 
 const TARGET_FREQ: u32 = 300;
@@ -104,7 +106,9 @@ pub fn load_apic() {
             .cast::<xApic>();
         apic = unsafe { Box::from_raw_in(sec.as_mut(), alloc.into()) };
     }
-    LOCAL_APIC.init(apic)
+
+    LOCAL_APIC.init(apic);
+    crate::WHO_AM_I.init(LOCAL_APIC.get().get_id());
 }
 
 /// Safely declares End Of Interrupt on apic devices, without potentially causing a deadlock.

@@ -155,6 +155,13 @@ impl Apic for xApic {
             super::super::vector_tables::IHR.unset(vec);
         }
     }
+
+    fn get_id(&self) -> u32 {
+        let mut id = self.id_register.data;
+        id >>= 24;
+        id &= !255; // clear reserved bits
+        id
+    }
 }
 
 impl xApic {
