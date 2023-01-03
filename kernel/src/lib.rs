@@ -28,6 +28,14 @@ pub mod system;
 pub mod task;
 pub mod time;
 
+#[thread_local]
+static WHO_AM_I: kernel_structures::UnlockedStatic<u32> = kernel_structures::UnlockedStatic::new();
+
+/// Gets the CPU id given by the apic.
+fn who_am_i() -> u32 {
+    WHO_AM_I.get().clone()
+}
+
 pub trait Testable {
     fn run(&self);
 }
