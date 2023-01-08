@@ -1,4 +1,4 @@
-#Hootux
+# Hootux
 
 Hootux was created with the intention of learning how a kernel works and started from 
 [Phill Opp's blog: how to write an os in rust](https://os.phil-opp.com/). This project was not made just to write 
@@ -12,24 +12,24 @@ project will probably evolve quite slowly. I've created this project to learn, s
 knowledge. If you've stumbled on this project and want more information feel free to create an issue and ask even if it
 seems stupid.
 
-##Building
+## Building
 
-###Dependancies
+### Dependencies
 
  - Rust is required to build this project. Installation instructions can be found [here](https://rustup.rs/)
- - `rust-src` is required to build the kernel binary and can be installed using `rustup component add rust-src`
  - `llvm-tools-preview` is required to build the bootloader and can be installed using `rustup component add llvm-tools-preview`
  - all other dependencies will be fetched by cargo during the build process.
 
-###Actually building
+### Actually building
 
-Convenience functions are provided to build image and run the kernel and may not work on all systems.
+Hootux is built and run via the root crate which acts as a runner
 
- - `cargo krun`  : Will build the kernel images and run it using qemu however this may not work on all systems and is not recommended
- - `cargo image` : Will build the kernel images into `./target/x86_64-owl-os-build`
- - `cargo kbuild`: Will only build the kernel binary without imaging it
+ - `cargo build`          : will build the binaries normally without running
+ - `cargo run -- uefi`    : will boot hootux in qemu using ovmf firmware
+ - `cargo run -- bios`    : will boot hootux in qemu using legacy boot
+ - `cargo run -- --help ` : will provide a help message with extra arguments and their usages
 
-##TODO
+## TODO
 
 This part is mostly for my own sanity to try to manage what I want to do and to lay out the things I need to to to
 achieve them.
@@ -56,4 +56,5 @@ achieve them.
    - do after AHCI so it can access sata drives
  - Fix and write tests
    - because I really need to
+ - Add gdbstub
     
