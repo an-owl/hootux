@@ -41,9 +41,12 @@ static ALLOCATOR: Locked<fixed_size_block::FixedBlockAllocator> =
     Locked::new(fixed_size_block::FixedBlockAllocator::new());
 
 #[global_allocator]
-static COMBINED_ALLOCATOR: crate::kernel_structures::Mutex<
-    combined_allocator::DualHeap<buddy_alloc::BuddyHeap, fixed_size_block::NewFixedBlockAllocator>,
-> = crate::kernel_structures::Mutex::new(combined_allocator::DualHeap::new(
+static COMBINED_ALLOCATOR: crate::kernel_structures::mutex::ReentrantMutex<
+    combined_allocator::DualHeap<
+        buddy_alloc::BuddyHeap,
+        fixed_size_block::NewFixedBlockAllocator
+    >
+> = crate::kernel_structures::mutex::ReentrantMutex::new(combined_allocator::DualHeap::new(
     buddy_alloc::BuddyHeap::new(),
     fixed_size_block::NewFixedBlockAllocator::new(),
 ));
