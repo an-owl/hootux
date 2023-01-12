@@ -1,36 +1,34 @@
-use core::cell::{Cell, RefCell};
+use core::cell::{Cell, UnsafeCell};
 use core::ops::{Deref, DerefMut};
 use core::sync::atomic::Ordering;
 use core::sync::atomic;
 
 pub struct Mutex<T> {
     lock: atomic::AtomicBool,
-    inner: core::cell::UnsafeCell<T>,
+    inner: UnsafeCell<T>,
 }
 
 /// Native implementation of Mutex, capable of being forcibly acquired without being unlocked.
 impl<T> Mutex<T> {
     pub const fn new(data: T) -> Self {
         Self {
-            inner: core::cell::UnsafeCell::new(data),
+            inner: UnsafeCell::new(data),
             lock: atomic::AtomicBool::new(false),
         }
     }
 
+    #[inline]
     pub fn lock(&self) -> MutexGuard<T> {
-        while self
-            .lock
-            .compare_exchange_weak(false, true, Ordering::Acquire, Ordering::Relaxed)
-            .is_err()
-        {
-            while self.is_locked() {
-                core::hint::spin_loop();
+        loop {
+            if let Some(t) = self.try_lock() {
+                return t
+            } else {
+                core::hint::spin_loop()
             }
         }
-
-        unsafe { self.make_guard() }
     }
 
+    #[inline]
     pub fn try_lock(&self) -> Option<MutexGuard<T>> {
         if let Ok(_) =
             self.lock
@@ -53,10 +51,6 @@ impl<T> Mutex<T> {
             lock: &self.lock,
             data: &mut *self.inner.get(),
         }
-    }
-
-    pub fn is_locked(&self) -> bool {
-        self.lock.load(Ordering::Relaxed)
     }
 
     /// Forcibly acquires `T`, **without** unlocking `self`. This is intended for interrupts and
@@ -110,25 +104,29 @@ impl<'a, T> Drop for MutexGuard<'a, T> {
 /// #Safety
 /// While this type is safe it should not be used in interrupts as the contained data may cause UB.
 /// This may occur when an interrupt is called while modifying `self.data`
-pub struct ReentrantMutex<T: Sync> {
-    data: core::cell::UnsafeCell<T>,
+pub struct ReentrantMutex<T> {
+    data: UnsafeCell<T>,
     control: atomic::AtomicBool,
     owner: Cell<Option<u32>>,
     lock_count: Cell<usize>,
 }
 
-pub struct ReentrantMutexGuard<'a, T: Sync> {
+unsafe impl<T: Send> Send for ReentrantMutex<T>{}
+unsafe impl<T: Send> Sync for ReentrantMutex<T>{}
+
+pub struct ReentrantMutexGuard<'a, T> {
     master: &'a ReentrantMutex<T>,
-    _marker: core::marker::PhantomData<T>
+    _marker: core::marker::PhantomData<T>,
+    _unsend: super::PhantomUnsend
 }
 
-impl<'a,T:Sync> ReentrantMutex<T> {
-    pub fn new(data: T) -> Self {
+impl<'a,T> ReentrantMutex<T> {
+    pub const fn new(data: T) -> Self {
         Self{
-            data: data.into(),
+            data: UnsafeCell::new(data),
             lock_count: Cell::new(0),
             owner: Cell::new(None),
-            control: false.into(),
+            control: atomic::AtomicBool::new(false),
         }
     }
 
@@ -159,6 +157,7 @@ impl<'a,T:Sync> ReentrantMutex<T> {
                     let r = ReentrantMutexGuard{
                         master: &self,
                         _marker: core::marker::PhantomData,
+                        _unsend: super::PhantomUnsend::default(),
                     };
 
                     self.owner.set(Some(crate::who_am_i()));
@@ -171,6 +170,7 @@ impl<'a,T:Sync> ReentrantMutex<T> {
                     let r = ReentrantMutexGuard{
                         master: &self,
                         _marker: core::marker::PhantomData,
+                        _unsend: super::PhantomUnsend::default(),
                     };
 
                     let nc = self.lock_count.get().checked_add(1).expect("ReentrantMutex lock overflow");
@@ -212,7 +212,7 @@ impl<'a,T:Sync> ReentrantMutex<T> {
     }
 }
 
-impl<'a,T:Sync> Deref for ReentrantMutexGuard<'a,T> {
+impl<'a,T> Deref for ReentrantMutexGuard<'a,T> {
     type Target = T;
 
     fn deref(&self) -> &Self::Target {
@@ -221,14 +221,14 @@ impl<'a,T:Sync> Deref for ReentrantMutexGuard<'a,T> {
     }
 }
 
-impl<'a,T: Sync> DerefMut for ReentrantMutexGuard<'a,T> {
+impl<'a,T> DerefMut for ReentrantMutexGuard<'a,T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         // SAFETY: This is safe because the inner data may only be locked by a single thread
         unsafe { &mut *self.master.data.get() }
     }
 }
 
-impl<'a,T: Sync> Drop for ReentrantMutexGuard<'a,T> {
+impl<'a,T> Drop for ReentrantMutexGuard<'a,T> {
     fn drop(&mut self) {
         // could possibly store original count for error checking
         // SAFETY: this is safe because desync is called
