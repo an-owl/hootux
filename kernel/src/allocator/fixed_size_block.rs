@@ -119,6 +119,8 @@ struct FixedBlockInner {
     alloc_count: usize,
 }
 
+unsafe impl Send for FixedBlockInner {}
+
 impl NewFixedBlockAllocator {
     /// Notes the minimum size that `Self` may be initialized with. This will always be a multiple
     /// of the largest block size.

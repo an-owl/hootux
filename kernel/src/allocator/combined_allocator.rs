@@ -34,7 +34,7 @@ impl<S: SuperiorAllocator, I: InferiorAllocator> DualHeap<S, I> {
 }
 
 unsafe impl<S: SuperiorAllocator, I: InferiorAllocator> core::alloc::GlobalAlloc
-    for crate::kernel_structures::Mutex<DualHeap<S, I>>
+    for crate::kernel_structures::mutex::ReentrantMutex<DualHeap<S, I>>
 {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         use x86_64::structures::paging::{
@@ -124,6 +124,7 @@ struct Hidden;
 /// This struct unsafe to use because its trait implementations are subject to race conditions.
 /// This struct should only be used within HeapController, It is intended to bypass its mutex to
 /// allow each field to call the other while locked.
+// todo: using ReentrantMutex may have made this redundant, investigate removing
 pub(super) struct InteriorAlloc {
     _inner: Hidden,
 }
@@ -136,47 +137,46 @@ impl InteriorAlloc {
 
 unsafe impl HeapAlloc for InteriorAlloc {
     fn virt_allocate(&self, layout: Layout) -> Result<NonNull<[u8]>, AllocError> {
-        unsafe {
-            super::COMBINED_ALLOCATOR
-                .force_acquire()
-                .superior
-                .virt_allocate(layout)
-        }
+
+        super::COMBINED_ALLOCATOR
+            .lock()
+            .superior
+            .virt_allocate(layout)
     }
 
     fn virt_deallocate(&self, ptr: NonNull<u8>, layout: Layout) {
-        unsafe {
-            super::COMBINED_ALLOCATOR
-                .force_acquire()
-                .superior
-                .virt_deallocate(ptr, layout)
-        }
+
+        super::COMBINED_ALLOCATOR
+            .lock()
+            .superior.
+            virt_deallocate(ptr, layout)
+
     }
 }
 
 unsafe impl core::alloc::Allocator for InteriorAlloc {
     fn allocate(&self, layout: Layout) -> Result<NonNull<[u8]>, AllocError> {
-        unsafe {
-            super::COMBINED_ALLOCATOR
-                .force_acquire()
-                .inferior
-                .allocate(layout)
-        }
+
+        super::COMBINED_ALLOCATOR
+            .lock()
+            .inferior
+            .allocate(layout)
+
     }
 
     fn allocate_zeroed(&self, layout: Layout) -> Result<NonNull<[u8]>, AllocError> {
-        unsafe {
-            super::COMBINED_ALLOCATOR
-                .force_acquire()
-                .inferior
-                .allocate_zeroed(layout)
-        }
+
+        super::COMBINED_ALLOCATOR
+            .lock()
+            .inferior
+            .allocate_zeroed(layout)
+
     }
 
     unsafe fn deallocate(&self, ptr: NonNull<u8>, layout: Layout) {
         unsafe {
             super::COMBINED_ALLOCATOR
-                .force_acquire()
+                .lock()
                 .inferior
                 .deallocate(ptr, layout)
         }
@@ -190,7 +190,7 @@ unsafe impl core::alloc::Allocator for InteriorAlloc {
     ) -> Result<NonNull<[u8]>, AllocError> {
         unsafe {
             super::COMBINED_ALLOCATOR
-                .force_acquire()
+                .lock()
                 .inferior
                 .grow(ptr, old_layout, new_layout)
         }
@@ -204,7 +204,7 @@ unsafe impl core::alloc::Allocator for InteriorAlloc {
     ) -> Result<NonNull<[u8]>, AllocError> {
         unsafe {
             super::COMBINED_ALLOCATOR
-                .force_acquire()
+                .lock()
                 .inferior
                 .grow(ptr, old_layout, new_layout)
         }
@@ -218,7 +218,7 @@ unsafe impl core::alloc::Allocator for InteriorAlloc {
     ) -> Result<NonNull<[u8]>, AllocError> {
         unsafe {
             super::COMBINED_ALLOCATOR
-                .force_acquire()
+                .lock()
                 .inferior
                 .shrink(ptr, old_layout, new_layout)
         }
@@ -244,7 +244,7 @@ impl InferiorAllocator for InteriorAlloc {
 
     unsafe fn force_dealloc(&self, ptr: NonNull<u8>, layout: Layout) {
         super::COMBINED_ALLOCATOR
-            .force_acquire()
+            .lock()
             .inferior
             .force_dealloc(ptr, layout)
     }
