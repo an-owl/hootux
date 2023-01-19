@@ -23,6 +23,7 @@ pub mod interrupts;
 mod kernel_structures;
 mod logger;
 pub mod mem;
+pub mod runlevel;
 pub mod serial;
 pub mod system;
 pub mod task;
@@ -31,9 +32,20 @@ pub mod time;
 #[thread_local]
 static WHO_AM_I: kernel_structures::UnlockedStatic<u32> = kernel_structures::UnlockedStatic::new();
 
-/// Gets the CPU id given by the apic.
+/// Return the ApicId given by the APIC where available or via CPUID.
 fn who_am_i() -> u32 {
-    WHO_AM_I.get().clone()
+    if runlevel::runlevel() == runlevel::Runlevel::PreInit {
+        let cpuid = raw_cpuid::CpuId::new();
+        if let Some(_) = cpuid.get_extended_topology_info_v2() {
+            raw_cpuid::cpuid!(0x1f).edx
+        } else if let Some(_) = cpuid.get_extended_topology_info() {
+            raw_cpuid::cpuid!(0xb).edx
+        } else {
+            cpuid.get_feature_info().unwrap().initial_local_apic_id() as u32
+        }
+    } else {
+        WHO_AM_I.get().clone()
+    }
 }
 
 pub trait Testable {
