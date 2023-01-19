@@ -103,6 +103,7 @@ impl Options {
             command.arg("-serial");
             if s.is_empty() {
                 command.arg("stdio");
+                command.stdout(Stdio::inherit());
             } else {
                 command.arg(s);
             }
@@ -185,11 +186,19 @@ fn get_opts() -> Options {
 
     let s = Subcommand::fetch();
 
+    let serial = {
+        if matches.opt_present("s") {
+            Some(matches.opt_str("s").unwrap_or(String::new()))
+        } else {
+            None
+        }
+    };
+
     Options{
         subcommand: s,
         debug: matches.opt_present("debug"),
         d_int: matches.opt_present("display-interrupts"),
-        serial: matches.opt_str("serial"),
+        serial,
         launch_debug: matches.opt_str("launch-debugger"),
         debug_args: matches.opt_str("debug-args"),
         term: matches.opt_str("terminal"),
