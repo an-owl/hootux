@@ -1,10 +1,10 @@
 use getopts::Fail;
+use std::process::Stdio;
 
 const QEMU: &str = "qemu-system-x86_64";
 const EDK: &str = "/usr/share/edk2/x64/OVMF_CODE.fd";
 
-static BRIEF: &str =
-r#"\
+static BRIEF: &str = r#"\
 Usage `cargo run -- [SUBCOMMAND] [OPTIONS]`
 Supported subcommands are:
 uefi: boots a uefi image using qemu
@@ -12,8 +12,7 @@ bios: boots a bios image using qemu\
 "#;
 
 fn main() {
-
-    let opts= get_opts();
+    let opts = get_opts();
     let mut qemu = std::process::Command::new(QEMU);
     opts.qemu_args(&mut qemu);
 
@@ -30,7 +29,7 @@ fn main() {
 }
 
 #[non_exhaustive]
-enum Subcommand{
+enum Subcommand {
     Bios,
     Uefi,
 }
@@ -47,7 +46,7 @@ impl Subcommand {
             e => {
                 eprintln!(r#"Err command not found "{e} use --help for more info"#);
                 std::process::exit(1);
-            },
+            }
         }
     }
     fn append_args(&self, command: &mut std::process::Command) {
@@ -55,11 +54,15 @@ impl Subcommand {
         let bios_path = env!("BIOS_PATH");
         match self {
             Subcommand::Bios => {
-                command.arg("-drive").arg(format!("format=raw,file={bios_path}"));
+                command
+                    .arg("-drive")
+                    .arg(format!("format=raw,file={bios_path}"));
             }
             Subcommand::Uefi => {
                 command.arg("-bios").arg(EDK);
-                command.arg("-drive").arg(format!("format=raw,file={uefi_path}"));
+                command
+                    .arg("-drive")
+                    .arg(format!("format=raw,file={uefi_path}"));
             }
         }
     }
@@ -84,7 +87,6 @@ struct Options {
 
 impl Options {
     fn qemu_args(&self, command: &mut std::process::Command) {
-
         if self.subcommand.is_vm() {
             self.subcommand.append_args(command);
         } else {
@@ -110,7 +112,7 @@ impl Options {
         }
     }
 
-    fn run_debug(&self) -> Option<std::process::Command>{
+    fn run_debug(&self) -> Option<std::process::Command> {
         let name = self.launch_debug.as_ref()?;
         let term_name = self.term.as_ref().unwrap_or_else(|| {
             eprintln!("debugger enabled without -t specified");
@@ -122,7 +124,8 @@ impl Options {
         let term = match &**term_name {
             "konsole" => {
                 let mut term = std::process::Command::new("konsole");
-                term.arg("-e").arg(format!("{name} {0:} {dbg_args}",env!("KERNEL_BIN")));
+                term.arg("-e")
+                    .arg(format!("{name} {0:} {dbg_args}", env!("KERNEL_BIN")));
                 term
             }
             t => {
@@ -131,27 +134,37 @@ impl Options {
             }
         };
         Some(term)
-
-
     }
 }
 
 fn get_opts() -> Options {
     let mut opts = getopts::Options::new();
-    opts.optflag("d","debug","pauses the the VM on startup with debug enabled on 'localhost:1234'");
-    opts.optflag("","display-interrupts", "Display interrupts on stdout");
+    opts.optflag(
+        "d",
+        "debug",
+        "pauses the the VM on startup with debug enabled on 'localhost:1234'",
+    );
+    opts.optflag("", "display-interrupts", "Display interrupts on stdout");
     opts.optflagopt("s", "serial", "Enables serial output, argument is directly given to qemu via `-serial [FILE]` defaults to stdio ", "FILE");
-    opts.optflag("h","help", "Displays a help message");
-    opts.optopt("l","launch-debugger","launches the specified debugger with the kernel binary as first argument","DEBUG");
-    opts.optopt("a", "debug-args", "specifies debug arguments hnded to the debugger", "ARGS");
+    opts.optflag("h", "help", "Displays a help message");
+    opts.optopt(
+        "l",
+        "launch-debugger",
+        "launches the specified debugger with the kernel binary as first argument",
+        "DEBUG",
+    );
+    opts.optopt(
+        "a",
+        "debug-args",
+        "specifies debug arguments hnded to the debugger",
+        "ARGS",
+    );
     opts.optopt("t","terminal", "Sets which terminal window to open when the debugger is enabled (only konsole is supported at the moment)", "TERM");
-
-
 
     let matches = match opts.parse(std::env::args_os()) {
         Ok(matches) => {
             if matches.opt_present("help") {
-                println!("{}",opts.usage(BRIEF));
+                println!("{}", opts.usage(BRIEF));
                 std::process::exit(0);
             }
 
@@ -162,9 +175,9 @@ fn get_opts() -> Options {
             std::process::exit(2);
         }
 
-        Err(Fail::UnrecognizedOption(o)) =>  {
+        Err(Fail::UnrecognizedOption(o)) => {
             eprintln!("Argument {o} not recognised");
-            eprintln!("{}",opts.usage(BRIEF));
+            eprintln!("{}", opts.usage(BRIEF));
             std::process::exit(2);
         }
 
@@ -174,11 +187,10 @@ fn get_opts() -> Options {
         }
         Err(Fail::OptionMissing(o)) => {
             eprintln!("Required argument {o} missing");
-            eprintln!("{}",opts.usage(BRIEF));
+            eprintln!("{}", opts.usage(BRIEF));
             std::process::exit(2);
-
         }
-        Err(Fail::UnexpectedArgument(o)) =>  {
+        Err(Fail::UnexpectedArgument(o)) => {
             eprintln!("Unexpected argument {o} missing");
             std::process::exit(2);
         }
@@ -194,7 +206,7 @@ fn get_opts() -> Options {
         }
     };
 
-    Options{
+    Options {
         subcommand: s,
         debug: matches.opt_present("debug"),
         d_int: matches.opt_present("display-interrupts"),
