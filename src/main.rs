@@ -17,15 +17,12 @@ fn main() {
     opts.qemu_args(&mut qemu);
 
     let mut children = Vec::new();
-    children.push(qemu.spawn().unwrap());
+    let mut qemu_child = qemu.spawn().unwrap();
     if let Some(mut c) = opts.run_debug() {
         children.push(c.spawn().unwrap());
     }
 
-    for mut c in children {
-        #[allow(unused_must_use)]
-        c.wait();
-    }
+    qemu_child.wait().unwrap();
 }
 
 #[non_exhaustive]
