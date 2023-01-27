@@ -103,4 +103,8 @@ impl<T> UnlockedStatic<T> {
     pub fn get(&self) -> &mut T {
         unsafe { (*self.inner.get()).as_mut().unwrap() }
     }
+
+    pub fn try_get(&self) -> Option<&mut T> {
+        unsafe { (*self.inner.get()).as_mut() }
+    }
 }

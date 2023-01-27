@@ -33,6 +33,7 @@ unsafe fn create_tls(t_data: *const u8, file_size: usize, mem_size: usize) -> *c
 }
 
 /// Creates and initializes a thread local template for this CPU.
+/// This will set the systems RunLevel to Init
 ///
 /// This function will leak `mem_size` bytes onto the heap
 ///
@@ -46,4 +47,5 @@ pub unsafe fn init_tls(t_data: *const u8, file_size: usize, mem_size: usize) {
     let tp = Box::leak(thread_pointer) as *const *const u8;
 
     x86_msr::architecture::FsBase::write(tp.into());
+    crate::runlevel::update_runlevel(crate::runlevel::Runlevel::Init)
 }
