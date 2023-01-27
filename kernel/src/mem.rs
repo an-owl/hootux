@@ -1,12 +1,13 @@
-use crate::kernel_structures::{static_protected::Ref, KernelStatic};
+use crate::kernel_structures::KernelStatic;
 use bootloader_api::info::{MemoryRegion, MemoryRegionKind};
-use x86_64::structures::paging::frame::PhysFrameRangeInclusive;
-use x86_64::structures::paging::page::PageRangeInclusive;
-use x86_64::structures::paging::{
-    FrameAllocator, Mapper, OffsetPageTable, Page, PageSize, PageTableFlags, PhysFrame, Size1GiB,
-    Size2MiB, Size4KiB,
+use x86_64::{
+    structures::paging::{
+        frame::PhysFrameRangeInclusive, page::PageRangeInclusive, FrameAllocator, Mapper,
+        OffsetPageTable, Page, PageSize, PageTable, PageTableFlags, PhysFrame, Size1GiB, Size2MiB,
+        Size4KiB,
+    },
+    PhysAddr, VirtAddr,
 };
-use x86_64::{structures::paging::PageTable, PhysAddr, VirtAddr};
 
 // offset 0-11
 // l1 12-2
@@ -15,6 +16,7 @@ use x86_64::{structures::paging::PageTable, PhysAddr, VirtAddr};
 // l4 39-47
 // quick maffs
 
+pub mod buddy_frame_alloc;
 pub mod mem_map;
 pub(self) mod offset_page_table;
 pub mod page_table_tree;
@@ -22,12 +24,15 @@ pub mod thread_local_storage;
 
 pub const PAGE_SIZE: usize = 4096;
 
-pub(crate) static SYS_FRAME_ALLOCATOR: KernelStatic<BootInfoFrameAllocator> = KernelStatic::new();
+//pub(crate) static SYS_FRAME_ALLOCATOR: KernelStatic<BootInfoFrameAllocator> = KernelStatic::new();
+pub(crate) static SYS_FRAME_ALLOCATOR: buddy_frame_alloc::BuddyFrameAlloc =
+    buddy_frame_alloc::BuddyFrameAlloc::new();
 
-pub fn set_sys_frame_alloc(frame_alloc: BootInfoFrameAllocator) {
-    SYS_FRAME_ALLOCATOR.init(frame_alloc)
+/// Run PreInitialization for SYS_FRAME_ALLOC
+pub unsafe fn set_sys_frame_alloc(mem_map: &'static mut bootloader_api::info::MemoryRegions) {
+    buddy_frame_alloc::init_mem_map(mem_map)
 }
-pub fn get_sys_frame_alloc() -> Ref<'static, BootInfoFrameAllocator> {
+pub fn get_sys_frame_alloc() -> buddy_frame_alloc::FrameAllocRef<'static> {
     SYS_FRAME_ALLOCATOR.get()
 }
 

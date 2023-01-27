@@ -162,8 +162,9 @@ impl NewFixedBlockAllocator {
 
         unsafe {
             // SAFETY: this is safe because the page was given by the system allocator
+
             mem::mem_map::map_page(
-                x86_64::structures::paging::Page::containing_address(region_start),
+                x86_64::structures::paging::Page::<x86_64::structures::paging::Size4KiB>::containing_address(region_start),
                 flags,
             );
             // This is safe because
