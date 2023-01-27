@@ -326,7 +326,7 @@ impl OffsetPageTable {
 
     /// Allocates a new table into memory without mapping it
     fn new_table(&self) -> *mut PageTable {
-        let frame = super::SYS_FRAME_ALLOCATOR
+        let frame: PhysFrame<Size4KiB> = super::SYS_FRAME_ALLOCATOR
             .get()
             .allocate_frame()
             .expect("System ran out of memory");
@@ -355,7 +355,7 @@ impl OffsetPageTable {
         page: Page<S>,
         flags: PageTableFlags,
     ) -> Result<(), InternalError> {
-        let page = unsafe { Page::<Size4KiB>::from_start_address_unchecked(page.start_address()) };
+        let page = unsafe { Page::<Size4KiB>::from_start_address_unchecked(page.start_address()) }; // converts Page<S> to PAge<Size4K>
 
         let frame_addr = new_table as usize - self.offset_base.as_u64() as usize;
         let phys_addr = PhysAddr::new(frame_addr as u64);

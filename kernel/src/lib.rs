@@ -12,6 +12,8 @@
 #![feature(allocator_api)]
 #![feature(thread_local)]
 #![feature(optimize_attribute)]
+#![feature(drain_filter)]
+#![feature(linked_list_cursors)]
 
 extern crate alloc;
 
@@ -100,7 +102,6 @@ pub fn test_panic(info: &core::panic::PanicInfo) -> ! {
     stop()
 }
 
-use bootloader_api::info::MemoryRegion;
 #[cfg(test)]
 use bootloader::{entry_point, BootInfo};
 use x86_64::VirtAddr;

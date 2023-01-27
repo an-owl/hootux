@@ -42,10 +42,7 @@ static ALLOCATOR: Locked<fixed_size_block::FixedBlockAllocator> =
 
 #[global_allocator]
 static COMBINED_ALLOCATOR: crate::kernel_structures::mutex::ReentrantMutex<
-    combined_allocator::DualHeap<
-        buddy_alloc::BuddyHeap,
-        fixed_size_block::NewFixedBlockAllocator
-    >
+    combined_allocator::DualHeap<buddy_alloc::BuddyHeap, fixed_size_block::NewFixedBlockAllocator>,
 > = crate::kernel_structures::mutex::ReentrantMutex::new(combined_allocator::DualHeap::new(
     buddy_alloc::BuddyHeap::new(),
     fixed_size_block::NewFixedBlockAllocator::new(),
@@ -84,7 +81,7 @@ pub unsafe fn init_comb_heap(addr: usize) {
 
     // map mem
     map_page(
-        Page::from_start_address(VirtAddr::from_ptr(ptr)).unwrap(),
+        Page::<Size4KiB>::from_start_address(VirtAddr::from_ptr(ptr)).unwrap(),
         PROGRAM_DATA_FLAGS,
     ); // unwrap shouldn't panic
     let ptr = addr as *mut [u8; mem::PAGE_SIZE];

@@ -4,6 +4,7 @@
 // todo: consider adding closures as args in these fro handling errors
 
 use super::*;
+use crate::mem::buddy_frame_alloc::FrameAllocRef;
 use x86_64::structures::paging::{Mapper, PageTableFlags};
 
 /// Flags for Normal data in L1 (4K) pages.
@@ -28,11 +29,11 @@ pub unsafe fn map_range<'a, S: PageSize + core::fmt::Debug, I: Iterator<Item = P
     flags: PageTableFlags,
 ) where
     page_table_tree::PageTableTree: Mapper<S>,
-    BootInfoFrameAllocator: FrameAllocator<S>,
+    FrameAllocRef<'a>: FrameAllocator<S>,
     offset_page_table::OffsetPageTable: Mapper<S>,
 {
     for page in pages {
-        let frame = FrameAllocator::<S>::allocate_frame(&mut *SYS_FRAME_ALLOCATOR.get())
+        let frame = FrameAllocator::<S>::allocate_frame(&mut SYS_FRAME_ALLOCATOR.get())
             .expect("System ran out of memory");
 
         match SYS_MAPPER
@@ -90,10 +91,10 @@ where
 pub unsafe fn map_page<'a, S: PageSize + core::fmt::Debug>(page: Page<S>, flags: PageTableFlags)
 where
     page_table_tree::PageTableTree: Mapper<S>,
-    BootInfoFrameAllocator: FrameAllocator<S>,
+    FrameAllocRef<'a>: FrameAllocator<S>,
     offset_page_table::OffsetPageTable: Mapper<S>,
 {
-    let frame = FrameAllocator::<S>::allocate_frame(&mut *SYS_FRAME_ALLOCATOR.get())
+    let frame = FrameAllocator::<S>::allocate_frame(&mut SYS_FRAME_ALLOCATOR.get())
         .expect("System ran out of memory");
 
     match SYS_MAPPER
