@@ -42,9 +42,9 @@ achieve them.
      - unify functions too, there are a lot in there that do very similar things and should be condensed
  - AHCI driver
    - requires proper scheduling
-     - --requires somewhat accurate timer--
-       - --use apic timer--
-         - --figure out how fast apic timer is--
+     - ~~requires somewhat accurate timer~~ 
+       - ~~use apic timer~~
+         - ~~figure out how fast apic timer is~~
    - pci-e interface
      - preferably backward compatible
  - Enhance Allocator
@@ -57,4 +57,7 @@ achieve them.
  - Fix and write tests
    - because I really need to
  - Add gdbstub
+ - Multiprocessing
+   - NUMA?
+   - thread local allocators?
     
