@@ -37,9 +37,6 @@ achieve them.
  - Clean up memory module
    - Move allocator into mem
      - that's where it should be
-   - unify metrics in page_table_tree.rs
-     - many things in there use addresses and pages interchangeably they should all use `Page<Size4kib>`
-     - unify functions too, there are a lot in there that do very similar things and should be condensed
  - AHCI driver
    - requires proper scheduling
      - ~~requires somewhat accurate timer~~ 
