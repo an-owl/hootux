@@ -27,10 +27,9 @@ const BOOT_CONFIG: bootloader_api::BootloaderConfig = {
     cfg.mappings.physical_memory = Some(Mapping::Dynamic);
 
     cfg
-
 };
 
-entry_point!(kernel_main,config = &BOOT_CONFIG);
+entry_point!(kernel_main, config = &BOOT_CONFIG);
 #[no_mangle]
 fn kernel_main(b: &'static mut bootloader_api::BootInfo) -> ! {
     //initialize system
@@ -46,15 +45,15 @@ fn kernel_main(b: &'static mut bootloader_api::BootInfo) -> ! {
         mapper = mem::init(VirtAddr::new(
             b.physical_memory_offset.into_option().unwrap(),
         ));
-        let f_alloc = mem::BootInfoFrameAllocator::init(&b.memory_regions);
 
         init(); // todo break apart
 
-        mem::set_sys_frame_alloc(f_alloc);
+        mem::set_sys_frame_alloc(&mut b.memory_regions);
 
         mem::set_sys_mem_tree_no_cr3(mapper);
 
         allocator::init_comb_heap(0x4444_4000_0000);
+        mem::buddy_frame_alloc::drain_map();
     }
 
     if let bootloader_api::info::Optional::Some(tls) = b.tls_template {
@@ -127,6 +126,10 @@ fn say_hi() {
 fn panic_handler(info: &core::panic::PanicInfo) -> ! {
     unsafe {
         panic_unlock!();
+    }
+    // SAFETY: not safe. no mp yet though.
+    unsafe {
+        runlevel::set_panic();
     }
     serial_println!("KERNEL PANIC\nInfo: {}", info);
     log::error!("KERNEL PANIC\nInfo: {}", info);

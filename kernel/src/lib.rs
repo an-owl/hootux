@@ -34,17 +34,19 @@ static WHO_AM_I: kernel_structures::UnlockedStatic<u32> = kernel_structures::Unl
 
 /// Return the ApicId given by the APIC where available or via CPUID.
 fn who_am_i() -> u32 {
-    if runlevel::runlevel() == runlevel::Runlevel::PreInit {
-        let cpuid = raw_cpuid::CpuId::new();
-        if let Some(_) = cpuid.get_extended_topology_info_v2() {
-            raw_cpuid::cpuid!(0x1f).edx
-        } else if let Some(_) = cpuid.get_extended_topology_info() {
-            raw_cpuid::cpuid!(0xb).edx
-        } else {
-            cpuid.get_feature_info().unwrap().initial_local_apic_id() as u32
+    if runlevel::runlevel() != runlevel::Runlevel::PreInit {
+        if let Some(i) = WHO_AM_I.try_get() {
+            return i.clone();
         }
+    }
+
+    let cpuid = raw_cpuid::CpuId::new();
+    if let Some(_) = cpuid.get_extended_topology_info_v2() {
+        raw_cpuid::cpuid!(0x1f).edx
+    } else if let Some(_) = cpuid.get_extended_topology_info() {
+        raw_cpuid::cpuid!(0xb).edx
     } else {
-        WHO_AM_I.get().clone()
+        return cpuid.get_feature_info().unwrap().initial_local_apic_id() as u32;
     }
 }
 

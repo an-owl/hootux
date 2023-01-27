@@ -2,11 +2,12 @@
 //! resources are available, The runlevel can be used to restrict some capabilities such as
 //! `#[thread_local]` statics.
 
-static RUNLEVEL: core::sync::atomic::AtomicU8 =
-    core::sync::atomic::AtomicU8::new(Runlevel::PreInit as u8);
+use core::sync::atomic::Ordering;
+
+static RUNLEVEL: atomic::Atomic<Runlevel> = atomic::Atomic::new(Runlevel::PreInit);
 
 pub fn runlevel() -> Runlevel {
-    RUNLEVEL.load(core::sync::atomic::Ordering::Relaxed).into()
+    RUNLEVEL.load(Ordering::Relaxed)
 }
 
 /*
@@ -22,32 +23,48 @@ Things that should be indicated
 
 */
 #[non_exhaustive]
-#[derive(Copy, Clone, Eq, PartialEq, Ord, PartialOrd)]
+#[derive(Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Debug)]
 #[repr(u8)]
 pub enum Runlevel {
     /// - Indicates that the system is in a very limited state.
     /// - Heap May be available
     /// - MP disabled
     ///
-    /// This state is ended when the kernels memory management is fully initialized.
-    PreInit = 0,
+    /// This state is ended when the kernels memory is fully initialized, and is updated when the TLS
+    /// for the BSP is loaded.
+    PreInit,
+
     /// - Heap is available
     /// - TLS is available
     ///
     /// MP will become available during this runlevel.
     /// This runlevel is exited when the kernel initializes the kernel executor
+    // todo: Not currently implemented
     Init,
-    ///
+
+    /// Indicates that Kernel multitasking is running
+    /// Multiprocessing (where available) is running
     Kernel,
+
+    /// Panic state all services may or may not be available, make no assumptions.
+    Panic,
 }
 
-impl From<u8> for Runlevel {
-    fn from(value: u8) -> Self {
-        match value {
-            0 => Self::PreInit,
-            1 => Self::Init,
-            2 => Self::Kernel,
-            n => panic!("Unknown RunLevel found {}", n),
-        }
-    }
+/// Sets the new runlevel to `new_runlevel`. Blocks until all cpu's ready for update
+pub(crate) fn update_runlevel(new_runlevel: Runlevel) {
+    assert!(new_runlevel > runlevel(), "Tried to set invalid runlevel");
+    // todo MP: Message all CPU's to ready for update. Block until all CPU's respond with ready.
+    log::info!("Updating RUNLEVEL to {:?}", new_runlevel);
+    RUNLEVEL.store(new_runlevel, Ordering::Release);
+}
+
+/// Sets the runlevel to Panic indicating the system is panicked.
+/// This does not block for other CPU's it assumes `panic!` has already message other CPU's
+///
+/// # Safety
+///
+/// This fn assumes that all CPU's have been notified to panic
+pub unsafe fn set_panic() {
+    log::info!("Updating RUNLEVEL to {:?}", Runlevel::Panic);
+    RUNLEVEL.store(Runlevel::Panic, Ordering::Release)
 }
