@@ -25,8 +25,8 @@ seems stupid.
 Hootux is built and run via the root crate which acts as a runner
 
  - `cargo build`          : will build the binaries normally without running
- - `cargo run -- uefi`    : will boot hootux in qemu using ovmf firmware
- - `cargo run -- bios`    : will boot hootux in qemu using legacy boot
+ - `cargo run -- --uefi`  : will boot hootux in qemu using ovmf firmware
+ - `cargo run -- --bios`  : will boot hootux in qemu using legacy boot
  - `cargo run -- --help ` : will provide a help message with extra arguments and their usages
 
 ## TODO
