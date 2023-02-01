@@ -28,7 +28,6 @@ pub unsafe fn map_range<'a, S: PageSize + core::fmt::Debug, I: Iterator<Item = P
     pages: I,
     flags: PageTableFlags,
 ) where
-    page_table_tree::PageTableTree: Mapper<S>,
     FrameAllocRef<'a>: FrameAllocator<S>,
     offset_page_table::OffsetPageTable: Mapper<S>,
 {
@@ -60,7 +59,6 @@ pub unsafe fn map_range<'a, S: PageSize + core::fmt::Debug, I: Iterator<Item = P
 /// This fn is unsafe because it can be used to unmap in use pages that contain in use data.
 pub unsafe fn unmap_range<'a, S: PageSize + core::fmt::Debug, I: Iterator<Item = Page<S>>>(pages: I)
 where
-    page_table_tree::PageTableTree: Mapper<S>,
     BootInfoFrameAllocator: FrameAllocator<S>,
     offset_page_table::OffsetPageTable: Mapper<S>,
 {
@@ -90,7 +88,6 @@ where
 /// see [Mapper::map_to]
 pub unsafe fn map_page<'a, S: PageSize + core::fmt::Debug>(page: Page<S>, flags: PageTableFlags)
 where
-    page_table_tree::PageTableTree: Mapper<S>,
     FrameAllocRef<'a>: FrameAllocator<S>,
     offset_page_table::OffsetPageTable: Mapper<S>,
 {
@@ -121,7 +118,6 @@ where
 /// See [unmap_range]\#Safety
 pub unsafe fn unmap_page<'a, S: PageSize + core::fmt::Debug>(page: Page<S>)
 where
-    page_table_tree::PageTableTree: Mapper<S>,
     BootInfoFrameAllocator: FrameAllocator<S>,
     offset_page_table::OffsetPageTable: Mapper<S>,
 {
