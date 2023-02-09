@@ -1,275 +1,383 @@
-use alloc::vec::Vec;
-use bootloader_api::info::FrameBuffer;
-use core::mem::size_of;
-use core::ops::{Deref, DerefMut};
-use core::slice::{from_raw_parts, from_raw_parts_mut};
+use crate::graphics::pixel::Pixel;
+use crate::mem;
+use alloc::format;
+use core::slice::from_raw_parts;
+use x86_64::structures::paging::Mapper;
+
 pub mod basic_output;
 
-//pub static GRAPHICS: spin::Mutex<Option<GraphicalFrame>> = spin::Mutex::new(None);
+mod pixel;
 
-/// Struct for graphics driver
-//todo impl Graphical sprite
-//what that does that mean? ^^
-pub struct GraphicalFrame {
-    //TODO actually create an abstraction ofr this. idk why i thought this was a good idea
-    pub buff: &'static mut FrameBuffer,
+pub static KERNEL_FRAMEBUFFER: crate::kernel_structures::KernelStatic<FrameBuffer> =
+    crate::kernel_structures::KernelStatic::new();
+
+static KERNEL_PIX_FORMAT: atomic::Atomic<PixelFormat> = atomic::Atomic::new(PixelFormat::Bgr4Byte);
+
+/// This fn will set [KERNEL_PIX_FORMAT], which is which is used for selecting the pixel format when
+/// creating new sprites. This is used for optimization only but should not be set to a greyscale
+/// format as this may cause a panic when reformatting sprites.
+///
+/// This should not be called at runtime except when initializing or disconnecting modifying
+/// framebuffer settings.
+pub fn set_default_format(format: PixelFormat) {
+    KERNEL_PIX_FORMAT.store(format, atomic::Ordering::Release);
 }
 
-impl GraphicalFrame {
-    /// Creates new GraphicalFrame
-    pub fn new(buff: &'static mut FrameBuffer) -> Self {
-        Self { buff }
-    }
+/// Returns the kernels default pixel format. This should be used to initialize sprites that are
+/// printed to the framebuffer.
+pub fn sys_pix_format() -> PixelFormat {
+    KERNEL_PIX_FORMAT.load(atomic::Ordering::Relaxed)
+}
 
-    /// Render sprite to screen coords
+pub trait NewSprite {
+    /// Returns the width of `self` in pixels
+    fn width(&self) -> usize;
+
+    /// Returns the height of `self` in pixels
+    fn height(&self) -> usize;
+
+    /// Returns the pixel format of `self`
+    fn format(&self) -> PixelFormat;
+
+    /// Returns a slice containing the pixel data for `self` at the given scan line
     ///
-    /// Silently returns on error
-    ///
-    /// Does not write into overscan region
-    //TODO make async
-    pub fn draw(&mut self, coords: (usize, usize), sprite: &Sprite) {
-        let (x, y) = coords;
+    /// The returned slice will have a len of `self.with()` pixels. The actual value of
+    /// `self.scan().len()` will likely not be equal to `self.width()` due to the pixel format
+    fn scan(&self, scan_line: usize) -> &[u8];
 
-        // modified width/height values if far sides of sprite are out of bounds
-        let mut mod_w = sprite.width;
-        let mut mod_h = sprite.height;
+    fn scan_mut(&mut self, scan_line: usize) -> &mut [u8];
 
-        let width = self.buff.info().width;
-        let height = self.buff.info().height;
-
-        // check sizes
-        if (x > width) || (y > height) {
-            // if x or y is out of bounds return.
-            // this is basically the behaviour it would have but with less steps
-            return;
-        }
-
-        // calculate and remove overscan
-        if (x + mod_w) > width {
-            mod_w = sprite.width - ((x - sprite.width) - width)
-        }
-        if (y + mod_h) > height {
-            mod_h = sprite.height - ((y - sprite.height) - height)
-        }
-
-        let data_width = self.buff.info().stride;
-        // used to calculate index within loop  because of borrow checker
-        let index = |coords: (usize, usize)| {
-            let mut i = data_width * coords.1; //get the start of the scan line
-            i += coords.0; // add offset of x
-
-            i
+    /// `other` will be copied into self at the given coordinates within self.
+    fn draw_into_self<T: NewSprite>(&mut self, other: &T, x: usize, y: usize) {
+        let do_width = {
+            // width in px
+            let base = self.width();
+            let chk = (x + other.width()).checked_sub(base);
+            let ret = chk.map_or(other.width(), |n| other.width().checked_sub(n).unwrap_or(0));
+            ret
         };
 
-        //get pix buff
-        let pix_buff = self.pix_buff_mut();
+        let do_height = {
+            let base = self.height();
+            let chk = (y + other.height()).checked_sub(base);
+            let ret = chk.map_or(other.height(), |n| {
+                other.height().checked_sub(n).unwrap_or(0)
+            });
+            ret
+        };
 
-        for scan in 0..mod_h {
-            let close_scan_start = index((coords.0, coords.1 + scan)); // first byte to write to
-            let far_scan_start = sprite.index_of((0, scan)); // first byte to read from
+        for (i, line) in (y..(do_height + y)).enumerate() {
+            // This looks big and complicated but it doesnt physically do much
+            let range = ..do_width * other.format().bytes_per_pixel() as usize;
+            let scan = other.scan(i);
+            let origin_raw = &scan[range];
 
-            pix_buff[close_scan_start..close_scan_start + mod_w]
-                .copy_from_slice(&sprite.data[far_scan_start..far_scan_start + mod_w])
+            let self_fmt = self.format();
+
+            reformat_px_buff(
+                origin_raw,
+                &mut self.scan_mut(line)[x * self_fmt.bytes_per_pixel() as usize
+                    ..(x + do_width) * self_fmt.bytes_per_pixel() as usize],
+                //[start_byte..start_byte + do_width * self.format().bytes_per_pixel() as usize],
+                other.format(),
+                self_fmt,
+            )
+            .expect(&format!(
+                "Failed to convert between Pixel types {:?} -> {:?}",
+                other.format(),
+                self.format()
+            ));
+        }
+    }
+}
+
+/// PixelFormat describes the order of bytes and number of bytes in a pixel. This is necessary because pixel formats are not known at compile time and may chane at runtime
+#[derive(Debug, Eq, PartialEq, Copy, Clone)]
+pub enum PixelFormat {
+    Bgr4Byte,
+    Bgr3Byte,
+    Grey1Byte,
+}
+
+impl PixelFormat {
+    const fn bytes_per_pixel(&self) -> u8 {
+        match self {
+            PixelFormat::Bgr4Byte => 4,
+            PixelFormat::Bgr3Byte => 3,
+            PixelFormat::Grey1Byte => 1,
         }
     }
 
-    /// Converts `mut &[u8]` given by self.buff.buffer() to `&[Bltpixel]`
-    ///
-    /// This should be safe but it probably isn't
-
-    pub fn pix_buff_mut(&mut self) -> &mut [BltPixel] {
-        let len = self.buff.buffer_mut().len();
-        let ptr = self.buff.buffer_mut().as_ptr() as usize;
-        // assert framebuffer geometry
-        assert_eq!(0, len % size_of::<BltPixel>());
-
-        let base = unsafe { &mut *(ptr as *mut BltPixel) };
-        // divide len by `size_of(BltPixel)` or buffer will be overrun
-        unsafe { from_raw_parts_mut(base, len / size_of::<BltPixel>()) }
+    const fn from_bootloader_info(
+        layout: bootloader_api::info::PixelFormat,
+        len: usize,
+    ) -> Option<Self> {
+        use bootloader_api::info::PixelFormat as FarFormat;
+        match (layout, len) {
+            (FarFormat::Bgr, 4) => Some(Self::Bgr4Byte),
+            (FarFormat::Bgr, 3) => Some(Self::Bgr3Byte),
+            (FarFormat::U8, 1) => Some(Self::Grey1Byte),
+            _ => None,
+        }
     }
+}
 
-    pub fn pix_buff(&self) -> &[BltPixel] {
-        let len = self.buff.buffer().len();
-        let ptr = self.buff.buffer().as_ptr() as usize;
-        // assert framebuffer geometry
-        assert_eq!(0, len % size_of::<BltPixel>());
+/// Copies `origin` into `dst` while converting the pixel format from `org_fmt` into `new_fmt`.
+/// Err(()) will be returned if `new_fmt` is Greyscale and `org_fmt` is **not** Greyscale. Info on
+/// why is in source.
+///
+/// # Panics
+///
+/// This fn will panic if origin and dst do not have the same length in pixels.
+///
+/// This fn cannot currently do most conversions,Greyscale can be converted into BGR formats and
+/// that's it, all other formats are planned.
+fn reformat_px_buff(
+    origin: &[u8],
+    dst: &mut [u8],
+    org_fmt: PixelFormat,
+    new_fmt: PixelFormat,
+) -> Result<(), ()> {
+    assert_eq!(
+        origin.len() / org_fmt.bytes_per_pixel() as usize,
+        dst.len() / new_fmt.bytes_per_pixel() as usize
+    );
+    match (org_fmt, new_fmt) {
+        (o, d) if o == d => {
+            dst.copy_from_slice(&origin[..dst.len()]);
+        }
 
-        let base = unsafe { &mut *(ptr as *mut BltPixel) };
-        // divide len by `size_of(BltPixel)` or buffer will be overrun
-        unsafe { from_raw_parts(base, len / size_of::<BltPixel>()) }
+        (PixelFormat::Grey1Byte, PixelFormat::Bgr3Byte) => {
+            for (i, p) in unsafe {
+                core::mem::transmute::<&[u8], &[pixel::PixGrey1Byte]>(origin)
+                    .iter()
+                    .enumerate()
+            } {
+                let bs_start = i * PixelFormat::Bgr3Byte.bytes_per_pixel() as usize;
+                let px: pixel::PixBgr3Byte = p.clone().into();
+                unsafe {
+                    px.copy_to_buff(
+                        &mut dst
+                            [bs_start..bs_start + PixelFormat::Bgr3Byte.bytes_per_pixel() as usize],
+                    )
+                }
+            }
+        }
+
+        (PixelFormat::Grey1Byte, PixelFormat::Bgr4Byte) => {
+            for (i, p) in unsafe {
+                core::mem::transmute::<&[u8], &[pixel::PixGrey1Byte]>(origin)
+                    .iter()
+                    .enumerate()
+            } {
+                let bs_start = i * PixelFormat::Bgr4Byte.bytes_per_pixel() as usize;
+                let px: pixel::PixBgr4Byte = p.clone().into();
+                unsafe {
+                    px.copy_to_buff(
+                        &mut dst
+                            [bs_start..bs_start + PixelFormat::Bgr4Byte.bytes_per_pixel() as usize],
+                    )
+                }
+            }
+        }
+
+        (PixelFormat::Bgr3Byte, PixelFormat::Bgr4Byte) => {
+            let arr = unsafe {
+                from_raw_parts(
+                    origin.as_ptr().cast::<pixel::PixBgr3Byte>(),
+                    origin.len() / PixelFormat::Bgr3Byte.bytes_per_pixel() as usize,
+                )
+            };
+            for (i, p) in arr.iter().enumerate() {
+                let bs_start = i * PixelFormat::Bgr4Byte.bytes_per_pixel() as usize;
+                let px: pixel::PixBgr4Byte = p.clone().into();
+                unsafe {
+                    px.copy_to_buff(
+                        &mut dst
+                            [bs_start..bs_start + PixelFormat::Bgr4Byte.bytes_per_pixel() as usize],
+                    )
+                }
+            }
+        }
+
+        // grayscale isn't just (r+g+b)/3 it needs floating point to do properly/easily
+        // see https://goodcalculators.com/rgb-to-grayscale-conversion-calculator/
+        (_, PixelFormat::Grey1Byte) => return Err(()),
+
+        (_, _) => todo!(),
     }
+    return Ok(());
+}
 
-    /// Scrolls the displayed image by `lines` upward
-    ///
-    /// values above `self.buff.info().vertical_resolution` will clear the screen
-    pub fn scroll_up(&mut self, lines: usize) {
-        if lines > self.buff.info().height {
-            self.clear();
-        } else {
-            let start = self.index_of((0, lines));
+/*
+fn reformat_px<D: pixel::Pixel, S: pixel::Pixel>(dst: &mut [D], src: &[S]) -> Result<(), ()> {
+    assert_eq!(src.len(), dst.len()); // check if size in px is equal
 
-            self.pix_buff_mut().copy_within(start.., 0)
+    match (D::layout(), S::layout()) {
+        (d, s) if d == s => dst.copy_from_slice(unsafe { &*(src as *const [S] as *const [D]) }),
+
+        (_, PixelFormat::Grey1Byte) => panic!("Cannot convert colour formats into Greyscale"),
+
+        (_, _) => {
+            for (dst, src) in core::iter::zip(dst, src) {
+                let fmt = D::from_pix_data(pix.pix_data());
+                *dst = *fmt;
+            }
         }
     }
 
-    /// Clears screen setting all pixels to black
+    Ok(())
+}
+ */
+
+pub struct FrameBuffer {
+    height: usize,
+    width: usize,
+    stride: usize,
+    format: PixelFormat,
+    data: &'static mut [u8],
+}
+
+impl FrameBuffer {
+    // TODO address buff as pixels
+    /// Scrolls currently displayed frame upward by `l` scan lines
+    pub fn scroll_up(&mut self, l: usize) {
+        let scroll_px = l * self.stride * self.format.bytes_per_pixel() as usize;
+
+        self.data.copy_within(scroll_px.., 0); // copies from `scroll_px..` to 0 (scroll_px becomes index 0)
+    }
+
+    #[inline]
+    pub fn clear_lines(&mut self, lines: core::ops::Range<usize>) {
+        for scan in lines {
+            // todo Does this need to be volatile? does it need to write as the specified format?
+            let start = scan * self.stride * self.format.bytes_per_pixel() as usize;
+
+            // todo use px type not u8
+            self.data[start..start + (self.width * self.format.bytes_per_pixel() as usize)]
+                .fill_with(|| 0);
+        }
+    }
+
+    #[inline]
     pub fn clear(&mut self) {
-        self.pix_buff_mut().fill_with(|| BltPixel::new(0, 0, 0))
+        self.data.fill_with(|| 0);
     }
 
-    /// Sets lines within \[line_start..line_end\] to BGR{0,0,0};
-    pub fn clear_lines(&mut self, line_start: usize, line_end: usize) {
-        let start_addr = self.index_of((0, line_start));
-        let end_addr = self.index_of((0, line_end));
-
-        self.pix_buff_mut()[start_addr..end_addr].fill_with(|| BltPixel::new(0, 0, 0))
+    pub fn info(&self) -> (usize, usize, usize, PixelFormat) {
+        (self.height, self.width, self.stride, self.format)
     }
 }
 
-impl DerefMut for GraphicalFrame {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.buff
-    }
-}
+impl From<bootloader_api::info::FrameBuffer> for FrameBuffer {
+    fn from(mut value: bootloader_api::info::FrameBuffer) -> Self {
+        let info = value.info();
 
-impl Deref for GraphicalFrame {
-    type Target = FrameBuffer;
+        {
+            let addr = value.buffer().as_ptr() as usize as u64;
+            let start_page = x86_64::structures::paging::Page::<x86_64::structures::paging::Size4KiB>::containing_address(x86_64::VirtAddr::new(addr));
+            let end_page = x86_64::structures::paging::Page::containing_address(
+                x86_64::VirtAddr::new(addr + value.buffer().len() as u64),
+            );
+            let range = x86_64::structures::paging::page::PageRangeInclusive {
+                start: start_page,
+                end: end_page,
+            };
+            let mut mapper = mem::SYS_MAPPER.get();
+            for page in range {
+                use x86_64::structures::paging::PageTableFlags;
+                unsafe {
+                    mapper
+                        .update_flags(
+                            page,
+                            PageTableFlags::PRESENT
+                                | PageTableFlags::WRITABLE
+                                | PageTableFlags::NO_CACHE
+                                | PageTableFlags::WRITE_THROUGH,
+                        )
+                        .unwrap()
+                        .flush();
+                }
+            }
+        }
 
-    fn deref(&self) -> &Self::Target {
-        &self.buff
-    }
-}
-
-/// represents a single pixel
-///
-/// _reserved byte is saved for copying as 32bit not 3x8bit
-#[repr(C)]
-#[derive(Copy, Clone)]
-pub struct BltPixel {
-    pub blue: u8,
-    pub green: u8,
-    pub red: u8,
-    _reserved: u8,
-}
-
-impl BltPixel {
-    /// Creates a new [BltPixel] from colour values
-    pub const fn new(red: u8, green: u8, blue: u8) -> Self {
         Self {
-            red,
-            green,
-            blue,
-            _reserved: 0,
-        }
-    }
-
-    /// Creates an array of \[BltPixel\] from an array of \[u8\]
-    /// where each pixel represented ad 3 bits
-    ///
-    /// Returns err(()) if data is not divisible by 3
-    pub fn new_arr_3b(data: &[u8]) -> Result<Vec<Self>, ()> {
-        //check alignment
-        if (data.len() % 3) != 0 {
-            return Err(());
-        }
-
-        let mut out = Vec::with_capacity(data.len() / 3);
-
-        for i in 0..data.len() / 3 {
-            let base = i * 3;
-            out.push(Self::new(data[base + 0], data[base + 1], data[base + 2]))
-        }
-        Ok(out)
-    }
-
-    /// Creates new \[Bltpixel\] using a greyscale format
-    ///
-    /// Bytes are interpreted as a scale between high and low where a byte set to `0xff` == high
-    /// i.e. to create a greyscale image low == Black and high == White. the value of &data will be the intensity
-    pub fn new_arr_greyscale(data: &[u8]) -> Result<Vec<Self>, ()> {
-        let mut out = Vec::with_capacity(data.len() / size_of::<BltPixel>());
-        for b in data {
-            out.push(BltPixel::new(*b, *b, *b));
-        }
-        Ok(out)
-    }
-
-    //todo include colour schemes like greyscale, 1bit with foreground/background colours
-}
-
-/// Struct to store graphical simple data
-#[derive(Clone)]
-pub struct Sprite {
-    pub height: usize,
-    pub width: usize,
-    data: Vec<BltPixel>,
-}
-
-impl Sprite {
-    /// Creates a new [Sprite]
-    /// using [BltPixel::new_arr_3b()]
-    ///
-    /// expects 24bit colour data within `data`
-    ///
-    /// returns `Err(())` if `data.len % 3 != 0`
-    pub fn new(height: usize, width: usize, data: &[u8]) -> Result<Self, ()> {
-        if let Ok(pixels) = BltPixel::new_arr_3b(data) {
-            Ok(Self {
-                height,
-                width,
-                data: pixels,
-            })
-        } else {
-            return Err(());
-        }
-    }
-
-    /// Creates [Sprite] from [BltPixel] in order to use non default Bltpixel constructors
-    pub fn from_bltpixel(height: usize, width: usize, data: &[BltPixel]) -> Self {
-        Self {
-            height,
-            width,
-            data: Vec::from(data),
+            height: info.height,
+            width: info.width,
+            stride: info.stride,
+            format: PixelFormat::from_bootloader_info(info.pixel_format, info.bytes_per_pixel)
+                .expect("Unsupported PixelFormat"),
+            // SAFETY: this is safe because the buffer is points to valid accessible unaliased memory.
+            data: unsafe { &mut *(value.buffer_mut() as *mut [u8]) },
         }
     }
 }
 
-/// Trait for quickly and cleanly addressing places within an array representing a grid
-///
-/// Functions within this trait will not check the bounds of the grid
-/// and will give erroneous results with erroneous inputs
-pub trait AddressableGrid {
-    /// Returns width of grid
-    fn self_width(&self) -> usize;
-
-    /// Returns array index of given coordinates
-    ///
-    /// Coordinates are represented as (x,y)
-    /// where `(0,0)` is the top left corner
-    fn index_of(&self, coords: (usize, usize)) -> usize {
-        let mut i = self.self_width() * coords.1; //get the start of the scan line
-        i += coords.0; // add offset of x
-
-        i
-    }
-
-    fn coords_of(&self, index: usize) -> (usize, usize) {
-        let y = index / self.self_width();
-        let x = index % self.self_width();
-        (x, y)
-    }
-}
-
-impl AddressableGrid for Sprite {
-    fn self_width(&self) -> usize {
+impl NewSprite for FrameBuffer {
+    #[inline]
+    fn width(&self) -> usize {
         self.width
     }
-}
 
-impl AddressableGrid for GraphicalFrame {
-    /// This may act a bit strange because it uses the stride of the framebuffer
-    /// not the width as the stride
-    fn self_width(&self) -> usize {
-        self.buff.info().stride
+    #[inline]
+    fn height(&self) -> usize {
+        self.height
+    }
+
+    #[inline]
+    fn format(&self) -> PixelFormat {
+        self.format
+    }
+
+    #[inline]
+    fn scan(&self, scan_line: usize) -> &[u8] {
+        let start = scan_line * self.stride;
+        &self.data[start..(start + self.width)]
+    }
+
+    fn scan_mut(&mut self, scan_line: usize) -> &mut [u8] {
+        let start = scan_line * self.stride;
+        &mut self.data[start..(start + self.width)]
+    }
+
+    fn draw_into_self<T: NewSprite>(&mut self, other: &T, x: usize, y: usize) {
+        let do_width = {
+            // width in px
+            let base = self.width;
+            let chk = (x + other.width()).checked_sub(base);
+            let ret = chk.map_or(other.width(), |n| other.width().checked_sub(n).unwrap_or(0));
+            ret
+        };
+
+        let do_height = {
+            let base = self.height;
+            let chk = (y + other.height()).checked_sub(base);
+            let ret = chk.map_or(other.height(), |n| {
+                other.height().checked_sub(n).unwrap_or(0)
+            });
+            ret
+        };
+
+        for (i, line) in (y..(do_height + y)).enumerate() {
+            let start_byte = (self.stride * line + x) * self.format.bytes_per_pixel() as usize;
+
+            // This looks big and complicated but it doesnt physically do much
+            let range = ..do_width * other.format().bytes_per_pixel() as usize;
+            let scan = other.scan(i);
+            let origin_raw = &scan[range];
+
+            reformat_px_buff(
+                origin_raw,
+                &mut self.data
+                    [start_byte..start_byte + do_width * self.format.bytes_per_pixel() as usize],
+                other.format(),
+                self.format,
+            )
+            .expect(&format!(
+                "Failed to convert between Pixel types {:?} -> {:?}",
+                other.format(),
+                self.format
+            ));
+        }
     }
 }
