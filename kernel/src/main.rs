@@ -72,14 +72,13 @@ fn kernel_main(b: &'static mut bootloader_api::BootInfo) -> ! {
     unsafe { interrupts::apic::get_apic().set_enable(true) }
 
     //initialize graphics
-    if let Some(buff) = b.framebuffer.as_mut() {
-        let mut g = graphics::GraphicalFrame { buff };
-        g.clear();
-        let tty = BasicTTY::new(g);
-
-        unsafe {
-            graphics::basic_output::WRITER = spin::Mutex::new(Some(tty));
-        }
+    if let Some(buff) =
+        core::mem::replace(&mut b.framebuffer, bootloader_api::info::Optional::None).into_option()
+    {
+        // take framebuffer to prevent aliasing
+        graphics::KERNEL_FRAMEBUFFER.init(graphics::FrameBuffer::from(buff));
+        graphics::KERNEL_FRAMEBUFFER.get().clear();
+        *graphics::basic_output::WRITER.lock() = Some(BasicTTY::new(&graphics::KERNEL_FRAMEBUFFER));
     };
 
     unsafe {
