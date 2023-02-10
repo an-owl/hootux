@@ -22,12 +22,20 @@ seems stupid.
 
 ### Actually building
 
-Hootux is built and run via the root crate which acts as a runner
+Hootux is built and run via the root crate which acts as a runner the built binaries can be found thi the `target` directory
 
  - `cargo build`          : will build the binaries normally without running
- - `cargo run -- --uefi`  : will boot hootux in qemu using ovmf firmware
- - `cargo run -- --bios`  : will boot hootux in qemu using legacy boot
- - `cargo run -- --help ` : will provide a help message with extra arguments and their usages
+
+### Running
+
+Hootux comes with a runner for running with qemu-system-x86_64 which can run bia the following commands.
+- `cargo run -- --uefi`  : will boot hootux in qemu using ovmf firmware
+- `cargo run -- --bios`  : will boot hootux in qemu using legacy boot
+- `cargo run -- --help ` : will provide a help message with extra arguments and their usages
+
+Booting with uefi firmware requires the `runcfg.toml` to be set correctly. It requires at the very least to be pointed 
+to a working uefi firmware image at the key `uefi.bios` This project will not provide a working firmware. I also 
+recommend setting an `uefi.vars` a efivars file. 
 
 ## TODO
 
