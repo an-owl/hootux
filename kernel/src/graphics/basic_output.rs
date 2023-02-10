@@ -101,10 +101,7 @@ impl BasicTTY {
     fn newline_inner(&mut self, fb: &mut LockedFb) {
         if self.cursor_y + 1 >= self.cursor_y_max {
             let l = self.char_height;
-
-            serial_println!("Scrolling up");
             fb.scroll_up(l);
-            serial_println!("Done scrolling up")
         } else {
             self.cursor_y += 1;
         }
