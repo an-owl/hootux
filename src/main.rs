@@ -1,14 +1,12 @@
 use getopts::{Fail, HasArg, Occur};
+use std::io::Read;
 use std::process::{Command, Stdio};
+use toml::value::Value;
 
 const QEMU: &str = "qemu-system-x86_64";
-const EDK: &str = "/usr/share/edk2/x64/OVMF_CODE.fd";
 
 static BRIEF: &str = r#"\
-Usage `cargo run -- [SUBCOMMAND] [OPTIONS]`
-Supported subcommands are:
-uefi: boots a uefi image using qemu
-bios: boots a bios image using qemu\
+Usage `cargo run -- [OPTIONS]`
 "#;
 
 /*
@@ -18,13 +16,15 @@ Return codes:
 2. Argument error
 4. Unable to locate firmware
 5. Unable to locate qemu
+0x1? toml misconfigured
 */
 
 fn main() {
     let opts = Options::get_args();
     opts.export();
+    let toml = opts.fetch_toml();
 
-    let mut qemu = if let Some(q) = opts.build_exec() {
+    let mut qemu = if let Some(q) = opts.build_exec(&toml) {
         q
     } else {
         std::process::exit(0)
@@ -32,7 +32,7 @@ fn main() {
 
     let mut children = Vec::new();
     let mut qemu_child = qemu.spawn().unwrap();
-    if let Some(mut c) = opts.run_debug() {
+    if let Some(mut c) = opts.run_debug(&toml) {
         children.push(c.spawn().unwrap());
     }
 
@@ -71,18 +71,22 @@ impl Subcommand {
     }
 }
 
+#[derive(Debug, Copy, Clone)]
+enum Debugger {
+    Lldb,
+    Gdb,
+}
+
 #[derive(Debug)]
 struct Options {
     subcommand: Subcommand,
     debug: bool,
     d_int: bool,
     serial: Option<String>,
-    launch_debug: Option<String>,
-    debug_args: Option<String>,
-    term: Option<String>,
+    launch_debug: Option<Debugger>,
     export: bool,
     export_path: Option<String>,
-    bios_path: Option<String>,
+    confg_path: String,
 }
 
 impl Options {
@@ -91,7 +95,7 @@ impl Options {
         opts.optflag(
             "d",
             "debug",
-            "pauses the the VM on startup with debug enabled on 'localhost:1234'",
+            "pauses the the VM on startup with debug enabled on 'localhost:1234'. This option is redundant if `--lldb` or `--gdb` is used",
         );
         opts.optflag("", "display-interrupts", "Display interrupts on stdout");
         opts.optflagopt("s", "serial", "Enables serial output, argument is directly given to qemu via `-serial [FILE]` defaults to stdio ", "FILE");
@@ -102,13 +106,8 @@ impl Options {
             "launches the specified debugger with the kernel binary as first argument",
             "DEBUG",
         );
-        opts.optopt(
-            "a",
-            "debug-args",
-            "specifies debug arguments hnded to the debugger",
-            "ARGS",
-        );
-        opts.optopt("t","terminal", "Sets which terminal window to open when the debugger is enabled (only konsole is supported at the moment)", "TERM");
+        opts.optflag("", "gdb", "Runs gdb alongside qemu");
+        opts.optflag("", "lldb", "Runs lldb alongside qemu");
         opts.opt(
             "e",
             "export",
@@ -125,6 +124,14 @@ impl Options {
             "--uefi [PATH]",
             HasArg::Maybe,
             Occur::Optional
+        );
+        opts.opt(
+            "",
+            "config",
+            " overrides the config used by the runner",
+            "--config [PATH]",
+            HasArg::Yes,
+            Occur::Optional,
         );
 
         let matches = match opts.parse(std::env::args_os()) {
@@ -162,27 +169,15 @@ impl Options {
             }
         };
 
-        let (subcommand, bios_path) = {
-            match (
-                matches.opt_present("uefi"),
-                matches.opt_present("bios"),
-                matches.opt_str("uefi"),
-            ) {
-                (true, true, _) => {
+        let subcommand = {
+            match (matches.opt_present("uefi"), matches.opt_present("bios")) {
+                (true, true) => {
                     eprintln!("Error: Attempted to run multiple run modes");
                     std::process::exit(1);
                 }
-                (true, false, Some(bios)) => (Subcommand::Uefi, Some(bios)),
-                (true, false, None) => {
-                    if std::path::Path::new(EDK).exists() {
-                        (Subcommand::Uefi, Some(EDK.to_string()))
-                    } else {
-                        eprintln!("Error unable to locate EDK firmware");
-                        std::process::exit(4);
-                    }
-                }
-                (false, true, _) => (Subcommand::Bios, None),
-                (false, false, bios) => (Subcommand::NoRun, bios), // bios may have a use in the future with NoRun
+                (true, false) => Subcommand::Uefi,
+                (false, true) => Subcommand::Bios,
+                (false, false) => Subcommand::NoRun, // bios may have a use in the future with NoRun
             }
         };
 
@@ -194,26 +189,114 @@ impl Options {
             }
         };
 
+        let debug = {
+            match (matches.opt_present("gdb"), matches.opt_present("lldb")) {
+                (true, true) => {
+                    eprintln!("Error: Tried to run gdb and lldb, aborting");
+                    std::process::exit(2);
+                }
+                (true, false) => Some(Debugger::Gdb),
+                (false, true) => Some(Debugger::Lldb),
+                (false, false) => None,
+            }
+        };
+
         Options {
             subcommand,
-            debug: matches.opt_present("debug"),
+            debug: debug.map_or_else(|| matches.opt_present("debug"), |_| true),
             d_int: matches.opt_present("display-interrupts"),
             serial,
-            launch_debug: matches.opt_str("launch-debugger"),
-            debug_args: matches.opt_str("debug-args"),
-            term: matches.opt_str("terminal"),
+            launch_debug: debug,
             export: matches.opt_present("e"),
             export_path: matches.opt_str("e"),
-            bios_path,
+            confg_path: matches
+                .opt_str("config")
+                .unwrap_or("runcfg.toml".to_string()),
+        }
+    }
+
+    fn fetch_toml(&self) -> Value {
+        if std::path::Path::new(&self.confg_path).exists() {
+            let mut f = std::fs::File::open(std::path::Path::new(&self.confg_path))
+                .expect(&format!("Failed to open config: {}", self.confg_path));
+            let mut s = String::new();
+            f.read_to_string(&mut s)
+                .expect(&format!("Failed to read config: {}", self.confg_path));
+
+            s.parse::<Value>()
+                .expect(&format!("Failed to parse {}'", self.confg_path))
+        } else {
+            eprintln!("Failed to locate config file: {}", self.confg_path);
+            std::process::exit(17);
         }
     }
 
     /// This fn may return a Command for QEMU.  
-    fn build_exec(&self) -> Option<Command> {
+    fn build_exec(&self, toml: &Value) -> Option<Command> {
         let mut qemu = self.subcommand.build_qemu()?;
+        let mut args = Vec::new();
 
-        if let Some(path) = &self.bios_path {
-            qemu.arg("-bios").arg(path);
+        let mut parse_args = |table| {
+            if let Some(Value::Array(arr)) = toml_fast(&toml, table + ".args") {
+                for i in arr {
+                    if let Value::String(s) = i {
+                        args.push(s);
+                    }
+                }
+            }
+        };
+
+        parse_args("common".to_string());
+
+        match self.subcommand {
+            Subcommand::Bios => {
+                parse_args("bios".to_string());
+            }
+
+            Subcommand::Uefi => {
+                if Subcommand::Uefi == self.subcommand {
+                    let bios = if let Some(Value::String(bios)) =
+                        toml_fast(toml, "uefi.bios".to_string())
+                    {
+                        if std::path::Path::new(bios).exists() {
+                            bios
+                        } else {
+                            eprintln!("Failed to locate bios at {}", bios);
+                            std::process::exit(4);
+                        }
+                    } else {
+                        eprintln!("Error: Key 'uefi.bios' not found or not string");
+                        std::process::exit(0x10);
+                    };
+
+                    let vars = if let Some(Value::String(vars)) =
+                        toml_fast(toml, "uefi.vars".to_string())
+                    {
+                        if std::path::Path::new(vars).exists() {
+                            Some(vars)
+                        } else {
+                            eprintln!("Failed to locate vars at {}", vars);
+                            std::process::exit(4);
+                        }
+                    } else {
+                        None
+                    };
+
+                    parse_args("uefi".to_string());
+
+                    qemu.arg("-drive")
+                        .arg(format!("if=pflash,format=raw,file={}", bios));
+                    if let Some(vars) = vars {
+                        qemu.arg("-drive")
+                            .arg(format!("if=pflash,format=raw,file={}", vars));
+                    }
+                }
+            }
+            Subcommand::NoRun => return None,
+        }
+
+        for i in args {
+            qemu.arg(i);
         }
 
         if self.debug {
@@ -273,27 +356,117 @@ impl Options {
         }
     }
 
-    fn run_debug(&self) -> Option<Command> {
-        let name = self.launch_debug.as_ref()?;
-        let term_name = self.term.as_ref().unwrap_or_else(|| {
-            eprintln!("debugger enabled without -t specified");
-            std::process::exit(3)
-        });
+    fn run_debug(&self, toml: &Value) -> Option<Command> {
+        let dbg = self.launch_debug?;
+        let mut term_args =
+            if let Some(Value::Array(args)) = toml_fast(toml, "debug.terminal".to_string()) {
+                Some(args.clone())
+            } else {
+                None
+            };
 
-        let dbg_args = self.debug_args.as_ref().unwrap_or(&String::new()).clone();
+        let dbg_path;
+        let mut dbg_args = None;
+        match dbg {
+            Debugger::Lldb => {
+                if let Some(Value::Array(term)) = toml_fast(toml, "debug.lldb.terminal".to_string())
+                {
+                    term_args = Some(term.clone())
+                };
 
-        let term = match &**term_name {
-            "konsole" => {
-                let mut term = Command::new("konsole");
-                term.arg("-e")
-                    .arg(format!("{name} {0:} {dbg_args}", env!("KERNEL_BIN")));
-                term
+                if let Some(Value::String(path)) = toml_fast(toml, "debug.lldb.path".to_string()) {
+                    dbg_path = path.clone()
+                } else {
+                    dbg_path = "lldb".to_string();
+                }
+
+                if let Some(Value::Array(dbg)) = toml_fast(toml, "debug.lldb.args".to_string()) {
+                    dbg_args = Some(dbg);
+                }
             }
-            t => {
-                eprintln!("Terminal {t} unsupported");
-                std::process::exit(4);
+            Debugger::Gdb => {
+                if let Some(Value::Array(term)) = toml_fast(toml, "debug.gdb.terminal".to_string())
+                {
+                    term_args = Some(term.clone())
+                };
+
+                if let Some(Value::String(path)) = toml_fast(toml, "debug.gdb.path".to_string()) {
+                    dbg_path = path.clone()
+                } else {
+                    dbg_path = "gdb".to_string();
+                }
+
+                if let Some(Value::Array(dbg)) = toml_fast(toml, "debug.gdb.args".to_string()) {
+                    dbg_args = Some(dbg);
+                } else {
+                }
             }
+        }
+
+        return if let Some(term) = term_args {
+            // if a terminal has been specified
+            let mut arg_arr = Vec::new();
+            for i in term {
+                if let Value::String(s) = i {
+                    arg_arr.push(s);
+                }
+            }
+
+            let mut command = Command::new(&arg_arr[0]);
+            for i in &arg_arr[1..] {
+                command.arg(i);
+            }
+
+            let mut dbg = dbg_path;
+            dbg += " ";
+            dbg += env!("KERNEL_BIN");
+            if let Some(dbg_args) = dbg_args {
+                for i in dbg_args {
+                    if let Value::String(s) = i {
+                        (dbg += " ");
+                        dbg += s;
+                    }
+                }
+            }
+
+            command.arg(dbg);
+            Some(command)
+        } else {
+            // if a terminal has not been specified
+            let mut command = Command::new(dbg_path);
+            command.arg(env!("KERNEL_BIN"));
+            if let Some(dbg_args) = dbg_args {
+                for i in dbg_args {
+                    if let Value::String(s) = i {
+                        command.arg(s);
+                    }
+                }
+            }
+
+            Some(command)
         };
-        Some(term)
     }
+}
+
+fn toml_fast(toml: &Value, path: String) -> Option<&Value> {
+    let split = path.split(".");
+    let mut path = Vec::new();
+    for i in split {
+        path.push(i.to_string());
+    }
+
+    let mut value = toml;
+    for (count, t_name) in path.iter().enumerate() {
+        if count == path.len() {
+            return Some(value);
+        }
+
+        if let Value::Table(table) = value {
+            let new_value = table.get(&*t_name)?;
+            value = new_value
+        } else {
+            return None;
+        }
+    }
+    Some(value)
 }

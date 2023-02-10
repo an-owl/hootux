@@ -1,0 +1,40 @@
+
+[common]
+#! Common is for common settings  shared by all launch types
+
+# Args are for generic args passed to qemu
+# be careful duplicates in any arg arrays will lead to actual duplicate args
+args = ["-machine","q35"]
+
+[uefi]
+#! Args given only to UEFI launches
+
+# sets bios and efivars locations isung -drive if=pflash,type=raw,file={}
+bios = "./qemu/OVMF_CODE.4m.fd"
+vars = "./qemu/OVMF_VARS.4m.fd"
+
+[bios]
+
+
+[debug]
+#! Config for launching with a debugger
+#! Note: Only some of these are used when a debugger is not specified this enables qemu to be restarted without
+#! starting a new debug session
+
+# Sets the terminal to be used with any args
+# The first argument will be used at the executable name
+# Without this the debugger will use the current session (not recomended because of -s option)
+terminal = ["/usr/bin/konsole","-e"]
+
+[debug.gdb]
+
+# Sets path to gdb (default: gdb)
+path = "/usr/bin/rust-gdb"
+# Sets optional launch args for qemu
+args = ["-ex", "'target remote localhost:1234'"]
+
+[debug.lldb]
+
+# Sets path to lldb (default: lldb)
+path = "/usr/bin/rust-lldb"
+
