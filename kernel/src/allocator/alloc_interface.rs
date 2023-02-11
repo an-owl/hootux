@@ -11,18 +11,27 @@ use x86_64::{
     PhysAddr, VirtAddr,
 };
 
-/// Used to Allocate Physical memory regions
+/// Used to Allocate Physical memory regions.
+///
+/// # Safety
+///
+/// Using this type is unsafe because it allows access to arbitrary regions of physical memory,
+/// which allows aliasing and mutation of read only memory.
+///
+/// MmioAlloc should **only** be used to access physical memory doing otherwise may lead to UB
+///
+/// The constructors for this struct are unsafe because [core::alloc::Allocator:: cannot make
 #[derive(Copy, Clone)]
 pub struct MmioAlloc {
     addr: usize,
 }
 
 impl MmioAlloc {
-    pub fn new(phys_addr: usize) -> Self {
+    pub unsafe fn new(phys_addr: usize) -> Self {
         Self { addr: phys_addr }
     }
 
-    pub fn new_from_phys_addr(phys_addr: PhysAddr) -> Self {
+    pub unsafe fn new_from_phys_addr(phys_addr: PhysAddr) -> Self {
         Self::new(phys_addr.as_u64() as usize)
     }
 
