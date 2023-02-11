@@ -1,5 +1,4 @@
 use super::*;
-use crate::serial_println;
 use core::fmt;
 use core::fmt::Write;
 use x86_64::instructions::interrupts::without_interrupts;
