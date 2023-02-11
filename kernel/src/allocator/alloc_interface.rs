@@ -97,4 +97,63 @@ unsafe impl Allocator for MmioAlloc {
             .lock()
             .virt_deallocate(ptr, layout);
     }
+
+    unsafe fn deallocate(&self, ptr: NonNull<u8>, layout: Layout) {
+        let pages = self.get_page_range(&layout, &ptr);
+
+        // align down to page boundary
+        let mut addr = ptr.as_ptr() as *mut u8 as usize;
+        addr &= !(mem::PAGE_SIZE - 1);
+
+        let ptr = NonNull::new(addr as *mut u8).expect("Tried to deallocate illegal address");
+
+        for page in pages {
+            mem::SYS_MAPPER
+                .get()
+                .unmap(page)
+                .expect("Tried to deallocate unhandled memory")
+                .1
+                .flush();
+        }
+
+        crate::allocator::COMBINED_ALLOCATOR
+            .lock()
+            .virt_deallocate(ptr, layout);
+    }
+
+    unsafe fn grow(
+        &self,
+        ptr: NonNull<u8>,
+        old_layout: Layout,
+        new_layout: Layout,
+    ) -> Result<NonNull<[u8]>, AllocError> {
+        // This fn does not require copying memory
+        self.deallocate(ptr, old_layout);
+        self.allocate(new_layout)
+    }
+
+    /// This fn will panic because the behaviour expected of this fn is likely to overwrite used memory
+    ///
+    /// use [Self::grow] instead and manually write zeros
+    unsafe fn grow_zeroed(
+        &self,
+        _ptr: NonNull<u8>,
+        _old_layout: Layout,
+        _new_layout: Layout,
+    ) -> Result<NonNull<[u8]>, AllocError> {
+        panic!(
+            "Called grow_zeroed() on {}: Not allowed",
+            core::any::type_name::<Self>()
+        )
+    }
+    unsafe fn shrink(
+        &self,
+        ptr: NonNull<u8>,
+        old_layout: Layout,
+        new_layout: Layout,
+    ) -> Result<NonNull<[u8]>, AllocError> {
+        // This fn does not require copying memory
+        self.deallocate(ptr, old_layout);
+        self.allocate(new_layout)
+    }
 }
