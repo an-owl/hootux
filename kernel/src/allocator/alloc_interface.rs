@@ -57,6 +57,13 @@ impl MmioAlloc {
         };
         pages
     }
+
+    /// Consumes self and returns a Box containing a `T`
+    pub unsafe fn boxed_alloc<T>(self) -> Result<alloc::boxed::Box<T, Self>, AllocError> {
+        let ptr = self.allocate(Layout::new::<T>())?.cast::<T>();
+        let b = alloc::boxed::Box::from_raw_in(ptr.as_ptr(), self);
+        Ok(b)
+    }
 }
 
 unsafe impl Allocator for MmioAlloc {
@@ -84,27 +91,12 @@ unsafe impl Allocator for MmioAlloc {
         Ok(self.offset_addr(ptr, layout.size()))
     }
 
-    unsafe fn deallocate(&self, ptr: NonNull<u8>, layout: Layout) {
-        let pages = self.get_page_range(&layout, &ptr);
-
-        // align down to page boundary
-        let mut addr = ptr.as_ptr() as *mut u8 as usize;
-        addr &= !(mem::PAGE_SIZE - 1);
-
-        let ptr = NonNull::new(addr as *mut u8).expect("Tried to deallocate illegal address");
-
-        for page in pages {
-            mem::SYS_MAPPER
-                .get()
-                .unmap(page)
-                .expect("Tried to deallocate unhandled memory")
-                .1
-                .flush();
-        }
-
-        crate::allocator::COMBINED_ALLOCATOR
-            .lock()
-            .virt_deallocate(ptr, layout);
+    /// See [Self::grow_zeroed]
+    fn allocate_zeroed(&self, _layout: Layout) -> Result<NonNull<[u8]>, AllocError> {
+        panic!(
+            "Called allocate_zeroed() on {}: Not allowed",
+            core::any::type_name::<Self>()
+        )
     }
 
     unsafe fn deallocate(&self, ptr: NonNull<u8>, layout: Layout) {
