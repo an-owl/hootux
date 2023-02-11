@@ -35,7 +35,7 @@ impl AcpiHandler for AcpiGrabber {
     }
 
     fn unmap_physical_region<T>(region: &PhysicalMapping<Self, T>) {
-        let alloc = MmioAlloc::new(region.physical_start());
+        let alloc = unsafe { MmioAlloc::new(region.physical_start()) };
         let start = region.virtual_start();
 
         unsafe {
@@ -336,7 +336,7 @@ pub(crate) mod data_access {
 
     impl DataAccess for MemoryAccess {
         fn new(addr: usize, size: DataSize) -> Self {
-            let alloc = MmioAlloc::new(addr);
+            let alloc = unsafe { MmioAlloc::new(addr) };
             let ptr = alloc
                 .allocate(Layout::from_size_align(size as u8 as usize, 1).unwrap()) // should not panic
                 .expect("allocation failed");

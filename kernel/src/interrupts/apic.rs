@@ -92,14 +92,14 @@ pub fn load_apic() {
     let apic;
     if (raw_cpuid::cpuid!(1).ecx >> 21) & 1 > 0 {
         // todo implement x2apic
-        let alloc = MmioAlloc::new_from_phys_addr(addr);
+        let alloc = unsafe { MmioAlloc::new_from_phys_addr(addr) };
         let mut sec = alloc
             .allocate(core::alloc::Layout::new::<xApic>())
             .expect("not enough memory")
             .cast::<xApic>();
         apic = unsafe { Box::from_raw_in(sec.as_mut(), alloc.into()) };
     } else {
-        let alloc = MmioAlloc::new_from_phys_addr(addr);
+        let alloc = unsafe { MmioAlloc::new_from_phys_addr(addr) };
         let mut sec = alloc
             .allocate(core::alloc::Layout::new::<xApic>())
             .expect("not enough memory")
