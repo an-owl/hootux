@@ -11,7 +11,8 @@ use x86_64::{
     PhysAddr, VirtAddr,
 };
 
-/// Used to Allocate Physical memory regions.
+/// Used to Allocate Physical memory regions. All allocations via this type are guaranteed to be the
+/// size of the allocation aligned up to [mem::PAGE_SIZE]
 ///
 /// # Safety
 ///
