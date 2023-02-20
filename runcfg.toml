@@ -4,7 +4,7 @@
 
 # Args are for generic args passed to qemu
 # be careful duplicates in any arg arrays will lead to actual duplicate args
-args = ["-machine","q35"]
+args = ["-machine","q35","--device","pcie-root-port"]
 
 [uefi]
 #! Args given only to UEFI launches

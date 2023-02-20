@@ -9,7 +9,10 @@
 extern crate alloc;
 
 use alloc::boxed::Box;
+use alloc::vec::Vec;
 use bootloader_api::entry_point;
+use core::alloc::{Allocator, Layout};
+use core::mem::{transmute, transmute_copy};
 use hootux::exit_qemu;
 use hootux::graphics::basic_output::BasicTTY;
 use hootux::interrupts::apic::Apic;
@@ -81,7 +84,7 @@ fn kernel_main(b: &'static mut bootloader_api::BootInfo) -> ! {
         *graphics::basic_output::WRITER.lock() = Some(BasicTTY::new(&graphics::KERNEL_FRAMEBUFFER));
     };
 
-    unsafe {
+    let acpi_tables = unsafe {
         let t = acpi::AcpiTables::from_rsdp(
             system::acpi::AcpiGrabber,
             *b.rsdp_addr.as_mut().unwrap() as usize,
@@ -91,7 +94,9 @@ fn kernel_main(b: &'static mut bootloader_api::BootInfo) -> ! {
         let pmtimer = fadt.pm_timer.expect("No PmTimer found");
         let timer = Box::new(time::acpi_pm_timer::AcpiTimer::locate(pmtimer));
         kernel_init_timer(timer);
-    }
+
+        t
+    };
     // temporary, until thread local segment is set up
     interrupts::apic::cal_and_run(0x20000, 50);
 
@@ -99,7 +104,17 @@ fn kernel_main(b: &'static mut bootloader_api::BootInfo) -> ! {
 
     say_hi();
 
-    debug!("Successfully initialized");
+    debug!("Successfully initialized Kernel");
+
+    log::info!("Scanning pcie bus");
+
+    let dev = {
+        let pci_cfg = acpi::mcfg::PciConfigRegions::new(&acpi_tables).unwrap();
+        system::pci::enumerate_devices(&pci_cfg);
+        v
+    };
+
+    log::info!("Bus scan complete");
 
     #[cfg(test)]
     test_main();
@@ -118,6 +133,40 @@ fn say_hi() {
     println!(r#" |( )/ "#);
     println!(r#" | " | "#);
     println!(r#" /    \"#);
+}
+
+#[repr(u8)]
+#[derive(Debug)]
+enum TestClass {
+    NetworkController(TestSubclass) = 2,
+    Bridge(BridgeSubclass) = 6,
+    DisplayDev(Display) = 3,
+}
+
+#[repr(u8)]
+#[derive(Debug)]
+enum BridgeSubclass {
+    HostBridge = 0,
+    Isa,
+    Na,
+}
+
+#[repr(u8)]
+#[derive(Debug)]
+enum Display {
+    Vga(VgaIf) = 0,
+}
+
+#[repr(u8)]
+#[derive(Debug)]
+enum VgaIf {
+    VgaCompat = 0,
+}
+
+#[repr(u8)]
+#[derive(Debug)]
+enum TestSubclass {
+    EthernetController = 0,
 }
 
 #[cfg(not(test))]

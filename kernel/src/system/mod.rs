@@ -1,3 +1,4 @@
-//! This module is for gathering and exposing system hardware information
+//! This module is for gathering and exposing system hardware and system metadata
 
 pub mod acpi;
+pub mod pci;
