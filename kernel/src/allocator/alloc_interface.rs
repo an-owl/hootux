@@ -159,3 +159,72 @@ unsafe impl Allocator for MmioAlloc {
         self.allocate(new_layout)
     }
 }
+
+/// Allocator interface for DMA regions. Allocates contiguous physical memory for a linear region.
+/// All allocations will be a minimum size and alignment of 4096.
+///
+/// To access regions which are already allocated use [MmioAlloc]
+pub struct DmaAlloc {
+    region: mem::buddy_frame_alloc::MemRegion,
+}
+
+impl DmaAlloc {
+    pub fn new(region: mem::buddy_frame_alloc::MemRegion) -> Self {
+        Self { region }
+    }
+}
+
+unsafe impl Allocator for DmaAlloc {
+    fn allocate(&self, layout: Layout) -> Result<NonNull<[u8]>, AllocError> {
+        let addr = super::COMBINED_ALLOCATOR.lock().virt_allocate(layout)?;
+        {
+            let start = addr.cast::<u8>().as_ptr() as usize as u64;
+            let end = unsafe { addr.as_ref().len() as u64 + start } - 1; // sub one to get last byte
+
+            let range = PageRangeInclusive {
+                start: Page::<Size4KiB>::containing_address(VirtAddr::new(start)),
+                end: Page::<Size4KiB>::containing_address(VirtAddr::new(end)),
+            };
+
+            // mem::mem_map cannot be used because DMA areas must be contiguous
+            let phys_addr = mem::SYS_FRAME_ALLOCATOR
+                .allocate(layout.size(), self.region)
+                .ok_or(AllocError)?;
+            let start = PhysAddr::new(phys_addr as u64);
+            let end = PhysAddr::new((phys_addr as u64 + layout.size() as u64) - 1);
+
+            let p_range = x86_64::structures::paging::frame::PhysFrameRangeInclusive {
+                start: x86_64::structures::paging::frame::PhysFrame::<Size4KiB>::containing_address(
+                    start,
+                ),
+                end: x86_64::structures::paging::frame::PhysFrame::<Size4KiB>::containing_address(
+                    end,
+                ),
+            };
+            let mut lock = mem::SYS_MAPPER.get();
+            for (p, f) in core::iter::zip(range, p_range) {
+                unsafe {
+                    lock.map_to(p, f, mem::mem_map::MMIO_FLAGS, &mut mem::DummyFrameAlloc)
+                        .unwrap()
+                        .flush()
+                };
+            }
+        }
+        Ok(addr)
+    }
+
+    unsafe fn deallocate(&self, ptr: NonNull<u8>, layout: Layout) {
+        let start = ptr.as_ptr() as usize;
+        let end = start + layout.size() - 1;
+
+        let range = PageRangeInclusive {
+            start: Page::containing_address(VirtAddr::new(start as u64)),
+            end: Page::containing_address(VirtAddr::new(end as u64)),
+        };
+
+        mem::mem_map::unmap_range(range);
+        super::COMBINED_ALLOCATOR
+            .lock()
+            .virt_deallocate(ptr, layout)
+    }
+}
