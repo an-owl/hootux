@@ -111,7 +111,6 @@ fn kernel_main(b: &'static mut bootloader_api::BootInfo) -> ! {
     let dev = {
         let pci_cfg = acpi::mcfg::PciConfigRegions::new(&acpi_tables).unwrap();
         system::pci::enumerate_devices(&pci_cfg);
-        v
     };
 
     log::info!("Bus scan complete");
@@ -133,40 +132,6 @@ fn say_hi() {
     println!(r#" |( )/ "#);
     println!(r#" | " | "#);
     println!(r#" /    \"#);
-}
-
-#[repr(u8)]
-#[derive(Debug)]
-enum TestClass {
-    NetworkController(TestSubclass) = 2,
-    Bridge(BridgeSubclass) = 6,
-    DisplayDev(Display) = 3,
-}
-
-#[repr(u8)]
-#[derive(Debug)]
-enum BridgeSubclass {
-    HostBridge = 0,
-    Isa,
-    Na,
-}
-
-#[repr(u8)]
-#[derive(Debug)]
-enum Display {
-    Vga(VgaIf) = 0,
-}
-
-#[repr(u8)]
-#[derive(Debug)]
-enum VgaIf {
-    VgaCompat = 0,
-}
-
-#[repr(u8)]
-#[derive(Debug)]
-enum TestSubclass {
-    EthernetController = 0,
 }
 
 #[cfg(not(test))]
