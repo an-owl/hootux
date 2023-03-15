@@ -179,7 +179,8 @@ impl BuddyHeapInner {
 
     /// Rejoins the described block into the free list, joining as many buddies as possible.
     fn rejoin(&mut self, addr: usize, order: usize) {
-        for i in order..ORDERS {
+        let mut use_ord = ORDERS - 1;
+        for i in order..ORDERS - 1 {
             let buddy = addr ^ Self::block_size(i);
 
             // just removing the buddy is fine enough
@@ -189,10 +190,11 @@ impl BuddyHeapInner {
             if let None = filter.next() {
                 // still calls Box::new
                 drop(filter);
-                self.free_list[i].push_front(addr);
+                use_ord = i;
                 break;
             }
         }
+        self.free_list[use_ord].push_front(addr)
     }
 }
 
