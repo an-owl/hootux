@@ -229,11 +229,56 @@ fn drain_map_inner(region: MemRegion) {
             }
         }
 
-        // Unlocks mutex, This is safe because MP is not started yet
         drop(map);
+
+        #[cfg(feature = "alloc-debug-serial")]
+        crate::serial_println!(
+            "Draining region {:?} starting: {:#x}, len: {:#x} end {:#x}",
+            region,
+            base,
+            len,
+            len + base
+        );
+
+        let f_alloc = super::SYS_FRAME_ALLOCATOR.get().frame_alloc.alloc.lock();
+
+        #[cfg(feature = "alloc-debug-serial")]
+        let cache = {
+            let mut cache = [0usize; ORDERS];
+            for (i, l) in region.list(&mut *f_alloc).free_list.iter().enumerate() {
+                cache[i] = l.len()
+            }
+            cache
+        };
+
+        drop(f_alloc);
 
         // SAFETY: region is given by frame allocator and is unused
         unsafe { super::SYS_FRAME_ALLOCATOR.dealloc(base, len) }
+
+        #[cfg(feature = "alloc-debug-serial")]
+        {
+            let mut f_alloc = super::SYS_FRAME_ALLOCATOR.get().frame_alloc.alloc.lock();
+            let mut new_len = [0usize; ORDERS];
+            for (i, l) in region.list(&mut *f_alloc).free_list.iter().enumerate() {
+                new_len[i] = l.len()
+            }
+            serial_println!("new: {:?}", new_len);
+            let mut diff = [0isize; ORDERS];
+
+            for (i, (c, n)) in core::iter::zip(cache, new_len).enumerate() {
+                diff[i] = (n - c) as isize
+            }
+
+            serial_println!("diff {:?}", diff);
+
+            let mut sum = 0;
+            for i in 0..ORDERS {
+                let mul = (super::PAGE_SIZE << i) as isize;
+                let n = diff[i] * mul;
+                sum = sum + n;
+            }
+        }
     }
 }
 
@@ -319,7 +364,8 @@ impl DmaRegion {
 
     /// Rejoins the described block into the free list, joining as many buddies as possible.
     fn rejoin(&mut self, addr: usize, order: usize) {
-        for i in order..ORDERS {
+        let mut use_ord = ORDERS - 1;
+        for i in order..ORDERS - 1 {
             let buddy = addr ^ Self::block_size(i);
 
             // just removing the buddy is fine enough
@@ -329,10 +375,11 @@ impl DmaRegion {
             if let None = filter.next() {
                 // still calls Box::new
                 drop(filter);
-                self.free_list[i].push_front(addr);
+                use_ord = i;
                 break;
             }
         }
+        self.free_list[use_ord].push_front(addr)
     }
 }
 
@@ -451,8 +498,9 @@ impl FrameAllocInner {
         assert_eq!(ptr & (PAGE_SIZE - 1), 0);
         assert_eq!(size & (PAGE_SIZE - 1), 0);
 
-        let mut ptr = DmaDecompose::new(ptr, size);
+        let mut ptr = self.align_region(DmaDecompose::new(ptr, size));
 
+        // drain
         loop {
             for order in (0..ORDERS).rev() {
                 let bs = PAGE_SIZE << order;
@@ -475,6 +523,41 @@ impl FrameAllocInner {
                 break;
             }
         }
+    }
+
+    /// Aligns `region` to the highest alignment it can, potentially reducing `region.size` to 0.
+    /// This is done by deallocating regions using [Self::dealloc]
+    ///
+    /// # Safety
+    ///
+    /// This fn calls [Self::dealloc] see source for details
+    unsafe fn align_region(&mut self, region: DmaDecompose) -> DmaDecompose {
+        let mut start = region.ptr;
+        let mut len = region.len;
+        if let Some(n) = region.remain_ptr {
+            len += n;
+        }
+
+        for order in 0..ORDERS - 1 {
+            // skip last order because its always aligned
+            let addr = start;
+            let r_size = PAGE_SIZE << order; // region size
+
+            // if region size is greater than actual size.
+            if r_size > len {
+                // The idea is this fn will provide a walk up for the region and another fn provides
+                // a walk down. if region size is greater than actual size then a walk down would be
+                // aligned already
+                break;
+            }
+
+            if r_size & addr != 0 {
+                self.dealloc(addr, r_size).unwrap(); // returning Err(()) is considered a bug
+                start += r_size;
+                len -= r_size;
+            }
+        }
+        DmaDecompose::new(start, len)
     }
 
     /// Deallocates the given memory returns the status of the deallocation.
@@ -527,6 +610,7 @@ struct DmaDecompose {
 impl DmaDecompose {
     const DMA16_MAX: usize = u16::MAX as usize;
     const DMA32_MAX: usize = u32::MAX as usize;
+
     fn new(ptr: usize, len: usize) -> Self {
         let last = ptr + len - 1;
         let use_type;
@@ -631,7 +715,7 @@ impl BuddyFrameAlloc {
 
     /// Attempts to allocate a region larger than `ORDER_MAX_SIZE`. This fn shouldn't be used
     /// normally it is required for DMA allocations larger than 2Mib
-    pub fn alloc_huge(&self, size: usize, region: MemRegion) -> Option<usize> {
+    pub fn alloc_huge(&self, size: usize, mut region: MemRegion) -> Option<usize> {
         assert!(
             size > ORDER_MAX_SIZE,
             "tried to allocate_huge where size is <2Mib"
@@ -641,8 +725,20 @@ impl BuddyFrameAlloc {
         if !alloc.is_fully_init {
             return None;
         }
-        let list = region.list(&mut *alloc).free_list.last_mut().unwrap(); // never none
-
+        let list = {
+            loop {
+                let chk_list = region.list(&mut *alloc).free_list.last_mut().unwrap(); // never none
+                if chk_list.len() == 0 {
+                    match region {
+                        MemRegion::Mem16 => return None,
+                        MemRegion::Mem32 => region = MemRegion::Mem16,
+                        MemRegion::Mem64 => region = MemRegion::Mem32,
+                    }
+                } else {
+                    break chk_list;
+                }
+            }
+        };
         let mut arr = alloc::vec::Vec::with_capacity(list.len());
 
         // ensure that list is not empty all
