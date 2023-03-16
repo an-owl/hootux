@@ -53,6 +53,9 @@ achieve them.
    - pci-e interface
      - preferably backward compatible
  - Enhance Allocator
+   - Add High level memory pool.
+     - Use linked list to store regions > ORDER_MAX_SIZE in buddy alloc as (start,len)
+     - Use similar system to store unused phys memory. store 2Mib aligned pool and 1Gib aligned pool. 
    - Add optimizations where possible
    - Allow allocations greater than 4Mib
  - BASIC shell
