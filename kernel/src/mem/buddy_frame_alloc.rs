@@ -763,7 +763,12 @@ impl BuddyFrameAlloc {
                 }
 
                 // if n == next expected block
-                Some(n) if n == (ORDER_MAX_SIZE * found_count) - *i => found_count += 1,
+                Some(n) if n == i - (ORDER_MAX_SIZE * found_count) => {
+                    found_count += 1;
+                    if req == found_count {
+                        break;
+                    }
+                }
 
                 _ => {
                     found = None;
