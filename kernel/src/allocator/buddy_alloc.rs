@@ -51,7 +51,8 @@ impl BuddyHeapInner {
     /// This fn will panic if the inferior allocator returns [core::alloc::AllocError], The
     /// caller should ensure that inferior has enough memory to run `bootstrap`
     fn bootstrap(&mut self) {
-        for i in 0..ORDERS {
+        // skip last order
+        for i in 0..ORDERS - 1 {
             let block_size = ORDER_ZERO_SIZE << i;
             let block = block_size ^ self.end;
             self.free_list[i].push_front(block);
