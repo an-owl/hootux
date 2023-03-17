@@ -78,6 +78,22 @@ impl BuddyHeapInner {
         self.mem_cnt.extend(len * ORDER_MAX_SIZE);
     }
 
+    /// Extends self by moving the end address by `len * ORDER_MAX_SIZE` returning region extended
+    fn extend_allocate(&mut self, len: usize) -> NonNull<[u8]> {
+        let ret = self.end;
+        self.end += len * ORDER_MAX_SIZE;
+
+        self.mem_cnt.extend(len * ORDER_MAX_SIZE);
+        // shouldn't panic
+        self.mem_cnt.reserve(len * ORDER_MAX_SIZE).unwrap();
+        // SAFETY: This is safe because ret is guaranteed to not be unused.
+        // new will never return None
+        NonNull::new(unsafe {
+            core::slice::from_raw_parts_mut(ret as *mut u8, len * ORDER_MAX_SIZE)
+        })
+        .unwrap()
+    }
+
     /// Manually extends self by [ORDER_MAX_SIZE] without requiring free space in within `self`.
     /// This is done by mapping a new page at the ned of the managed heap region, adding it to the
     /// inferior allocator, then performing buddy calculations to allocate the used page into `self`
@@ -120,6 +136,19 @@ impl BuddyHeapInner {
     const fn block_size(order: usize) -> usize {
         assert!(order <= ORDERS, "Order above allowed scope");
         ORDER_ZERO_SIZE << order
+    }
+
+    /// Returns a region by calling [Self::extend_allocate].
+    /// Calls to this should be avoided because it will cause memory to leak.
+    // todo: use a better solution
+    fn alloc_huge(&mut self, layout: Layout) -> Result<NonNull<[u8]>, AllocError> {
+        // I seriously just do not want to deal with this
+        if layout.align() > ORDER_MAX_SIZE {
+            return Err(AllocError);
+        }
+
+        let block_count = layout.size().div_ceil(ORDER_MAX_SIZE);
+        Ok(self.extend_allocate(block_count))
     }
 
     /// Retrieves a block of size `order`, splitting and extending the heap as necessary
@@ -204,13 +233,19 @@ unsafe impl super::HeapAlloc for BuddyHeap {
     fn virt_allocate(&self, layout: Layout) -> Result<NonNull<[u8]>, AllocError> {
         // calculate order from size.
         // SAFETY: This is safe because inner is only used within self
+        // what idiot write this ^^, its incorrect. this is only safe within a mutex
         let alloc = unsafe { &mut *self.inner.get() };
 
         let use_order = if let Some(n) = BuddyHeapInner::order_from_layout(layout) {
             n
         } else {
-            // todo handle sizes larger than `ORDER_MAX_SIZE`
-            return Err(AllocError);
+            return if layout.size() > ORDER_MAX_SIZE {
+                // if alloc size is huge
+                alloc.alloc_huge(layout)
+            } else {
+                // unknown err
+                Err(AllocError)
+            };
         };
 
         let block = alloc.fetch(use_order);
@@ -233,23 +268,37 @@ unsafe impl super::HeapAlloc for BuddyHeap {
         // SAFETY: This is safe because inner is only used within self
         let alloc = unsafe { &mut *self.inner.get() };
 
-        let order = BuddyHeapInner::order_from_layout(layout).expect("???");
-        let ptr = {
-            let mut ptr = ptr.as_ptr() as usize;
-            ptr &= !((ORDER_ZERO_SIZE << order) - 1);
-            NonNull::new(ptr as *mut u8).expect("Tried to deallocate illegal pointer")
+        if let Some(order) = BuddyHeapInner::order_from_layout(layout) {
+            let ptr = {
+                let mut ptr = ptr.as_ptr() as usize;
+                ptr &= !((ORDER_ZERO_SIZE << order) - 1);
+                NonNull::new(ptr as *mut u8).expect("Tried to deallocate illegal pointer")
+            };
+
+            // Ensure that ptr is within self's scope
+            assert!(ptr.as_ptr() as usize >= alloc.start);
+            assert!(ptr.as_ptr() as usize <= alloc.end);
+
+            alloc.rejoin(ptr.as_ptr() as usize, order);
+
+            alloc
+                .mem_cnt
+                .free(BuddyHeapInner::block_size(order))
+                .unwrap();
+        } else {
+            // huge deallocation
+            assert_eq!(
+                layout.size() % ORDER_ZERO_SIZE,
+                0,
+                "Misaligned huge deallocation"
+            );
+            let count = layout.size() / ORDER_MAX_SIZE;
+            let addr = ptr.as_ptr() as usize;
+            for block in 0..count {
+                let use_addr = (block * ORDER_MAX_SIZE) + addr;
+                alloc.rejoin(use_addr, ORDERS - 1) // always max order;
+            }
         };
-
-        // Ensure that ptr is within self's scope
-        assert!(ptr.as_ptr() as usize >= alloc.start);
-        assert!(ptr.as_ptr() as usize <= alloc.end);
-
-        alloc.rejoin(ptr.as_ptr() as usize, order);
-
-        alloc
-            .mem_cnt
-            .free(BuddyHeapInner::block_size(order))
-            .unwrap();
     }
 }
 
