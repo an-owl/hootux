@@ -137,7 +137,6 @@ impl InteriorAlloc {
 
 unsafe impl HeapAlloc for InteriorAlloc {
     fn virt_allocate(&self, layout: Layout) -> Result<NonNull<[u8]>, AllocError> {
-
         super::COMBINED_ALLOCATOR
             .lock()
             .superior
@@ -145,32 +144,23 @@ unsafe impl HeapAlloc for InteriorAlloc {
     }
 
     fn virt_deallocate(&self, ptr: NonNull<u8>, layout: Layout) {
-
         super::COMBINED_ALLOCATOR
             .lock()
-            .superior.
-            virt_deallocate(ptr, layout)
-
+            .superior
+            .virt_deallocate(ptr, layout)
     }
 }
 
 unsafe impl core::alloc::Allocator for InteriorAlloc {
     fn allocate(&self, layout: Layout) -> Result<NonNull<[u8]>, AllocError> {
-
-        super::COMBINED_ALLOCATOR
-            .lock()
-            .inferior
-            .allocate(layout)
-
+        super::COMBINED_ALLOCATOR.lock().inferior.allocate(layout)
     }
 
     fn allocate_zeroed(&self, layout: Layout) -> Result<NonNull<[u8]>, AllocError> {
-
         super::COMBINED_ALLOCATOR
             .lock()
             .inferior
             .allocate_zeroed(layout)
-
     }
 
     unsafe fn deallocate(&self, ptr: NonNull<u8>, layout: Layout) {
