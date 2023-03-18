@@ -700,24 +700,26 @@ impl BuddyFrameAlloc {
     ///
     /// If `size` is lower than [ORDER_MAX_SIZE] then allocations will be aligned to he next highest
     /// power of two. If `size` is above [ORDER_MAX_SIZE] allocations will be aligned to [ORDER_MAX_SIZE]
-    pub fn allocate(&self, size: usize, region: MemRegion) -> Option<usize> {
+    pub fn allocate(&self, layout: core::alloc::Layout, region: MemRegion) -> Option<usize> {
         let mut alloc = self.alloc.lock();
         if !alloc.is_fully_init {
             return MEM_MAP.get().alloc(region);
         }
+        let limit = layout.size().max(layout.align());
 
-        if size > ORDER_MAX_SIZE {
-            self.alloc_huge(size, region)
+        if limit > ORDER_MAX_SIZE {
+            self.alloc_huge(layout, region)
         } else {
-            alloc.allocate(size, region)
+            alloc.allocate(limit, region)
         }
     }
 
     /// Attempts to allocate a region larger than `ORDER_MAX_SIZE`. This fn shouldn't be used
     /// normally it is required for DMA allocations larger than 2Mib
-    pub fn alloc_huge(&self, size: usize, mut region: MemRegion) -> Option<usize> {
+    pub fn alloc_huge(&self, layout: core::alloc::Layout, mut region: MemRegion) -> Option<usize> {
+        let limit = layout.size().max(layout.align());
         assert!(
-            size > ORDER_MAX_SIZE,
+            limit > ORDER_MAX_SIZE,
             "tried to allocate_huge where size is <2Mib"
         );
 
@@ -751,15 +753,18 @@ impl BuddyFrameAlloc {
         arr.sort();
 
         // find available region
-        let req = size.div_ceil(ORDER_MAX_SIZE);
+        let req = layout.size().div_ceil(ORDER_MAX_SIZE);
         let mut found_count = 0;
+        let align_mask = layout.align() - 1;
         let mut found = None;
 
         for i in &arr {
             match found {
                 None => {
-                    found = Some(*i);
-                    found_count = 1;
+                    if i & align_mask == 0 {
+                        found = Some(*i);
+                        found_count = 1;
+                    }
                 }
 
                 // if n == next expected block
@@ -841,7 +846,10 @@ use x86_64::structures::paging::{
 
 unsafe impl<'a> FrameAllocator<Size4KiB> for FrameAllocRef<'a> {
     fn allocate_frame(&mut self) -> Option<PhysFrame<Size4KiB>> {
-        let addr = self.frame_alloc.allocate(0x1000, MemRegion::Mem64)?;
+        let addr = self.frame_alloc.allocate(
+            core::alloc::Layout::from_size_align(0x1000, 0x1000).unwrap(),
+            MemRegion::Mem64,
+        )?;
 
         Some(PhysFrame::from_start_address(PhysAddr::new(addr as u64)).unwrap())
     }
@@ -859,7 +867,10 @@ impl<'a> FrameDeallocator<Size4KiB> for FrameAllocRef<'a> {
 
 unsafe impl<'a> FrameAllocator<Size2MiB> for FrameAllocRef<'a> {
     fn allocate_frame(&mut self) -> Option<PhysFrame<Size2MiB>> {
-        let addr = self.frame_alloc.allocate(0x200000, MemRegion::Mem64)?;
+        let addr = self.frame_alloc.allocate(
+            core::alloc::Layout::from_size_align(0x200000, 0x200000).unwrap(),
+            MemRegion::Mem64,
+        )?;
 
         Some(PhysFrame::from_start_address(PhysAddr::new(addr as u64)).unwrap())
     }
@@ -877,7 +888,10 @@ impl<'a> FrameDeallocator<Size2MiB> for FrameAllocRef<'a> {
 
 unsafe impl<'a> FrameAllocator<Size1GiB> for FrameAllocRef<'a> {
     fn allocate_frame(&mut self) -> Option<PhysFrame<Size1GiB>> {
-        let addr = self.frame_alloc.allocate(0x40000000, MemRegion::Mem64)?;
+        let addr = self.frame_alloc.allocate(
+            core::alloc::Layout::from_size_align(0x40000000, 0x40000000).unwrap(),
+            MemRegion::Mem64,
+        )?;
 
         Some(PhysFrame::from_start_address(PhysAddr::new(addr as u64)).unwrap())
     }
