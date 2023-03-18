@@ -5,6 +5,7 @@
 
 use super::*;
 use crate::mem::buddy_frame_alloc::FrameAllocRef;
+use x86_64::structures::paging::mapper::TranslateError;
 use x86_64::structures::paging::{Mapper, PageTableFlags};
 
 /// Flags for Normal data in L1 (4K) pages.
@@ -127,5 +128,39 @@ where
         Err(err) => {
             panic!("{:?}", err)
         }
+    }
+}
+
+pub fn translate(addr: usize) -> Option<u64> {
+    let addr = VirtAddr::new(addr as u64);
+
+    {
+        // 4k
+        let page = Page::<Size4KiB>::containing_address(addr);
+        let offset = addr.as_u64() & (0x1000 - 1);
+        let ret = match SYS_MAPPER.get().translate_page(page) {
+            Err(TranslateError::ParentEntryHugePage) => {
+                let page = Page::<Size2MiB>::containing_address(addr);
+                let offset = addr.as_u64() & (0x200000 - 1);
+                match SYS_MAPPER.get().translate_page(page) {
+                    Err(TranslateError::ParentEntryHugePage) => {
+                        let page = Page::<Size1GiB>::containing_address(addr);
+                        let offset = addr.as_u64() & (0x40000000 - 1);
+                        SYS_MAPPER
+                            .get()
+                            .translate_page(page)
+                            .ok()?
+                            .start_address()
+                            .as_u64()
+                            + offset
+                    }
+
+                    r => r.ok()?.start_address().as_u64() + offset,
+                }
+            }
+            r => r.ok()?.start_address().as_u64() + offset,
+        };
+
+        Some(ret)
     }
 }
