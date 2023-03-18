@@ -163,14 +163,22 @@ unsafe impl Allocator for MmioAlloc {
 /// Allocator interface for DMA regions. Allocates contiguous physical memory for a linear region.
 /// All allocations will be a minimum size and alignment of 4096.
 ///
+/// This calls both the physical memory allocator and the linear memory allocator. Both will use the
+/// size given in `layout` however they may have different alignments. The alignment of the linear
+/// allocation is given in `layout` the alignment of the physical allocation is given in the constructor.
+///
 /// To access regions which are already allocated use [MmioAlloc]
 pub struct DmaAlloc {
     region: mem::buddy_frame_alloc::MemRegion,
+    phys_align: usize,
 }
 
 impl DmaAlloc {
-    pub fn new(region: mem::buddy_frame_alloc::MemRegion) -> Self {
-        Self { region }
+    /// Initialises self using the given memory region and alignment. `phys_align` must be a power of two
+    pub fn new(region: mem::buddy_frame_alloc::MemRegion, phys_align: usize) -> Self {
+        assert!(phys_align.is_power_of_two());
+        assert_ne!(phys_align, 0);
+        Self { region, phys_align }
     }
 }
 
@@ -188,7 +196,10 @@ unsafe impl Allocator for DmaAlloc {
 
             // mem::mem_map cannot be used because DMA areas must be contiguous
             let phys_addr = mem::SYS_FRAME_ALLOCATOR
-                .allocate(layout.size(), self.region)
+                .allocate(
+                    Layout::from_size_align(layout.size(), self.phys_align).unwrap(),
+                    self.region,
+                )
                 .ok_or(AllocError)?;
             let start = PhysAddr::new(phys_addr as u64);
             let end = PhysAddr::new((phys_addr as u64 + layout.size() as u64) - 1);
