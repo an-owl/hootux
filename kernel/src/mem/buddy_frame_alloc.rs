@@ -240,7 +240,11 @@ fn drain_map_inner(region: MemRegion) {
             len + base
         );
 
+        #[cfg(not(feature = "alloc-debug-serial"))]
         let f_alloc = super::SYS_FRAME_ALLOCATOR.get().frame_alloc.alloc.lock();
+
+        #[cfg(feature = "alloc-debug-serial")]
+        let mut f_alloc = super::SYS_FRAME_ALLOCATOR.get().frame_alloc.alloc.lock();
 
         #[cfg(feature = "alloc-debug-serial")]
         let cache = {
@@ -263,14 +267,14 @@ fn drain_map_inner(region: MemRegion) {
             for (i, l) in region.list(&mut *f_alloc).free_list.iter().enumerate() {
                 new_len[i] = l.len()
             }
-            serial_println!("new: {:?}", new_len);
+            crate::serial_println!("new: {:?}", new_len);
             let mut diff = [0isize; ORDERS];
 
             for (i, (c, n)) in core::iter::zip(cache, new_len).enumerate() {
                 diff[i] = (n - c) as isize
             }
 
-            serial_println!("diff {:?}", diff);
+            crate::serial_println!("diff {:?}", diff);
 
             let mut sum = 0;
             for i in 0..ORDERS {
