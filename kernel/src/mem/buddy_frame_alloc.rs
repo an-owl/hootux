@@ -195,14 +195,24 @@ pub fn drain_map() {
     //let f_alloc = super::SYS_FRAME_ALLOCATOR.alloc.lock();
     //for i in f_alloc.mem_16.free_list {}
 
-    assert!(!super::SYS_FRAME_ALLOCATOR.alloc.lock().is_fully_init);
+    crate::serial_println!("Draining memory map");
+    for i in MEM_MAP.get().list {
+        crate::serial_println!("{:x?}", i);
+    }
+
+    assert!(super::SYS_FRAME_ALLOCATOR
+        .alloc
+        .lock()
+        .is_fully_init
+        .is_none());
 
     // Must be in smallest -> largest order or alloc will try to return the wrong region
     drain_map_inner(MemRegion::Mem16);
+    super::SYS_FRAME_ALLOCATOR.alloc.lock().is_fully_init = Some(MemRegion::Mem16);
     drain_map_inner(MemRegion::Mem32);
+    super::SYS_FRAME_ALLOCATOR.alloc.lock().is_fully_init = Some(MemRegion::Mem32);
     drain_map_inner(MemRegion::Mem64);
-
-    super::SYS_FRAME_ALLOCATOR.alloc.lock().is_fully_init = true;
+    super::SYS_FRAME_ALLOCATOR.alloc.lock().is_fully_init = Some(MemRegion::Mem64);
 }
 
 /// Inner fn for `drain_map()` drains all of `MEM_MAP`'s region into `super::SYS_FRAME_ALLOC`
@@ -291,7 +301,7 @@ pub struct BuddyFrameAlloc {
 }
 
 struct FrameAllocInner {
-    is_fully_init: bool,
+    is_fully_init: Option<MemRegion>,
     mem_16: DmaRegion,
     mem_32: DmaRegion,
     mem_64: DmaRegion,
@@ -683,7 +693,7 @@ impl BuddyFrameAlloc {
     pub const fn new() -> Self {
         Self {
             alloc: ReentrantMutex::new(FrameAllocInner {
-                is_fully_init: false,
+                is_fully_init: None,
 
                 mem_16: DmaRegion {
                     free_list: [const { alloc::collections::LinkedList::new() }; ORDERS],
@@ -704,11 +714,29 @@ impl BuddyFrameAlloc {
     ///
     /// If `size` is lower than [ORDER_MAX_SIZE] then allocations will be aligned to he next highest
     /// power of two. If `size` is above [ORDER_MAX_SIZE] allocations will be aligned to [ORDER_MAX_SIZE]
-    pub fn allocate(&self, layout: core::alloc::Layout, region: MemRegion) -> Option<usize> {
+    pub fn allocate(&self, layout: core::alloc::Layout, mut region: MemRegion) -> Option<usize> {
         let mut alloc = self.alloc.lock();
-        if !alloc.is_fully_init {
-            return MEM_MAP.get().alloc(region);
+
+        match alloc.is_fully_init {
+            Some(MemRegion::Mem64) => {}
+            Some(r) => {
+                assert!(layout.align() <= 0x1000);
+                assert_eq!(layout.size(), 0x1000);
+                if let Some(ret) = MEM_MAP.get().alloc(region) {
+                    return Some(ret);
+                } else {
+                    if r < region {
+                        region = r
+                    }
+                }
+            }
+            None => {
+                assert!(layout.align() <= 0x1000);
+                assert_eq!(layout.size(), 0x1000);
+                return MEM_MAP.get().alloc(region);
+            }
         }
+
         let limit = layout.size().max(layout.align());
 
         if limit > ORDER_MAX_SIZE {
@@ -728,7 +756,7 @@ impl BuddyFrameAlloc {
         );
 
         let mut alloc = self.alloc.lock();
-        if !alloc.is_fully_init {
+        if alloc.is_fully_init.is_none() {
             return None;
         }
         let list = {
