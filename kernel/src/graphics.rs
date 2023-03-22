@@ -209,27 +209,6 @@ fn reformat_px_buff(
     return Ok(());
 }
 
-/*
-fn reformat_px<D: pixel::Pixel, S: pixel::Pixel>(dst: &mut [D], src: &[S]) -> Result<(), ()> {
-    assert_eq!(src.len(), dst.len()); // check if size in px is equal
-
-    match (D::layout(), S::layout()) {
-        (d, s) if d == s => dst.copy_from_slice(unsafe { &*(src as *const [S] as *const [D]) }),
-
-        (_, PixelFormat::Grey1Byte) => panic!("Cannot convert colour formats into Greyscale"),
-
-        (_, _) => {
-            for (dst, src) in core::iter::zip(dst, src) {
-                let fmt = D::from_pix_data(pix.pix_data());
-                *dst = *fmt;
-            }
-        }
-    }
-
-    Ok(())
-}
- */
-
 pub struct FrameBuffer {
     height: usize,
     width: usize,
@@ -244,7 +223,7 @@ impl FrameBuffer {
     pub fn scroll_up(&mut self, l: usize) {
         let scroll_px = l * self.stride * self.format.bytes_per_pixel() as usize;
 
-        self.data.copy_within(scroll_px.., 0); // copies from `scroll_px..` to 0 (scroll_px becomes index 0)
+        self.data.copy_within(scroll_px..self.last_px(), 0); // copies from `scroll_px..` to 0 (scroll_px becomes index 0)
     }
 
     #[inline]
@@ -259,9 +238,14 @@ impl FrameBuffer {
         }
     }
 
+    fn last_px(&self) -> usize {
+        self.stride * self.height * self.format.bytes_per_pixel() as usize
+    }
+
     #[inline]
     pub fn clear(&mut self) {
-        self.data.fill_with(|| 0);
+        let l = self.last_px();
+        self.data[..l].fill_with(|| 0);
     }
 
     pub fn info(&self) -> (usize, usize, usize, PixelFormat) {
