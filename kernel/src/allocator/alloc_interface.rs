@@ -69,7 +69,10 @@ impl MmioAlloc {
 
 unsafe impl Allocator for MmioAlloc {
     fn allocate(&self, layout: Layout) -> Result<NonNull<[u8]>, AllocError> {
-        let flags = PageTableFlags::PRESENT | PageTableFlags::WRITABLE | PageTableFlags::NO_EXECUTE; // huge page
+        let flags = PageTableFlags::PRESENT
+            | PageTableFlags::WRITABLE
+            | PageTableFlags::NO_EXECUTE
+            | PageTableFlags::NO_CACHE; // huge page
 
         let ptr = super::COMBINED_ALLOCATOR.lock().virt_allocate(layout)?;
 
@@ -86,7 +89,7 @@ unsafe impl Allocator for MmioAlloc {
                     .unwrap() // idk debug
                     .ignore(); // not mapped so not cached
             }
-            phys_frame = phys_frame + mem::PAGE_SIZE as u64;
+            phys_frame = phys_frame + 1;
         }
 
         Ok(self.offset_addr(ptr, layout.size()))
