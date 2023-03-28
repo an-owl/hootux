@@ -9,7 +9,7 @@ pub fn scan_advanced(mcfg: &PciConfigRegions) {
             break;
         }
     }
-    super::PCI_META.write().sort();
+    //super::PCI_META.write().sort();
 }
 
 fn scan_bus(mcfg: &PciConfigRegions, bus_group: u16, bus: u8) {
@@ -40,10 +40,13 @@ fn check_dev(mcfg: &PciConfigRegions, mut dev: DeviceControl) {
         scan_bus(mcfg, dev_addr.as_int().0, h.get_secondary_bus());
     }
 
+    /*
     super::PCI_META
         .write()
         .push(super::meta::MetaInfo::from(&dev));
-    super::PCI_DEVICES.write().insert(dev.address(), dev.into());
+
+     */
+    super::PCI_DEVICES.insert(dev.address(), crate::kernel_structures::Mutex::new(dev));
 }
 
 fn check_fns(mcfg: &PciConfigRegions, addr: super::DeviceAddress) {
