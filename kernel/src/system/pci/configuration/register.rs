@@ -211,19 +211,21 @@ impl BaseAddressRegister {
     }
 
     /// Writes the given physical address to the BAR truncating the address to the correct alignment
+    /// Returns the value read back from the register
     ///
     /// # Safety
     ///
     /// The caller must ensure the given address is a valid physical address and that the register is not 64bits long
     #[inline]
-    pub unsafe fn write(&mut self, addr: u32) {
+    pub unsafe fn write(&mut self, addr: u32) -> u32 {
         unsafe { core::ptr::write_volatile(&mut self.data, addr) }
+        self.read()
     }
 
     /// Reads the physical address in the register.
     pub fn read(&self) -> u32 {
         let data = unsafe { core::ptr::read_volatile(&self.data) };
-        return if data & 1 != 0 {
+        return if data & 1 == 0 {
             data & (!0xf)
         } else {
             data & (!3)
@@ -298,12 +300,14 @@ impl BarRegisterLong {
     }
 
     /// Writes the given physical address to the BAR truncating the address to the correct alignment
+    /// Returns the value read back from the register
     ///
     /// # Safety
     ///
     /// The caller must ensure the given address is a valid physical address and that the register is not 64bits long
-    pub unsafe fn write(&mut self, data: u64) {
+    pub unsafe fn write(&mut self, data: u64) -> u64 {
         unsafe { core::ptr::write_volatile(&mut self.inner, data) };
+        self.read()
     }
 
     /// Gets the alignment of the register. The alignemtn of the register can also be used ta the

@@ -1,10 +1,9 @@
-pub mod devclass;
 pub(super) mod register;
 
 use core::any::Any;
 use register::*;
 
-pub(crate) trait PciHeader: Any + Sync + Send {
+pub trait PciHeader: Any + Sync + Send {
     /// Returns the header type
     fn header_type(&self) -> HeaderType;
 
@@ -41,6 +40,18 @@ pub(crate) trait PciHeader: Any + Sync + Send {
     fn class(&self) -> [u8; 3];
 
     fn is_multi_fn(&self) -> bool;
+
+    fn capabilities(&self) -> Option<u8> {
+        None
+    }
+
+    /// Sets all flags given in `flags` to `state`.
+    ///
+    /// # Safety
+    ///
+    /// This fn is unsafe because if modifies a functions response to some actions. The caller must
+    /// ensure that these actions will not cause UB
+    unsafe fn update_control(&mut self, flags: CommandRegister, value: bool) -> CommandRegister;
 
     fn as_any(&self) -> &dyn Any;
 }
@@ -90,6 +101,13 @@ impl PciHeader for CommonHeader {
 
     fn is_multi_fn(&self) -> bool {
         self.header_type.is_multiple_functions()
+    }
+
+    unsafe fn update_control(&mut self, flags: CommandRegister, value: bool) -> CommandRegister {
+        let mut c = core::ptr::read_volatile(&self.command);
+        c.set(flags, value);
+        core::ptr::write_volatile(&mut self.command, c);
+        core::ptr::read_volatile(&self.command)
     }
 
     fn as_any(&self) -> &dyn Any {
@@ -171,6 +189,22 @@ impl PciHeader for GenericHeader {
 
     fn is_multi_fn(&self) -> bool {
         self.common.is_multi_fn()
+    }
+
+    fn capabilities(&self) -> Option<u8> {
+        if self
+            .common
+            .status
+            .contains(StatusRegister::CAPABILITES_LIST)
+        {
+            Some(self.capabilities_ptr as u8)
+        } else {
+            None
+        }
+    }
+
+    unsafe fn update_control(&mut self, flags: CommandRegister, value: bool) -> CommandRegister {
+        self.common.update_control(flags, value)
     }
 
     fn as_any(&self) -> &dyn Any {
@@ -259,6 +293,22 @@ impl PciHeader for BridgeHeader {
         self.common.is_multi_fn()
     }
 
+    fn capabilities(&self) -> Option<u8> {
+        if self
+            .common
+            .status
+            .contains(StatusRegister::CAPABILITES_LIST)
+        {
+            Some(self.capabilities_ptr as u8)
+        } else {
+            None
+        }
+    }
+
+    unsafe fn update_control(&mut self, flags: CommandRegister, value: bool) -> CommandRegister {
+        self.common.update_control(flags, value)
+    }
+
     fn as_any(&self) -> &dyn Any {
         self
     }
@@ -336,6 +386,10 @@ impl PciHeader for CardBusBridge {
 
     fn is_multi_fn(&self) -> bool {
         self.common.is_multi_fn()
+    }
+
+    unsafe fn update_control(&mut self, flags: CommandRegister, value: bool) -> CommandRegister {
+        self.common.update_control(flags, value)
     }
 
     fn as_any(&self) -> &dyn Any {
