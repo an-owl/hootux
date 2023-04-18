@@ -60,14 +60,16 @@ static mut CALI: Option<u64> = None;
 
 /// Interrupt handler used for calibrating the local APIC timer.
 fn handle_timer_and_calibrate() {
-    unsafe { CALI = Some(crate::time::get_sys_time()) }
-    apic_eoi();
+    unsafe {
+        CALI = Some(crate::time::get_sys_time());
+        apic_eoi();
+    }
 }
 
 /// Default timer handler. Updates system time then exits.
 fn timer_handler() {
     crate::time::update_timer();
-    apic_eoi();
+    unsafe { apic_eoi() };
 }
 
 /// Calibrates local APIC and sets interrupt handler.
@@ -76,9 +78,7 @@ pub fn cal_and_run(time: u32, vec: u8) {
     LOCAL_APIC.get().begin_calibration(time, vec);
 
     unsafe {
-        super::vector_tables::IHR
-            .set(vec, timer_handler)
-            .expect("???");
+        super::vector_tables::alloc_irq_special(vec, timer_handler).expect("???");
         LOCAL_APIC.get().init_timer(vec, false);
     };
 }
@@ -111,10 +111,14 @@ pub fn load_apic() {
     crate::WHO_AM_I.init(LOCAL_APIC.get().get_id());
 }
 
-/// Safely declares End Of Interrupt on apic devices, without potentially causing a deadlock.
+/// Declares End Of Interrupt on apic devices, without potentially causing a deadlock.
+///
+/// # Safety
+///
+/// This must not be called outside of an interrupt handler
 #[inline]
-fn apic_eoi() {
-    unsafe { LOCAL_APIC.force_get_mut().declare_eoi() }
+pub(crate) unsafe fn apic_eoi() {
+    LOCAL_APIC.force_get_mut().declare_eoi()
 }
 
 /// Returns an interface for the apic

@@ -139,3 +139,57 @@ impl InterruptIndex {
 }
 
 gen_interrupt_stubs!(34);
+
+/// Attempts to reserve `count` contiguous interrupts. Starting at `req_priority`.
+/// If `count` contiguous interrupts cannot be located this fn will return the next highest number
+/// of contiguous interrupts. The caller can then make a decision on how to reduce the number of IRQs requested.
+/// On success located IRQs will be set to reserved and the first IRQ number will be returned.
+/// `req_priority` will select
+///
+/// # Panics
+///
+/// This fn will panic if `count == 0`
+pub fn reserve_irq(req_priority: u8, count: u8) -> Result<u8, u8> {
+    assert!(count > 0);
+    let ihr = &vector_tables::IHR;
+    ihr.lock();
+
+    let n = ihr
+        .reserve_contiguous(req_priority.max(32), count) // vec[0..32] is reserved for exceptions
+        .map_err(|n| n)?;
+
+    ihr.free();
+
+    Ok(n)
+}
+
+/// Reserves a single irq without locking the IHR
+pub fn reserve_single(req_priority: u8) -> Option<u8> {
+    vector_tables::IHR.reserve_contiguous(req_priority, 1).ok()
+}
+
+/// Registers an interrupt handler to the given IRQ. This function will return `Ok(())` on success
+/// and `Err(())` if a handler is already registered to this IRQ.
+///
+/// # Deadlocks
+///
+/// This fn will cause a deadlock if an IRQ is requested on the CPU calling this fn.
+/// The caller must ensure that no interrupts will be triggered requesting this IRQ. This can be
+/// done by clearing the Interrupt Flag or disabling the device requesting the IRQ.
+///
+/// # Safety
+///
+/// This fn is unsafe because the caller must ensure that the queue is correctly handled by the task
+/// given by `tid`.
+pub unsafe fn alloc_irq(
+    irq: u8,
+    tid: alloc::sync::Arc<core::task::Waker>,
+    queue: &'static crate::task::InterruptQueue,
+    message: u64,
+) -> Result<(), ()> {
+    let handle = vector_tables::InterruptHandle::new(tid, queue, message);
+    vector_tables::IHR.set(
+        irq,
+        vector_tables::InterruptHandleContainer::Generic(handle),
+    )
+}

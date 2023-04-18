@@ -53,8 +53,8 @@ fn gen_interrupt_stubs_inner(num: u32) -> TokenStream2 {
             crate::interrupts::vector_tables::INT_LOG.log(#byte);
             }
 
-            if let Some(f) = *vector_tables::IHR.get(#byte).read() {
-                f();
+            if let Some(f) = vector_tables::IHR.get(#byte).read().callable() {
+                f.call();
             } else {
                 warn!("Unhandled interrupt at vector {}", #byte)
             }

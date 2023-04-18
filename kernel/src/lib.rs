@@ -15,6 +15,7 @@
 #![feature(drain_filter)]
 #![feature(linked_list_cursors)]
 #![feature(core_intrinsics)]
+#![feature(box_into_inner)]
 
 extern crate alloc;
 

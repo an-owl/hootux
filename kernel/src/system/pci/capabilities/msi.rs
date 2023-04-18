@@ -3,14 +3,59 @@ use crate::system::pci::capabilities::CapabilityId;
 use crate::system::pci::DeviceControl;
 use core::any::Any;
 
+pub(crate) fn get_next_msi_affinity() -> u8 {
+    static MSI_NEXT_AFFINITY: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
+
+    let count = MSI_NEXT_AFFINITY.fetch_add(1, atomic::Ordering::Relaxed);
+    let num_cpus = 1; // fixme actually get num of cpus
+    (count % (num_cpus.min(u8::MAX) as u64)) as u8 // mod of num cpus or u8::MAX whichever is lower (MSI can only use 8 bits of cpu address on x86)
+}
+
 pub struct MessageSigInt<'a> {
-    parent: &'a DeviceControl,
     control: &'a mut MsiControlBits,
     addr_low: &'a mut u32,
     addr_high: Option<&'a mut u32>,
     message: &'a mut u16,
-    mask: Option<&'a mut u32>,
-    pending: Option<&'a mut u32>,
+    pub mask: Option<MsiMaskBits<'a>>,
+    pub pending: Option<&'a mut u32>,
+}
+
+#[repr(transparent)]
+
+pub struct MsiMaskBits<'a> {
+    pub inner: volatile::Volatile<&'a mut u32>,
+}
+
+impl<'a> MsiMaskBits<'a> {
+    fn new(refer: &'a mut u32) -> Self {
+        Self {
+            inner: volatile::Volatile::new(refer),
+        }
+    }
+    /// Returns the value of the interrupt mask for the selected vector
+    pub fn get(&self, vector: u8) -> bool {
+        let mask = 1 << vector;
+        if mask & self.inner.read() == 0 {
+            false
+        } else {
+            true
+        }
+    }
+
+    /// Sets the mask for the selected vector
+    pub fn set(&mut self, vector: u8, value: bool) -> bool {
+        let mut t = self.inner.read();
+        let mask = 1 << vector;
+
+        if value {
+            t |= mask;
+        } else {
+            t &= !mask;
+        }
+
+        self.inner.write(t);
+        self.get(vector)
+    }
 }
 
 impl<'a> MessageSigInt<'a> {
@@ -71,7 +116,7 @@ impl<'a> MessageSigInt<'a> {
 
     /// Reads the interrupt Message from memory
     pub fn addr(&self) -> InterruptAddress {
-        let mut low = unsafe { core::ptr::read_volatile(self.addr_low) };
+        let low = unsafe { core::ptr::read_volatile(self.addr_low) };
         let high = if let Some(ad_high) = self.addr_high.as_ref() {
             unsafe { core::ptr::read_volatile(*ad_high) }
         } else {
@@ -87,12 +132,16 @@ impl<'a> MessageSigInt<'a> {
     }
 }
 
-impl<'a> super::Capability for MessageSigInt<'a> {
+impl<'a> super::Capability<'a> for MessageSigInt<'a> {
     fn id(&self) -> CapabilityId {
         CapabilityId::Msi
     }
 
-    fn any_mut(&mut self) -> &mut dyn Any {
+    fn boxed(self) -> alloc::boxed::Box<(dyn Any + 'a)> {
+        alloc::boxed::Box::new(self)
+    }
+
+    fn any_mut(&mut self) -> &mut (dyn Any + 'a) {
         self
     }
 }
@@ -198,7 +247,9 @@ impl<'a> TryFrom<&'a mut DeviceControl> for MessageSigInt<'a> {
         let message = unsafe { &mut *((base + 0x8 + higher_offset) as *mut u16) };
         let (mask, pending) = if control.contains(MsiControlBits::PER_VEC_MASK) {
             (
-                Some(unsafe { &mut *((base + 0xc + higher_offset) as *mut u32) }),
+                Some(MsiMaskBits::new(unsafe {
+                    &mut *((base + 0xc + higher_offset) as *mut u32)
+                })),
                 Some(unsafe { &mut *((base + 0x10 + higher_offset) as *mut u32) }),
             )
         } else {
@@ -206,7 +257,6 @@ impl<'a> TryFrom<&'a mut DeviceControl> for MessageSigInt<'a> {
         };
 
         Ok(Self {
-            parent: dev,
             control,
             addr_low,
             addr_high,
@@ -226,12 +276,16 @@ pub struct MessageSignaledIntX<'a> {
     pba_offset: u32,
 }
 
-impl<'a> super::Capability for MessageSignaledIntX<'a> {
+impl<'a> super::Capability<'a> for MessageSignaledIntX<'a> {
     fn id(&self) -> CapabilityId {
         CapabilityId::MsiX
     }
 
-    fn any_mut(&mut self) -> &mut dyn Any {
+    fn boxed(self) -> alloc::boxed::Box<(dyn Any + 'a)> {
+        alloc::boxed::Box::new(self)
+    }
+
+    fn any_mut(&'a mut self) -> &mut (dyn Any + 'a) {
         self
     }
 }
@@ -303,7 +357,7 @@ impl<'a> MessageSignaledIntX<'a> {
     pub fn get_pba(&self) -> PendingBitArray {
         let id = self.pba_bar;
         let size = self.control.table_size();
-        let offset = self.table_offset;
+        let offset = self.pba_offset;
 
         let bar = self.parent.bar.get(&id).unwrap();
         let slice = unsafe {
@@ -333,6 +387,26 @@ pub struct MsiXVectorEntry {
     address: InterruptAddress,
     message: InterruptMessage,
     control: MsiXVectorControl,
+}
+
+impl MsiXVectorEntry {
+    /// Sets the entries address and message.
+    ///
+    /// This fn does not conform to the normal read back method other functions use. This is because
+    /// MsiVector Entries exist in system memory not MMIO memory  
+    pub fn set_entry(&mut self, addr: InterruptAddress, message: InterruptMessage) {
+        unsafe {
+            core::ptr::write_volatile(&mut self.address, addr);
+            core::ptr::write_volatile(&mut self.message, message);
+        }
+    }
+
+    /// Sets the mask for `Self` to `value`
+    pub fn mask(&mut self, value: bool) {
+        let mut c = unsafe { core::ptr::read_volatile(&self.control) };
+        c.set(MsiXVectorControl::MASK, value);
+        unsafe { core::ptr::write_volatile(&mut self.control, c) }
+    }
 }
 
 pub struct PendingBitArray<'a> {
@@ -392,10 +466,6 @@ impl InterruptAddress {
     fn from_half(low: u32, high: u32) -> Self {
         Self(low as u64 + ((high as u64) << 32))
     }
-
-    pub(crate) fn raw(&self) -> u64 {
-        self.0
-    }
 }
 
 impl Into<u64> for InterruptAddress {
@@ -420,7 +490,7 @@ impl InterruptMessage {
     ///
     /// The recommendation is to set `mode` to `InterruptDeliveryMode::Fixed` and `level_trigger` to `false`
     #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
-    fn new(
+    pub fn new(
         vector: u8,
         mode: InterruptDeliveryMode,
         level_trigger: bool,
