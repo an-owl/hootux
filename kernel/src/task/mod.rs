@@ -7,7 +7,10 @@ pub mod executor;
 pub mod keyboard;
 pub mod simple_executor;
 
-//type Task = Pin<Box<dyn Future<Output = ()>>>;
+pub type InterruptQueue = crossbeam_queue::ArrayQueue<InterruptMessage>;
+
+#[derive(Copy, Clone, Debug)]
+pub struct InterruptMessage(pub u64);
 
 pub struct Task {
     id: TaskId,

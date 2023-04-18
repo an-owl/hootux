@@ -107,8 +107,7 @@ impl Apic for xApic {
 
     fn begin_calibration(&mut self, test_time: u32, vec: u8) {
         unsafe {
-            super::super::vector_tables::IHR
-                .set(vec, super::handle_timer_and_calibrate)
+            super::super::vector_tables::alloc_irq_special(vec, super::handle_timer_and_calibrate)
                 .expect("Vector already occupied");
 
             self.init_timer(50, false);

@@ -1,9 +1,11 @@
 pub mod msi;
 
-pub(crate) trait Capability {
+pub trait Capability<'a> {
     fn id(&self) -> CapabilityId;
 
-    fn any_mut(&mut self) -> &mut dyn core::any::Any;
+    fn boxed(self) -> alloc::boxed::Box<(dyn core::any::Any + 'a)>;
+
+    fn any_mut(&'a mut self) -> &mut (dyn core::any::Any + 'a);
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Ord, PartialOrd, Eq)]

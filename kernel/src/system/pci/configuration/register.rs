@@ -106,6 +106,8 @@ impl SelfTestRegister {
 }
 
 #[repr(u8)]
+#[allow(dead_code)]
+// This enum is cast to but never constructed (yet)
 pub enum InterruptPin {
     Disabled,
     IntA,

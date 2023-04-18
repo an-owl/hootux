@@ -10,7 +10,7 @@ use crate::allocator::alloc_interface::MmioAlloc;
 use crate::system::pci::configuration::{register::HeaderType, PciHeader};
 use core::{cmp::Ordering, fmt::Formatter};
 
-mod capabilities;
+pub mod capabilities;
 mod configuration;
 mod scan;
 
@@ -43,9 +43,8 @@ pub fn dev_count() -> usize {
 
 /// Attempts to lock a device function returns None is the device does not exist fr is not found.
 pub fn get_function<'a>(addr: DeviceAddress) -> Option<DeviceBinding<'a>> {
-    let dev = PCI_DEVICES.get(&addr)?;
     Some(DeviceBinding {
-        inner: dev.try_lock()?,
+        inner: PCI_DEVICES.get(&addr)?,
     })
 }
 
@@ -128,7 +127,33 @@ impl core::fmt::Debug for DeviceControl {
 }
 
 pub struct DeviceBinding<'a> {
+    inner: &'a crate::kernel_structures::mutex::Mutex<DeviceControl>,
+}
+
+impl<'a> DeviceBinding<'a> {
+    pub fn lock(&self) -> LockedDevice {
+        LockedDevice {
+            inner: self.inner.lock(),
+        }
+    }
+}
+
+pub struct LockedDevice<'a> {
     inner: crate::kernel_structures::mutex::MutexGuard<'a, DeviceControl>,
+}
+
+impl<'a> core::ops::Deref for LockedDevice<'a> {
+    type Target = DeviceControl;
+
+    fn deref(&self) -> &Self::Target {
+        &*self.inner
+    }
+}
+
+impl<'a> core::ops::DerefMut for LockedDevice<'a> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut *self.inner
+    }
 }
 
 impl PartialEq for DeviceControl {
@@ -252,6 +277,305 @@ impl DeviceControl {
         id: capabilities::CapabilityId,
     ) -> Option<&mut capabilities::CapabilityPointer> {
         self.capabilities.get_mut(&id)
+    }
+
+    pub fn get_cap_structure_mut<'a>(
+        &'a mut self,
+        id: capabilities::CapabilityId,
+    ) -> Option<alloc::boxed::Box<dyn capabilities::Capability + 'a>> {
+        match id {
+            capabilities::CapabilityId::Null => None, // but why? Null is never stored
+            capabilities::CapabilityId::PciPowerManagement => unimplemented!(),
+            capabilities::CapabilityId::Agp => unimplemented!(),
+            capabilities::CapabilityId::Vpd => unimplemented!(),
+            capabilities::CapabilityId::SlotId => unimplemented!(),
+            capabilities::CapabilityId::Msi => Some(alloc::boxed::Box::new(
+                capabilities::msi::MessageSigInt::try_from(self).ok()?,
+            )),
+            capabilities::CapabilityId::CompactPciHotSwap => unimplemented!(),
+            capabilities::CapabilityId::PciX => unimplemented!(),
+            capabilities::CapabilityId::HyperTransport => unimplemented!(),
+            capabilities::CapabilityId::VendorSpecific => unimplemented!(),
+            capabilities::CapabilityId::DebugPort => unimplemented!(),
+            capabilities::CapabilityId::CompactPCi => unimplemented!(),
+            capabilities::CapabilityId::PciHotPlug => unimplemented!(),
+            capabilities::CapabilityId::PciBridgeSubsystemVendorId => unimplemented!(),
+            capabilities::CapabilityId::Agp8x => unimplemented!(),
+            capabilities::CapabilityId::SecureDevice => unimplemented!(),
+            capabilities::CapabilityId::PciExpress => unimplemented!(),
+            capabilities::CapabilityId::MsiX => Some(alloc::boxed::Box::new(
+                capabilities::msi::MessageSignaledIntX::try_from(self).ok()?,
+            )),
+            capabilities::CapabilityId::SataDataIndexConfig => unimplemented!(),
+            capabilities::CapabilityId::AdvancedFeatures => unimplemented!(),
+            capabilities::CapabilityId::EnhancedAllocation => unimplemented!(),
+            capabilities::CapabilityId::FlatteningPortalBridge => unimplemented!(),
+            capabilities::CapabilityId::Reserved(_) => unimplemented!(),
+        }
+    }
+
+    /// This fn configures the PCI function interrupts. Interrupt handlers will be directed to wake
+    /// `tid` and push a message onto `queue`. The exact number of interrupt vectors can be set using
+    /// `override_count`. `override_count` is intended for driver that know that a function will use
+    /// fewer than the requested number of vectors.
+    ///
+    /// The message pushed to `queue` depends on the mechanism this fn configured the function to use.
+    ///  - If the function was configured with MSI the message is the vector number of the interrupt.
+    ///  - If the function was configured with MSI-X the message *should* be the vector number. If
+    /// the interrupts are coalesced some messages will be repeated. The exact messages will be
+    /// returned by the return value.
+    ///  - If the function was configured with Legacy Interrupts the message is undefined. The number
+    /// of messages is the number of times the interrupt was requested
+    ///
+    /// When `override_count == Some(_)` this fn will mask ignored interrupts when available
+    ///
+    /// # Panics
+    ///
+    /// This fn will panic if the value within `override_count` is greater than 2048
+    ///
+    /// # Safety
+    ///
+    /// The caller must ensure that any vector above `override_count` will never be triggered
+    pub unsafe fn cfg_interrupts(
+        &mut self,
+        waker: alloc::sync::Arc<core::task::Waker>,
+        queue: &'static crate::task::InterruptQueue,
+        override_count: Option<u16>,
+    ) -> CfgIntResult {
+        assert!(override_count.unwrap_or(0) > 2048);
+
+        if let Some(_) = self.capabilities.get(&capabilities::CapabilityId::MsiX) {
+            let ret = self.cfg_msi_x(waker.clone(), queue, override_count);
+            if ret.success() {
+                return ret;
+            }
+        }
+
+        if let Some(_) = self.capabilities.get(&capabilities::CapabilityId::Msi) {
+            // check if override count exceeds max vectors for msi
+            let oc = {
+                if let Some(n) = override_count {
+                    if n > 32 {
+                        None
+                    } else {
+                        Some(n)
+                    }
+                } else {
+                    None
+                }
+            };
+
+            let ret = self.cfg_msi(waker.clone(), queue, oc);
+            if ret.success() {
+                return ret;
+            }
+        }
+
+        self.cfg_legacy_int(waker, queue)
+    }
+
+    /// Configures MSI-X for the device function.
+    /// If there are not enough free interrupt vectors they will be reallocated to vectors in use by
+    /// this function. The expected message for each vector is given in the return value.
+    /// When this function raises an interrupt the task given in `tid` will be woken and a message
+    /// will be passed onto `queue`.
+    ///
+    /// When `override_count` is `Some(count)` and the value of `count` is lower than the number of
+    /// vectors that this function requests, Then all vectors above `count` will not be allocated.
+    /// All vectors that are ignored will be masked
+    ///
+    /// # Panics
+    ///
+    /// This fn will panic if `override_count.unwrap_or(0) > 2048`
+    fn cfg_msi_x(
+        &mut self,
+        waker: alloc::sync::Arc<core::task::Waker>,
+        queue: &'static crate::task::InterruptQueue,
+        override_count: Option<u16>,
+    ) -> CfgIntResult {
+        use capabilities::msi;
+        assert!(override_count.unwrap_or(0) > 2048);
+
+        let mut msi = {
+            match capabilities::msi::MessageSignaledIntX::try_from(self) {
+                Ok(r) => r,
+                Err(_) => return CfgIntResult::Failed,
+            }
+        };
+
+        //todo handle too many vectors
+        let vectors = {
+            let ts = msi.get_ctl().table_size();
+            if let Some(n) = override_count {
+                ts.min(n)
+            } else {
+                ts
+            }
+        };
+
+        // get vector count
+        let ihr = &crate::interrupts::vector_tables::IHR;
+        ihr.lock();
+        let free_count = ihr.get_free();
+
+        // determine how many IRQ vectors to use
+        let irq_count;
+        if free_count as u16 > vectors {
+            irq_count = vectors;
+        } else {
+            irq_count = 1;
+        }
+
+        // reserve IRQs
+        let mut reserved_irq = alloc::vec::Vec::with_capacity(irq_count as usize);
+        for _ in 0..irq_count {
+            // todo allow different priority
+            if let Some(n) = crate::interrupts::reserve_single(0) {
+                reserved_irq.push(n);
+            } else {
+                if reserved_irq.len() == 0 {
+                    return CfgIntResult::Failed;
+                } else {
+                    break;
+                }
+            }
+        }
+
+        // set handlers
+        for (i, n) in reserved_irq.iter().enumerate() {
+            unsafe {
+                crate::interrupts::alloc_irq(*n, waker.clone(), queue, i as u64)
+                    .expect("Failed to allocate reserved IRQ");
+            }
+        }
+
+        let mut ret = alloc::vec::Vec::with_capacity(vectors as usize);
+        for (i, e) in msi.get_vec_table_mut().iter_mut().enumerate() {
+            let loc_msg = i % reserved_irq.len();
+            let i_vec = reserved_irq[loc_msg];
+            e.set_entry(
+                msi::InterruptAddress::new(msi::get_next_msi_affinity()),
+                msi::InterruptMessage::new(i_vec, msi::InterruptDeliveryMode::Fixed, false, false),
+            );
+            e.mask(false);
+            ret.push(crate::task::InterruptMessage(loc_msg as u64));
+        }
+
+        if let Some(count) = override_count {
+            let t_count = msi.get_ctl().table_size();
+            if count < t_count {
+                for v in count..t_count {
+                    msi.get_vec_table_mut()[v as usize].mask(true)
+                }
+            }
+        }
+
+        CfgIntResult::SetMsiX(ret)
+    }
+
+    /// Configures MSI for the device function.
+    /// If enough interrupt vectors cannot be located the device functions interrupts will be coalesced.
+    /// Interrupts will cause the task with the id `tid` to be woken and ad a message will be pushed
+    /// onto the Interrupt queue.
+    /// The caller should ensure that the `queue` contains enough space for all messages that will
+    /// be passed to it before being processed.
+    /// Messages will contain the device functions vector number.
+    ///
+    /// If `override_count` is greater than the requested number of interrupts it will be ignored.
+    /// If `override_count` number of free IRQs cannot be located they will be coalesced into the
+    /// next lowest power of two.
+    ///
+    /// On success this fn will return [CfgIntResult::SetMsi]. [CfgIntResult::Failed] is returned
+    /// when there are no IRQs free.
+    ///
+    /// # Panics
+    ///
+    /// This fn will panic if `override_count > Some(32)`
+    ///
+    /// # Safety
+    ///
+    /// This function can be considered safe if `override_count == None`.
+    /// If `override_count == Some(_)` The caller must ensure that the device function will **never**
+    /// raise an interrupt above this value  
+    unsafe fn cfg_msi(
+        &mut self,
+        waker: alloc::sync::Arc<core::task::Waker>,
+        queue: &'static crate::task::InterruptQueue,
+        override_count: Option<u16>,
+    ) -> CfgIntResult {
+        use capabilities::msi;
+        assert!(override_count.unwrap_or(0) < 32);
+
+        let mut msi = match msi::MessageSigInt::try_from(self) {
+            Ok(r) => r,
+            Err(_) => return CfgIntResult::Failed,
+        };
+
+        let req_vec = msi
+            .get_control()
+            .requested_vectors()
+            .min(override_count.unwrap_or(u8::MAX as u16) as u8);
+
+        // locate vectors
+        let (irq, count);
+        {
+            let mut use_vectors = req_vec;
+            // Uses a loop because of MP
+
+            loop {
+                match crate::interrupts::reserve_irq(0, use_vectors) {
+                    Ok(n) => {
+                        count = use_vectors;
+                        irq = n;
+                        break;
+                    }
+                    Err(n) => {
+                        use_vectors = n.next_power_of_two() >> 1;
+                        assert!(use_vectors >= 32);
+                        if use_vectors == 0 {
+                            return CfgIntResult::Failed;
+                        }
+                    }
+                }
+            }
+        };
+
+        // set handler is IHR
+        for (i, irq) in (irq..irq + count).enumerate() {
+            crate::interrupts::alloc_irq(irq, waker.clone(), queue, i as u64)
+                .expect("Failed to allocate reserved IRQ")
+        }
+
+        msi.set_interrupt(
+            msi::InterruptAddress::new(msi::get_next_msi_affinity()),
+            msi::InterruptMessage::new(irq, msi::InterruptDeliveryMode::Fixed, false, false),
+        );
+
+        // Mask bits if available
+        if let Some(oc) = override_count {
+            if let Some(mut mask) = msi.mask {
+                let mut add_mask = 0;
+
+                // this can use the set method but this is faster
+                for vec in (oc as u8)..count {
+                    add_mask |= 1 << vec
+                }
+                let t = mask.inner.read();
+                add_mask |= t;
+                mask.inner.write(add_mask);
+            }
+        }
+
+        CfgIntResult::SetMsi(count, req_vec)
+    }
+
+    #[allow(unused_variables)]
+    unsafe fn cfg_legacy_int(
+        &mut self,
+        waker: alloc::sync::Arc<core::task::Waker>,
+        queue: &crate::task::InterruptQueue,
+    ) -> CfgIntResult {
+        unimplemented!()
     }
 }
 
@@ -633,28 +957,38 @@ impl<K: Ord, V> HwMap<K, V> {
         self.lock.lock();
         unsafe { &*self.map.get() }.get(key)
     }
-
-    fn get_mut(&self, key: &K) -> Option<&mut V> {
-        self.lock.lock();
-        unsafe { &mut *self.map.get() }.get_mut(key)
-    }
 }
 
 unsafe impl<K: Sync + Ord, V: Sync> Sync for HwMap<K, V> {}
 
-enum CfgIntResult {
-    SetMsi(u8),
-    SetMSix,
-    SetMsiCoalesced(u8),
+pub enum CfgIntResult {
+    /// Indicates the function was configured with MSI
+    /// Returns the number of vectors allocated and number of vectors requested by the function `(alloc,req)`.
+    /// A driver can use the values in this to know what messages to expect from interrupts.
+    SetMsi(u8, u8),
+
+    /// Indicates the function was configured with MSI-X.
+    /// The contained Vec contains message for each interrupt vector.
+    /// the index into the array is the interrupt vector as present in the function. the contained
+    /// value is the message bound to it.
+    /// Coalesced interrupts will have repeated messages. the driver must handle these appropriately
+    SetMsiX(alloc::vec::Vec<crate::task::InterruptMessage>),
+
+    /// Indicates that the device is configured with legacy interrupts.
+    /// In this mode the Interrupt messages only indicate mow many times this function has requested
+    /// an interrupt
     SetLegacy,
+
+    /// Indicates that the kernel failed to configure the function.
     Failed,
 }
 
-pub enum InterruptMethod {
-    /// Indicates the function is configured with MSI, Contains the requested interrupt count, and
-    /// the allocated interrupt count `(req,alloc)`
-    Msi(u8, u8),
-    /// Indicates the function is configured with MSI-X Contains the number of vectors
-    MsiX(u8),
-    Legacy,
+impl CfgIntResult {
+    fn success(&self) -> bool {
+        if let Self::Failed = self {
+            false
+        } else {
+            true
+        }
+    }
 }
