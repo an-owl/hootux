@@ -1,6 +1,6 @@
 fn main() {
     let out_dir = "./target/".to_string();
-    let kernel = if let Some(k) = std::env::var_os("CARGO_BIN_FILE_HOOTUX_hootux") {
+    let kernel = if let Some(k) = std::env::var_os("CARGO_BIN_FILE_HOOTUX_BIN") {
         k.into_string().unwrap()
     } else {
         eprintln!("CARGO_BIN_FILE_HOOTUX_hootux not found\n");
