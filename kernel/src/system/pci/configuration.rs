@@ -53,6 +53,12 @@ pub trait PciHeader: Any + Sync + Send {
     /// ensure that these actions will not cause UB
     unsafe fn update_control(&mut self, flags: CommandRegister, value: bool) -> CommandRegister;
 
+    /// Runs the built in self test for the device. If BIST is not available returns `Err(())`.  
+    fn self_test(&mut self) -> Result<(), ()>;
+
+    /// Checks the result of a self test
+    fn check_test(&self) -> Option<Result<u8, u8>>;
+
     fn as_any(&self) -> &dyn Any;
 }
 
@@ -108,6 +114,14 @@ impl PciHeader for CommonHeader {
         c.set(flags, value);
         core::ptr::write_volatile(&mut self.command, c);
         core::ptr::read_volatile(&self.command)
+    }
+
+    fn self_test(&mut self) -> Result<(), ()> {
+        self.self_test.run_test()
+    }
+
+    fn check_test(&self) -> Option<Result<u8, u8>> {
+        self.self_test.get_err()
     }
 
     fn as_any(&self) -> &dyn Any {
@@ -205,6 +219,14 @@ impl PciHeader for GenericHeader {
 
     unsafe fn update_control(&mut self, flags: CommandRegister, value: bool) -> CommandRegister {
         self.common.update_control(flags, value)
+    }
+
+    fn self_test(&mut self) -> Result<(), ()> {
+        self.common.self_test()
+    }
+
+    fn check_test(&self) -> Option<Result<u8, u8>> {
+        self.common.check_test()
     }
 
     fn as_any(&self) -> &dyn Any {
@@ -309,6 +331,14 @@ impl PciHeader for BridgeHeader {
         self.common.update_control(flags, value)
     }
 
+    fn self_test(&mut self) -> Result<(), ()> {
+        self.common.self_test()
+    }
+
+    fn check_test(&self) -> Option<Result<u8, u8>> {
+        self.common.check_test()
+    }
+
     fn as_any(&self) -> &dyn Any {
         self
     }
@@ -390,6 +420,14 @@ impl PciHeader for CardBusBridge {
 
     unsafe fn update_control(&mut self, flags: CommandRegister, value: bool) -> CommandRegister {
         self.common.update_control(flags, value)
+    }
+
+    fn self_test(&mut self) -> Result<(), ()> {
+        self.common.self_test()
+    }
+
+    fn check_test(&self) -> Option<Result<u8, u8>> {
+        self.common.check_test()
     }
 
     fn as_any(&self) -> &dyn Any {

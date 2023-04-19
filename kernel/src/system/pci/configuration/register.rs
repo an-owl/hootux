@@ -94,13 +94,30 @@ bitflags::bitflags! {
 }
 
 impl SelfTestRegister {
-    /// Gets the error code of the last test. This does not wait for the test to complete
-    /// Returns `Some(err)` on error
-    pub fn get_err(&self) -> Option<u8> {
-        let d = self.bits;
-        match d & 0xf {
-            0 => None,
-            e => Some(e),
+    /// Starts a Self test. If the device the `TEST_RUN` bit is not set to `0` within 2 seconds the
+    /// device is considered failed. TRReturns `Err(())` if BIST is not available.
+    pub fn run_test(&mut self) -> Result<(), ()> {
+        // This is safe because self is read by reference not raw ptr
+        let mut t = unsafe { core::ptr::read_volatile(self) };
+        if t.contains(Self::CAPABLE) {
+            t.set(Self::TEST_RUN, true);
+            unsafe { core::ptr::write_volatile(self, t) }
+            Ok(())
+        } else {
+            Err(())
+        }
+    }
+    /// Gets the error code of the last test. Returns None if a test is currently running. Returns
+    /// the error code in a `Result<u8,u8>`. `Ok()` Indicates a return code of `0`.
+    pub fn get_err(&self) -> Option<Result<u8, u8>> {
+        let t = unsafe { core::ptr::read_volatile(self) };
+        if t.contains(Self::TEST_RUN) {
+            return None;
+        } else {
+            match t.bits & 7 {
+                0 => Some(Ok(0)),
+                e => Some(Err(e)),
+            }
         }
     }
 }
@@ -263,38 +280,6 @@ pub struct BarRegisterLong {
 }
 
 impl BarRegisterLong {
-    /// Safely constructs a mutable reference to Self using two [BaseAddressRegister].
-    ///
-    /// # Panics
-    ///
-    /// This fn will panic under the following conditions.
-    /// - `low` is a 32bit register
-    /// - `high` is not located the address `low + 4`
-    fn new<'a>(
-        low: &'a mut BaseAddressRegister,
-        high: &'a mut BaseAddressRegister,
-    ) -> &'a mut Self {
-        let low_addr = low as *mut _ as usize;
-        let high_addr = high as *mut _ as usize;
-        let bar_type = low.bar_type();
-
-        assert!(
-            (bar_type == BarType::Qword(true)) || (bar_type == BarType::Qword(false)),
-            "Failed to construct {} using BAR `low` type: {:?}",
-            core::any::type_name::<Self>(),
-            bar_type
-        );
-        assert_eq!(
-            low_addr + core::mem::size_of::<BaseAddressRegister>(),
-            high_addr,
-            "Unexpected BAR address for `high`; Expected {} found {}",
-            low_addr + core::mem::size_of::<BaseAddressRegister>(),
-            high_addr
-        );
-
-        unsafe { &mut *(low as *mut _ as *mut Self) }
-    }
-
     /// Reads the register masking the configuration bits
     pub fn read(&self) -> u64 {
         let d = unsafe { core::ptr::read_volatile(&self.inner) };

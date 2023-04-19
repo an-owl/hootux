@@ -577,6 +577,24 @@ impl DeviceControl {
     ) -> CfgIntResult {
         unimplemented!()
     }
+
+    /// Runs a self test. If the function does not support self test returns `Err(())`
+    pub fn run_bist(&mut self) -> Result<(), ()> {
+        self.header.self_test()
+    }
+
+    /// Attempts to get the result of a self test.
+    /// This fn will return `None` is a test is still running. If no test is running the result code is returned.
+    /// If `Ok(_)` is returned the function is working correctly.
+    /// If `Err(_)` the device is not working correctly and the caller should take action.
+    /// The exact values of the return codes are device specific.
+    /// If a test has not ended after 2 seconds the device function can be considered failed.
+    ///
+    /// note: THe built in self test does not generate an interrupt and this function must therefore
+    /// be polled.
+    pub fn check_self_test(&self) -> Option<Result<u8, u8>> {
+        self.header.check_test()
+    }
 }
 
 // Because of how BARS need to be used they are interacted with using DeviceControl not their own
