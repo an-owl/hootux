@@ -195,11 +195,6 @@ pub fn drain_map() {
     //let f_alloc = super::SYS_FRAME_ALLOCATOR.alloc.lock();
     //for i in f_alloc.mem_16.free_list {}
 
-    crate::serial_println!("Draining memory map");
-    for i in MEM_MAP.get().list {
-        crate::serial_println!("{:x?}", i);
-    }
-
     assert!(super::SYS_FRAME_ALLOCATOR
         .alloc
         .lock()
