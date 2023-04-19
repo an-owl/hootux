@@ -9,10 +9,7 @@
 extern crate alloc;
 
 use alloc::boxed::Box;
-use alloc::vec::Vec;
 use bootloader_api::entry_point;
-use core::alloc::{Allocator, Layout};
-use core::mem::{transmute, transmute_copy};
 use hootux::exit_qemu;
 use hootux::graphics::basic_output::BasicTTY;
 use hootux::interrupts::apic::Apic;
@@ -108,10 +105,9 @@ fn kernel_main(b: &'static mut bootloader_api::BootInfo) -> ! {
 
     log::info!("Scanning pcie bus");
 
-    let dev = {
-        let pci_cfg = acpi::mcfg::PciConfigRegions::new(&acpi_tables).unwrap();
-        system::pci::enumerate_devices(&pci_cfg);
-    };
+    // move into task
+    let pci_cfg = acpi::mcfg::PciConfigRegions::new(&acpi_tables).unwrap();
+    system::pci::enumerate_devices(&pci_cfg);
 
     log::info!("Bus scan complete");
 
