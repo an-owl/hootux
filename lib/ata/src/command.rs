@@ -130,3 +130,138 @@ pub enum SanitiseSubcommand {
     SANITIZE_FREEZE_LOCK_EXT = 0x20,
     SANITIZE_ANTIFREEZE_LOCK_EXT = 0x40,
 }
+
+pub mod constructor {
+    use crate::command::AtaCommand;
+
+    /// A composed command contains all the fields required to issue a command.
+    /// A field containing none is not defined at the ATA level and must be set by the driver.
+    /// A field containing `Some(_)` may be modified, but this may result in errors from the device.
+    ///
+    /// Some unused fields may be left as None when the command is Opaque. In this case see
+    /// [super::AtaCommand] for their usage.
+    #[derive(Copy, Clone, Debug)]
+    pub struct ComposedCommand {
+        pub command: MaybeOpaqueCommand,
+        pub feature: Option<u16>,
+        pub count: Option<u16>,
+        pub lba: Option<u64>,
+        pub device: Option<u8>,
+        pub icc: Option<u8>,
+        pub aux: Option<u32>,
+    }
+
+    impl ComposedCommand {
+        fn zeroed(cmd: MaybeOpaqueCommand) -> Self {
+            Self {
+                command: cmd,
+                feature: Some(0),
+                count: Some(0),
+                lba: Some(0),
+                device: Some(0),
+                icc: Some(0),
+                aux: Some(0),
+            }
+        }
+
+        fn empty(cmd: MaybeOpaqueCommand) -> Self {
+            Self {
+                command: cmd,
+                feature: None,
+                count: None,
+                lba: None,
+                device: None,
+                icc: None,
+                aux: None,
+            }
+        }
+        /// Returns true if the command is a 48bit command of if the command is a concrete command,
+        /// otherwise returns false.
+        ///
+        /// if false the feature, and count can be treated as a u8 and lba can be treated asa u32
+        /// where only the first 24 bits are valid.
+        pub fn is_48_bit(&self) -> bool {
+            if let MaybeOpaqueCommand::Concrete(_) = self.command {
+                return true;
+            }
+
+            if let Some(n) = self.feature.as_ref() {
+                if *n > u8::MAX as u16 {
+                    return true;
+                }
+            } else if let Some(n) = self.count.as_ref() {
+                if *n > u8::MAX as u16 {
+                    return true;
+                }
+            } else if let Some(n) = self.lba.as_ref() {
+                if *n > 0xfff_ffff {
+                    return true;
+                }
+            }
+
+            false
+        }
+    }
+
+    /// Contains either an [AtaCommand] or an [OpaqueCommand]. This allows [ComposedCommand]s to not need
+    /// to specify an exact command when a driver may want to specify the exact behaviour of a command
+    /// i.e. a driver can choose to use a NCQ read instead of a regular read.
+    pub enum MaybeOpaqueCommand {
+        Concrete(AtaCommand),
+        Opaque(OpaqueCommand),
+    }
+
+    pub enum OpaqueCommand {
+        Read,
+        Write,
+    }
+
+    pub trait CommandConstructor {
+        fn compose(self) -> ComposedCommand;
+    }
+
+    struct SpanningCmd {
+        cmd: SpanningCmdType,
+        lba: u64,
+        count: u16,
+    }
+
+    impl CommandConstructor for SpanningCmd {
+        fn compose(self) -> ComposedCommand {
+            let mut cmd = ComposedCommand::empty(self.cmd.into());
+            match self.cmd {
+                SpanningCmdType::Read => {
+                    cmd.lba = Some(self.lba);
+                    cmd.count = Some(self.count);
+                }
+                SpanningCmdType::Write => {
+                    cmd.lba = Some(self.lba);
+                    cmd.count = Some(self.count);
+                }
+            }
+            cmd
+        }
+    }
+
+    enum SpanningCmdType {
+        Read,
+        Write,
+    }
+
+    impl Into<MaybeOpaqueCommand> for SpanningCmdType {
+        fn into(self) -> MaybeOpaqueCommand {
+            match self {
+                SpanningCmdType::Read => MaybeOpaqueCommand::Opaque(OpaqueCommand::Read),
+                SpanningCmdType::Write => MaybeOpaqueCommand::Opaque(OpaqueCommand::Write),
+            }
+        }
+    }
+
+    struct IdentifyDevice;
+
+    impl CommandConstructor for IdentifyDevice {
+        fn compose(self) -> ComposedCommand {
+            ComposedCommand::zeroed(MaybeOpaqueCommand::Concrete(AtaCommand::IDENTIFY_DEVICE))
+        }
+    }
+}
