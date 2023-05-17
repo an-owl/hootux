@@ -1,6 +1,6 @@
 const _ASSERT: () = {
-    assert_eq!(core::mem::size_of::<DeviceIdentity>(), 512);
-    assert_eq!(core::mem::size_of::<TransferConfig>(), 16);
+    assert!(core::mem::size_of::<DeviceIdentity>() == 512);
+    assert!(core::mem::size_of::<TransferConfig>() == 16);
 };
 
 #[repr(C)]
@@ -17,7 +17,7 @@ pub struct DeviceIdentity {
     firmware_vers: [u8; 8],
     model_num: [u8; 40],
     _ob3: u16,
-    pub trusted_computing: TrustedComputing,
+    trusted_computing: TrustedComputing,
     capabilities: Capabilities,
     _ob4: [u16; 2],
     wd_53: u16,
@@ -105,7 +105,7 @@ struct TransferConfig {
 struct FeaturesSet {
     features_82: Features82,
     features_83: Features83,
-    features_84: Featutres84,
+    features_84: Features84,
 }
 
 const DECODE_FAILED: &str = "Failed to decode ata string";
@@ -121,12 +121,12 @@ impl DeviceIdentity {
         }
 
         let mut sum = 0u8;
-        let arr = self as &[u8; 511];
+        let arr = unsafe { &*(self as *const _ as *const [u8; 511]) };
         for i in arr {
             sum = sum.wrapping_add(*i)
         }
 
-        self.sum == 0
+        sum == 0
     }
 
     pub fn get_general_config(&self) -> GeneralCfg {
@@ -144,15 +144,15 @@ impl DeviceIdentity {
     }
 
     pub fn get_serial(&self) -> &str {
-        std::str::from_utf8(&self.serial).unwrap_or(DECODE_FAILED)
+        core::str::from_utf8(&self.serial).unwrap_or(DECODE_FAILED)
     }
 
     pub fn firmware_revision(&self) -> &str {
-        std::str::from_utf8(&self.firmware_vers).unwrap_or(DECODE_FAILED)
+        core::str::from_utf8(&self.firmware_vers).unwrap_or(DECODE_FAILED)
     }
 
     pub fn model_num(&self) -> &str {
-        std::str::from_utf8(&self.model_num).unwrap_or(DECODE_FAILED)
+        core::str::from_utf8(&self.model_num).unwrap_or(DECODE_FAILED)
     }
 
     pub fn free_fall_sensitivity(&self) -> u8 {
@@ -169,16 +169,18 @@ impl DeviceIdentity {
 
     fn get_pata_id(&self) -> Option<&TransferConfig> {
         if self.word_64_70_valid() {
-            Sone(&self.pata_id)
+            Some(&self.wd_64_70)
         } else {
             None
         }
     }
 
-    pub fn check_command_support(&self, cmd: super::command::AtaCommand) -> Option<bool> {
-        if let Some(n) = self.features_82.is_supported(cmd) {
+    pub fn check_command_support(&self, cmd: super::super::command::AtaCommand) -> Option<bool> {
+        if let Some(n) = self.features.features_82.is_supported(cmd) {
             return Some(n);
-        } else if Some(n) = self.features_83.is_supported(cmd) {
+        } else if let Some(n) = self.features.features_83.is_supported(cmd) {
+            return Some(n);
+        } else if let Some(n) = self.features119.is_supported(cmd) {
             return Some(n);
         }
 
@@ -189,7 +191,7 @@ impl DeviceIdentity {
         if self
             .features
             .features_84
-            .contains(Featutres84::WORLD_WIDE_NAME)
+            .contains(Features84::WORLD_WIDE_NAME)
         {
             Some(self.world_wide_name)
         } else {
@@ -229,7 +231,7 @@ impl GeneralCfg {
 
 // TODO see ata spec 4.17
 #[derive(Debug, Eq, PartialEq, Copy, Clone)]
-enum SpecificCfg {
+pub enum SpecificCfg {
     ReqSpinUpInCom,
     ReqSpinUpCom,
     NoSpinUpInCom,
@@ -266,7 +268,7 @@ bitflags::bitflags! {
 
 impl Capabilities {
     fn long_sec_err_reporting(&self) -> u8 {
-        (self.0 & 3) as u8
+        (self.bits() & 3) as u8
     }
 }
 
@@ -279,8 +281,8 @@ impl SanitizeSubcommands {
     ///
     /// `SANITIZE_STATUS_EXT`, `SANITIZE_FREEZE_LOCK_EXT` will return the same value and can
     /// be used to check whether the sanitize command set is available.
-    pub fn is_supported(&self, cmd: super::command::SanitiseSubcommand) -> bool {
-        use super::command::SanitiseSubcommand;
+    pub fn is_supported(&self, cmd: super::super::command::SanitiseSubcommand) -> bool {
+        use super::super::command::SanitiseSubcommand;
         if self.0 & (1 << 12) != 0 {
             match cmd {
                 SanitiseSubcommand::CRYPTO_SCRAMBLE_EXT => self.0 & (1 << 13) != 0,
@@ -313,9 +315,11 @@ impl MultiwordDma {
         if t > 4 {
             Some(MultiwordDmaMode::Mode2)
         } else if t > 2 {
-            SOme(MultiwordDmaMode::Mode1)
+            Some(MultiwordDmaMode::Mode1)
         } else if 1 == 1 {
             Some(MultiwordDmaMode::Mode0)
+        } else {
+            None // this arm is a hardware error
         }
     }
 
@@ -328,7 +332,7 @@ impl MultiwordDma {
     }
 }
 
-enum MultiwordDmaMode {
+pub enum MultiwordDmaMode {
     Mode0,
     Mode1,
     Mode2,
@@ -419,18 +423,18 @@ bitflags::bitflags! {
 
 impl SataCap {
     fn is_coherent(&self) -> bool {
-        self.0 & 1 != 0
+        self.bits() & 1 != 0
     }
 }
 
 impl SataCap2 {
     fn is_coherent(&self) -> bool {
-        self.0 & 1 != 0
+        self.bits() & 1 != 0
     }
 
     // spec gives wrong section it's actually 9.11.10.3.1
     fn get_sata_gen(&self) -> u8 {
-        let t = self.0 & 7;
+        let t = (self.bits() & 7) as u8;
         assert!(t < 4, "Invalid SATA speed reported");
         t
     }
@@ -479,13 +483,13 @@ impl Features82 {
     /// Checks if the given command is supported.
     /// Returns `Some(true)` if the command is supported and `Some(false)` if it is not.
     /// If this fn returns `None` the command cannot be checked against this.
-    fn is_supported(&self, cmd: super::command::AtaCommand) -> Option<bool> {
-        use super::command::AtaCommand;
+    fn is_supported(&self, cmd: super::super::command::AtaCommand) -> Option<bool> {
+        use super::super::command::AtaCommand;
         match cmd {
             AtaCommand::NOP => return self.contains(Self::NOP).into(),
-            AtaCommand::READ_BUFFER => return self.constains(Self::READ_BUFFER).into(),
-            AtaCommand::WRITE_BUFFER => return self.constains(Self::WRITE_BUFFER).into(),
-            AtaCommand::SMART => return self.constains(Self::SMART).into(),
+            AtaCommand::READ_BUFFER => return self.contains(Self::READ_BUFFER).into(),
+            AtaCommand::WRITE_BUFFER => return self.contains(Self::WRITE_BUFFER).into(),
+            AtaCommand::SMART => return self.contains(Self::SMART).into(),
             _ => None,
         }
     }
@@ -510,8 +514,8 @@ impl Features83 {
         self.bits() & tgt == 0x40
     }
 
-    fn is_supported(&self, cmd: super::command::AtaCommand) -> Option<bool> {
-        use super::command::AtaCommand;
+    fn is_supported(&self, cmd: super::super::command::AtaCommand) -> Option<bool> {
+        use super::super::command::AtaCommand;
         match cmd {
             AtaCommand::FLUSH_CACHE_EXT => return self.contains(Self::FLUSH_CACHE_EXT).into(),
             AtaCommand::FLUSH_CACHE => return self.contains(Self::FLUSH_CACHE).into(),
@@ -524,7 +528,7 @@ impl Features83 {
 }
 
 bitflags::bitflags! {
-    struct Featutres84: u16 {
+    struct Features84: u16 {
         const IDLE_IMMEDIATE_WITH_UNLOAD = 1 << 13;
         const WORLD_WIDE_NAME = 1 << 8;
         const WRITE_DMA_FUA_EXT = 1 << 6;
@@ -550,7 +554,7 @@ struct UltraDma {
 
 impl UltraDma {
     pub fn current(&self) -> Option<UltraDmaMode> {
-        let t: u8 = self.selected.bits();
+        let t = self.selected;
         if t == 0 {
             return None;
         };
@@ -609,7 +613,7 @@ struct AdvancedPowerManagement {
     _res: u8,
 }
 
-enum ApmLevel {
+pub enum ApmLevel {
     MinimumStandby,
     IntermediateStandby(u8),
     Min,
@@ -660,8 +664,8 @@ bitflags::bitflags! {
 }
 
 impl Features119 {
-    fn is_supported(&self, cmd: super::command::AtaCommand) -> Option<bool> {
-        use super::command::AtaCommand;
+    fn is_supported(&self, cmd: super::super::command::AtaCommand) -> Option<bool> {
+        use super::super::command::AtaCommand;
 
         match cmd {
             AtaCommand::READ_LOG_DMA_EXT => Some(self.contains(Self::LOG_DMA_EXT)),
@@ -749,7 +753,7 @@ bitflags::bitflags! {
 
 impl SCTCommandTransport {
     fn get_vendor(&self) -> u8 {
-        (self.bits() >> 12) & 0xf
+        ((self.bits() >> 12) & 0xf) as u8
     }
 }
 

@@ -1,5 +1,5 @@
 #[repr(u8)]
-#[derive(Eq, PartialEq, Copy, Clone)]
+#[derive(Eq, PartialEq, Copy, Clone, Debug)]
 #[allow(non_camel_case_types)]
 pub enum AtaCommand {
     // Read
@@ -221,6 +221,7 @@ pub mod constructor {
     /// Contains either an [AtaCommand] or an [OpaqueCommand]. This allows [ComposedCommand]s to not need
     /// to specify an exact command when a driver may want to specify the exact behaviour of a command
     /// i.e. a driver can choose to use a NCQ read instead of a regular read.
+    #[derive(Copy, Clone, Debug)]
     pub enum MaybeOpaqueCommand {
         Concrete(AtaCommand),
         Opaque(OpaqueCommand),
@@ -239,6 +240,7 @@ pub mod constructor {
 
     /// Opaque commands are commands have multiple potential command that the driver may want fine
     /// control of.
+    #[derive(Copy, Clone, Debug)]
     pub enum OpaqueCommand {
         Read,
         Write,
@@ -249,7 +251,7 @@ pub mod constructor {
     }
 
     /// A struct to construct simple command that spans over a region of LBAs such as reading or writing
-    struct SpanningCmd {
+    pub struct SpanningCmd {
         cmd: SpanningCmdType,
         lba: u64,
         count: u16,
@@ -272,7 +274,8 @@ pub mod constructor {
         }
     }
 
-    enum SpanningCmdType {
+    #[derive(Copy, Clone, Debug)]
+    pub enum SpanningCmdType {
         Read,
         Write,
     }
