@@ -119,6 +119,12 @@ pub enum AtaCommand {
     SECURITY_DISABLE_PASSWORD = 0xf6,
 }
 
+impl Into<u8> for AtaCommand {
+    fn into(self) -> u8 {
+        self as u8
+    }
+}
+
 /// Used with the [AtaCommand::SANITIZE_DEVICE] command.
 #[repr(u16)]
 #[allow(non_camel_case_types)]
@@ -211,6 +217,19 @@ pub mod constructor {
         Opaque(OpaqueCommand),
     }
 
+    impl TryInto<u8> for MaybeOpaqueCommand {
+        type Error = Self;
+
+        fn try_into(self) -> Result<u8, Self::Error> {
+            match self {
+                MaybeOpaqueCommand::Concrete(c) => Ok(c.into()),
+                MaybeOpaqueCommand::Opaque(_) => Err(self),
+            }
+        }
+    }
+
+    /// Opaque commands are commands have multiple potential command that the driver may want fine
+    /// control of.
     pub enum OpaqueCommand {
         Read,
         Write,
