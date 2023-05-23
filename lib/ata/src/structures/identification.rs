@@ -1,6 +1,6 @@
 const _ASSERT: () = {
     assert!(core::mem::size_of::<DeviceIdentity>() == 512);
-    assert!(core::mem::size_of::<TransferConfig>() == 16);
+    assert!(core::mem::size_of::<TransferConfig>() == 14);
 };
 
 #[repr(C)]
@@ -24,7 +24,7 @@ pub struct DeviceIdentity {
     _ob5: [u16; 5],
     sanitize_sub_cmd: SanitizeSubcommands,
     // LBAs for 24 bit cmds
-    lba_24: u32,
+    lba_28: u32,
     _ob6: u16,
     multiword_dma: MultiwordDma,
     // word 64
