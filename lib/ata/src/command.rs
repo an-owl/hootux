@@ -1,3 +1,12 @@
+mod privacy {
+    pub trait CheckSeal {}
+}
+/// This is a marker trait for checking command compatibility and may not be be implemented outside
+/// of this crate
+pub trait CheckableCommand: privacy::CheckSeal {}
+
+impl<T> CheckableCommand for T where T: privacy::CheckSeal {}
+
 #[repr(u8)]
 #[derive(Eq, PartialEq, Copy, Clone, Debug)]
 #[allow(non_camel_case_types)]
@@ -128,6 +137,8 @@ pub enum AtaCommand {
     SECURITY_DISABLE_PASSWORD = 0xf6,
 }
 
+impl privacy::CheckSeal for AtaCommand {}
+
 impl Into<u8> for AtaCommand {
     fn into(self) -> u8 {
         self as u8
@@ -145,6 +156,8 @@ pub enum SanitiseSubcommand {
     SANITIZE_FREEZE_LOCK_EXT = 0x20,
     SANITIZE_ANTIFREEZE_LOCK_EXT = 0x40,
 }
+
+impl privacy::CheckSeal for SanitiseSubcommand {}
 
 pub mod constructor {
     use crate::command::AtaCommand;
