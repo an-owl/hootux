@@ -148,6 +148,7 @@ impl Into<u8> for AtaCommand {
 /// Used with the [AtaCommand::SANITIZE_DEVICE] command.
 #[repr(u16)]
 #[allow(non_camel_case_types)]
+#[derive(Copy, Clone, Debug)]
 pub enum SanitiseSubcommand {
     SANITIZE_STATUS_EXT = 0,
     CRYPTO_SCRAMBLE_EXT = 0x11,
@@ -167,7 +168,7 @@ pub mod constructor {
     /// A field containing `Some(_)` may be modified, but this may result in errors from the device.
     ///
     /// Some unused fields may be left as None when the command is Opaque. In this case see
-    /// [super::AtaCommand] for their usage.
+    /// [AtaCommand] for their usage.
     #[derive(Copy, Clone, Debug)]
     pub struct ComposedCommand {
         pub command: MaybeOpaqueCommand,
@@ -251,6 +252,12 @@ pub mod constructor {
         }
     }
 
+    impl Into<MaybeOpaqueCommand> for AtaCommand {
+        fn into(self) -> MaybeOpaqueCommand {
+            MaybeOpaqueCommand::Concrete(self)
+        }
+    }
+
     /// Opaque commands are commands have multiple potential command that the driver may want fine
     /// control of.
     #[derive(Copy, Clone, Debug)]
@@ -288,6 +295,7 @@ pub mod constructor {
     }
 
     #[derive(Copy, Clone, Debug)]
+    #[non_exhaustive]
     pub enum SpanningCmdType {
         Read,
         Write,
