@@ -203,7 +203,9 @@ impl DeviceIdentity {
         cmd: C,
     ) -> Option<bool> {
         use core::any::Any;
-        // checks against concrete type and casts to it (optimized out)
+        // checks against concrete type and casts to it these checks are optimized out
+
+        // this function is and probably always will be a fucking mess
         if cmd.type_id() == crate::command::AtaCommand::READ_LOG_DMA_EXT.type_id() {
             let cmd = unsafe { *(&cmd as *const _ as *const crate::command::AtaCommand) };
 
@@ -213,6 +215,11 @@ impl DeviceIdentity {
                 return Some(n);
             } else if let Some(n) = self.features119.is_supported(cmd) {
                 return Some(n);
+            } else if cmd == crate::command::AtaCommand::SANITIZE_DEVICE {
+                Some(
+                    self.sanitize_sub_cmd
+                        .is_supported(crate::command::SanitiseSubcommand::SANITIZE_STATUS_EXT),
+                )
             }
         } else if cmd.type_id() == crate::command::SanitiseSubcommand::OVERWRITE_EXT.type_id() {
             let cmd = unsafe { *(&cmd as *const _ as *const crate::command::SanitiseSubcommand) };
@@ -443,8 +450,9 @@ impl SanitizeSubcommands {
     /// Returns whether or not the sanitize subcommand is supported.
     /// Subcommands that return None are not checked by this field.
     ///
-    /// `SANITIZE_STATUS_EXT`, `SANITIZE_FREEZE_LOCK_EXT` will return the same value and can
-    /// be used to check whether the sanitize command set is available.
+    /// [crate::command::SanitiseSubcommand::SANITIZE_STATUS_EXT] and [crate::command::SanitiseSubcommand::SANITIZE_FREEZE_LOCK_EXT]
+    /// return the same value as [crate::command::AtaCommand::SANITIZE_DEVICE]. This should
+    /// be used to check whether the sanitize command set is available by [DeviceIdentity::check_command_support]
     fn is_supported(&self, cmd: super::super::command::SanitiseSubcommand) -> bool {
         use super::super::command::SanitiseSubcommand;
         if self.0 & (1 << 12) != 0 {
