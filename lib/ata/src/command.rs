@@ -302,13 +302,24 @@ pub mod constructor {
         }
     }
 
-    /// Generates a [ComposedCommand] which will signal to the device to identify itself returning
-    /// a [super::super::structures::identification::DeviceIdentity].
-    struct IdentifyDevice;
+    /// This enum contains command variants for commands that do not contain any arguments.
+    #[derive(Copy, Clone, Debug)]
+    #[non_exhaustive]
+    pub enum NoArgCmd {
+        IdentifyDevice,
+    }
 
-    impl CommandConstructor for IdentifyDevice {
+    impl Into<MaybeOpaqueCommand> for NoArgCmd {
+        fn into(self) -> MaybeOpaqueCommand {
+            match self {
+                NoArgCmd::IdentifyDevice => AtaCommand::IDENTIFY_DEVICE.into(),
+            }
+        }
+    }
+
+    impl CommandConstructor for NoArgCmd {
         fn compose(self) -> ComposedCommand {
-            ComposedCommand::zeroed(MaybeOpaqueCommand::Concrete(AtaCommand::IDENTIFY_DEVICE))
+            ComposedCommand::zeroed(self.into())
         }
     }
 }
