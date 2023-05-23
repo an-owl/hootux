@@ -3,6 +3,10 @@ const _ASSERT: () = {
     assert!(core::mem::size_of::<TransferConfig>() == 14);
 };
 
+/// This struct is returned by [crate::command::AtaCommand::IDENTIFY_DEVICE]. It represents the
+/// current device configuration most contained values are static but some may be changed.
+/// This struct cannot be used configure the device.
+// A lot of the fields in this are marked as obsolete by the ACS-4 standard
 #[repr(C)]
 pub struct DeviceIdentity {
     general_cfg: GeneralCfg,
@@ -35,7 +39,7 @@ pub struct DeviceIdentity {
     sata_cap2: SataCap2,
     sata_features: SataFeaturesEnabled,
     major_version: MajorVersion, // word 80
-    pub minor_version: u16, // see spec 7.13.6.39. if a driver wants to check this then that's it's fault
+    minor_version: u16, // see spec 7.13.6.39. if a driver wants to check this then that's it's fault
     features: FeaturesSet,
     features_copy: FeaturesSet,
     ultra_dma: UltraDma,
@@ -80,7 +84,7 @@ pub struct DeviceIdentity {
     transport_major_version: TransportMajorVersion,
     transport_minor_version: TransportMinorVersionField,
     _re7: [u16; 6],
-    sector_count_ext: u64,
+    sector_count_ext: SectorCountExt,
     /// Minimum number fo 512 byte blocks required to download microcode
     micro_blocks_min: u16,
     /// Maximum number of 512 byte blocks required to download microcode
@@ -90,7 +94,7 @@ pub struct DeviceIdentity {
 }
 
 #[repr(C)]
-struct TransferConfig {
+pub struct TransferConfig {
     pio_mode: PioMode,
     // TODO see ata spec 9.11.9.4.2
     min_dma_time: u16,
@@ -129,10 +133,12 @@ impl DeviceIdentity {
         sum == 0
     }
 
+    /// Returns the general config of the device
     pub fn get_general_config(&self) -> GeneralCfg {
         self.general_cfg
     }
 
+    /// Returns the Specific config of the device indicating weather or not the device requires powering up
     pub fn get_specific_cfg(&self) -> SpecificCfg {
         match self.specific_cfg {
             0x37c8 => SpecificCfg::ReqSpinUpInCom,
@@ -167,7 +173,8 @@ impl DeviceIdentity {
         self.wd_53 & (1 << 1) != 0
     }
 
-    fn get_pata_id(&self) -> Option<&TransferConfig> {
+    /// Checks if the transfer config is valid and returns it if it is,
+    pub fn get_transfer_cfg(&self) -> Option<&TransferConfig> {
         if self.word_64_70_valid() {
             Some(&self.wd_64_70)
         } else {
@@ -175,13 +182,41 @@ impl DeviceIdentity {
         }
     }
 
-    pub fn check_command_support(&self, cmd: super::super::command::AtaCommand) -> Option<bool> {
-        if let Some(n) = self.features.features_82.is_supported(cmd) {
-            return Some(n);
-        } else if let Some(n) = self.features.features_83.is_supported(cmd) {
-            return Some(n);
-        } else if let Some(n) = self.features119.is_supported(cmd) {
-            return Some(n);
+    pub fn version_info(&self) -> VersionInfo {
+        let maj = if (self.word_88_valid()) && self.major_version.contains_data() {
+            Some(self.major_version)
+        } else {
+            None
+        };
+
+        VersionInfo {
+            major_vers: maj,
+            minor_vers: self.minor_version,
+            transport_major: self.transport_major_version.get_version(),
+            transport_minor: self.transport_minor_version.get_version(),
+        }
+    }
+
+    pub fn check_command_support<C: super::super::command::CheckableCommand + Copy + 'static>(
+        // would not build without static idk why this is not a ref
+        &self,
+        cmd: C,
+    ) -> Option<bool> {
+        use core::any::Any;
+        // checks against concrete type and casts to it (optimized out)
+        if cmd.type_id() == crate::command::AtaCommand::READ_LOG_DMA_EXT.type_id() {
+            let cmd = unsafe { *(&cmd as *const _ as *const crate::command::AtaCommand) };
+
+            if let Some(n) = self.features.features_82.is_supported(cmd) {
+                return Some(n);
+            } else if let Some(n) = self.features.features_83.is_supported(cmd) {
+                return Some(n);
+            } else if let Some(n) = self.features119.is_supported(cmd) {
+                return Some(n);
+            }
+        } else if cmd.type_id() == crate::command::SanitiseSubcommand::OVERWRITE_EXT.type_id() {
+            let cmd = unsafe { *(&cmd as *const _ as *const crate::command::SanitiseSubcommand) };
+            return Some(self.sanitize_sub_cmd.is_supported(cmd));
         }
 
         None
@@ -198,12 +233,103 @@ impl DeviceIdentity {
             None
         }
     }
+
+    pub fn current_power_level(&self) -> ApmLevel {
+        self.apm_level.get_mode()
+    }
+
+    /// Returns the rotation rate of the device. This may include the actual rotation rate or some
+    /// other indicator suck as indicating this is an SSD.
+    ///
+    /// Returning `None` indicates a hardware error
+    pub fn get_dev_rpm(&self) -> Option<RotationRate> {
+        self.rpm.get_rate()
+    }
+
+    /// Returns the transport version used by the device.
+    ///
+    /// This fn will return `None` if the major version is not reported correctly or not supported.
+    /// If this fn returns `Some(_,None)` this may indicate a minor version that is not recognized.
+    pub fn get_transport_version(&self) -> Option<(TransportIf, Option<TransportMinorVersion>)> {
+        Some((
+            self.transport_major_version.get_version()?,
+            self.transport_minor_version.get_version(),
+        ))
+    }
+
+    /// Returns the number of command slots this device supports (maximum 32)
+    pub fn queue_depth(&self) -> u8 {
+        self.queue_depth.get_depth()
+    }
+
+    pub fn interface_properties(&self) -> InterfaceProperties {
+        unimplemented!()
+    }
+
+    pub fn get_device_geometry(&self) -> DeviceGeometry {
+        // I'm not entirely sure if i should be using logical_sectors or sector_count_ext
+        let lba = if self.get_transfer_cfg().map_or(false, |t| {
+            t.additional_features
+                .contains(AdditonalSupport::EXTENDED_SECTOR_ADDRESSES)
+        }) {
+            self.sector_count_ext.read()
+        } else if self.lba_28 == 0xfff_ffff {
+            self.logical_sectors & 0xffff_ffff_ffff
+        } else {
+            self.lba_28
+        };
+
+        let logical_sec_size = if self
+            .sector_geom
+            .contains(SectorGeom::LOGICAL_GREATHER_512_BYTES)
+        {
+            512
+        } else {
+            self.logical_sector_size << 1 // converts from words to bytes
+        };
+
+        let phys_sec_size = if self
+            .sector_geom
+            .contains(SectorGeom::MULTIPLE_LOGICAL_PER_PHYS)
+        {
+            (logical_sec_size as u64) << self.sector_geom.log_sec_per_phys()
+        } else {
+            logical_sec_size as u64
+        };
+
+        DeviceGeometry {
+            sector_count: lba + 1,
+            logical_sec_size,
+            phys_sec_size,
+
+            alignment: self.sector_alignment.get_alignment(),
+        }
+    }
+}
+
+/// This struct contains device version and interface information. Some fields are optional because
+/// they may or may not be reported by hardware.
+///
+/// - `major_vers`: This field may or may not be present if not it will be set to `None`.
+/// This field contains information about the command sets supported by the device.
+/// (currently this library only supports "ACS-4")
+/// - `minor_vers`: This field contains the minor version of the device. A driver may check this
+/// field but its potential values are not specified in this crate.
+/// - `transport_major`: This is only `None` if the value is not supported or faulty. Contains the
+/// transport interface nad version it is using.
+/// - `transport_minor`: This is only `None` if the value is not supported or faulty. This contains
+/// the minor version of transport interface.
+pub struct VersionInfo {
+    pub major_vers: Option<MajorVersion>,
+    pub minor_vers: u16,
+    pub transport_major: Option<TransportIf>,
+    pub transport_minor: Option<TransportMinorVersion>,
 }
 
 #[repr(C)]
 struct Streaming {
     /// Number of sectors that provides optimum performance in streaming environments.
-    /// Starting LBAS for streaming commands should be divisable by this value.
+    /// Starting LBAs for streaming commands should be divisable by this value.
     min_req_size: u16,
 
     // is this in msec?
@@ -215,16 +341,46 @@ struct Streaming {
     performance_granularity: u32,
 }
 
+/// Contains the device geometry.
+///
+/// - Logical sectors are the blocks which are addressed by software.
+/// - Physical sectors are the blocks accessed by hardware.
+///
+/// When `self.multiple_lbas_per_sector == true` software should align operations to physical sector
+/// boundaries to optimize performance.
+pub struct DeviceGeometry {
+    /// Number of logical sectors addressable on the device
+    pub sector_count: u64,
+    /// This field contains the size of each LBA
+    pub logical_sec_size: u32,
+    /// This field contains the physical size of each sector in the device.
+    /// Operations should be aligned to physical sector boundaries for optimal performance.
+    pub phys_sec_size: u64,
+    /// This field contains the number of logical sectors LBA 0 is offset into the first physical sector
+    ///
+    /// For example a device with 4K physical sectors where this value is
+    /// - 0: LBA 0 is the start of the first physical sector.
+    /// - 1: LBA 0 starts at byte 512 if the first physical sector.
+    /// - 2: LBA 0 starts at byte 1024 if the first physical sector.
+    pub alignment: u16,
+}
+
+impl DeviceGeometry {
+    pub fn multiple_lbas_per_sector(&self) -> bool {
+        self.logical_sec_size as u64 != self.phys_sec_size
+    }
+}
+
 #[repr(transparent)]
 #[derive(Copy, Clone)]
 pub struct GeneralCfg(u16);
 
 impl GeneralCfg {
-    fn is_ata(&self) -> bool {
+    pub fn is_ata(&self) -> bool {
         self.0 & (1 << 15) == 0
     }
 
-    fn is_complete(&self) -> bool {
+    pub fn is_complete(&self) -> bool {
         self.0 & (1 << 2) == 0
     }
 }
@@ -232,9 +388,13 @@ impl GeneralCfg {
 // TODO see ata spec 4.17
 #[derive(Debug, Eq, PartialEq, Copy, Clone)]
 pub enum SpecificCfg {
+    /// Device requires spin up, identification data is incomplete.
     ReqSpinUpInCom,
+    /// Device Requires spin up and identification data is complete.
     ReqSpinUpCom,
+    /// Device does not require spin up, identification data is incomplete.
     NoSpinUpInCom,
+    /// Device does not require spin up and identification data is complete.
     NoSpinUpCom,
     Reserved(u16),
 }
@@ -244,10 +404,13 @@ pub enum SpecificCfg {
 struct TrustedComputing(pub u16);
 
 impl TrustedComputing {
+    #[allow(dead_code)]
     fn is_supported(&self) -> bool {
         self.0 & 1 != 0
     }
 }
+
+pub struct InterfaceProperties {}
 
 bitflags::bitflags! {
     // TODO see ata spec 7.12.6.17
@@ -267,6 +430,7 @@ bitflags::bitflags! {
 }
 
 impl Capabilities {
+    #[allow(dead_code)]
     fn long_sec_err_reporting(&self) -> u8 {
         (self.bits() & 3) as u8
     }
@@ -281,7 +445,7 @@ impl SanitizeSubcommands {
     ///
     /// `SANITIZE_STATUS_EXT`, `SANITIZE_FREEZE_LOCK_EXT` will return the same value and can
     /// be used to check whether the sanitize command set is available.
-    pub fn is_supported(&self, cmd: super::super::command::SanitiseSubcommand) -> bool {
+    fn is_supported(&self, cmd: super::super::command::SanitiseSubcommand) -> bool {
         use super::super::command::SanitiseSubcommand;
         if self.0 & (1 << 12) != 0 {
             match cmd {
@@ -297,7 +461,8 @@ impl SanitizeSubcommands {
     }
 
     /// Sanitize commands conform to the ACS-2 standard other it conforms to the ACS-4 standard
-    pub fn is_acs2(&self) -> bool {
+    #[allow(dead_code)]
+    fn is_acs2(&self) -> bool {
         self.0 & (1 << 11) == 0
     }
 }
@@ -343,10 +508,12 @@ pub enum MultiwordDmaMode {
 struct PioMode(u16);
 
 impl PioMode {
+    #[allow(dead_code)]
     fn mode_4_supported(&self) -> bool {
         self.0 & (1 << 1) != 0
     }
 
+    #[allow(dead_code)]
     fn mode_3_supported(&self) -> bool {
         self.0 & (1 << 1) != 0
     }
@@ -421,18 +588,9 @@ bitflags::bitflags! {
     }
 }
 
-impl SataCap {
-    fn is_coherent(&self) -> bool {
-        self.bits() & 1 != 0
-    }
-}
-
 impl SataCap2 {
-    fn is_coherent(&self) -> bool {
-        self.bits() & 1 != 0
-    }
-
     // spec gives wrong section it's actually 9.11.10.3.1
+    #[allow(dead_code)] // todo add to InterfaceProperties
     fn get_sata_gen(&self) -> u8 {
         let t = (self.bits() & 7) as u8;
         assert!(t < 4, "Invalid SATA speed reported");
@@ -440,13 +598,8 @@ impl SataCap2 {
     }
 }
 
-impl SataFeaturesEnabled {
-    fn is_coherent(&self) -> bool {
-        self.bits() & 1 != 0
-    }
-}
-
 bitflags::bitflags! {
+    #[derive(Copy, Clone)]
     pub struct MajorVersion: u16 {
         const ACS_4 = 1 << 11;
         const ACS_3 = 1 << 10;
@@ -509,11 +662,6 @@ bitflags::bitflags! {
 }
 
 impl Features83 {
-    fn is_coherent(&self) -> bool {
-        let tgt = 0xc0;
-        self.bits() & tgt == 0x40
-    }
-
     fn is_supported(&self, cmd: super::super::command::AtaCommand) -> Option<bool> {
         use super::super::command::AtaCommand;
         match cmd {
@@ -539,13 +687,6 @@ bitflags::bitflags! {
     }
 }
 
-impl Features84 {
-    fn is_coherent(&self) -> bool {
-        let tgt = 0xc0;
-        self.bits() & tgt == 0x40
-    }
-}
-
 #[repr(C)]
 struct UltraDma {
     selected: u8,
@@ -553,7 +694,8 @@ struct UltraDma {
 }
 
 impl UltraDma {
-    pub fn current(&self) -> Option<UltraDmaMode> {
+    #[allow(dead_code)]
+    fn current(&self) -> Option<UltraDmaMode> {
         let t = self.selected;
         if t == 0 {
             return None;
@@ -571,6 +713,7 @@ impl UltraDma {
         }
     }
 
+    #[allow(dead_code)]
     fn is_supported(&self, mode: UltraDmaMode) -> bool {
         match mode {
             UltraDmaMode::Mode0 => self.supported & 1 != 0,
@@ -598,7 +741,8 @@ pub enum UltraDmaMode {
 struct EraseTime(u16);
 
 impl EraseTime {
-    pub fn get_erase_time(&self) -> u16 {
+    #[allow(dead_code)]
+    fn get_erase_time(&self) -> u16 {
         if self.0 & (1 << 15) != 0 {
             self.0 & !(1 << 15)
         } else {
@@ -643,6 +787,7 @@ bitflags::bitflags! {
 }
 
 impl SectorGeom {
+    // todo use in DeviceGeometry
     pub fn log_sec_per_phys(&self) -> u16 {
         let shift = self.bits() & 0xf;
         1 << shift
@@ -713,6 +858,7 @@ pub enum DeviceFromFactor {
 
 impl FormFactor {
     /// None indicates device firmware error
+    #[allow(dead_code)]
     fn form(&self) -> Option<DeviceFromFactor> {
         match self.0 & 0xf {
             0 => Some(DeviceFromFactor::NotReported),
@@ -734,6 +880,7 @@ impl FormFactor {
 struct DataManagement(u16);
 
 impl DataManagement {
+    #[allow(dead_code)]
     fn trim_support(&self) -> bool {
         self.0 & 1 != 0
     }
@@ -752,6 +899,7 @@ bitflags::bitflags! {
 }
 
 impl SCTCommandTransport {
+    #[allow(dead_code)]
     fn get_vendor(&self) -> u8 {
         ((self.bits() >> 12) & 0xf) as u8
     }
@@ -770,7 +918,7 @@ impl SectorAlignment {
 #[repr(transparent)]
 struct RotationRateField(u16);
 
-enum RotationRate {
+pub enum RotationRate {
     NotReported,
     SolidState,
     Rpm(u16),
@@ -804,6 +952,7 @@ pub enum WriteReadVerify {
 }
 
 impl WriteReadVerifyMode {
+    #[allow(dead_code)]
     fn get_mode(&self) -> Option<WriteReadVerify> {
         match self.0 {
             0 => Some(WriteReadVerify::Always),
@@ -817,13 +966,15 @@ impl WriteReadVerifyMode {
 
 struct TransportMajorVersion(u16);
 
-enum TransportIf {
+#[derive(Debug, Copy, Clone)]
+pub enum TransportIf {
     Parallel(ParallelVersion),
     Serial(SerialVersion),
     Pcie,
 }
 
-enum ParallelVersion {
+#[derive(Copy, Clone, Debug)]
+pub enum ParallelVersion {
     Ata7,
     Ata8,
 }
@@ -841,7 +992,8 @@ impl TryFrom<u16> for ParallelVersion {
     }
 }
 
-enum SerialVersion {
+#[derive(Copy, Clone, Debug)]
+pub enum SerialVersion {
     Sata3_2,
     Sata3_1,
     Sata3_0,
@@ -887,20 +1039,34 @@ impl TransportMajorVersion {
 struct TransportMinorVersionField(u16);
 
 #[allow(non_camel_case_types)]
-enum TransportMinorVersion {
+#[derive(Debug, Copy, Clone)]
+pub enum TransportMinorVersion {
     NotReported,
     Ata8_AstT13ProjectD1697V0b,
     Ata_AstT13ProjectD1697V1,
 }
 
 impl TransportMinorVersionField {
-    fn version(&self) -> Option<TransportMinorVersion> {
+    fn get_version(&self) -> Option<TransportMinorVersion> {
         match self.0 {
             0 | u16::MAX => Some(TransportMinorVersion::NotReported),
             0x21 => Some(TransportMinorVersion::Ata8_AstT13ProjectD1697V0b),
             0x51 => Some(TransportMinorVersion::Ata_AstT13ProjectD1697V1),
             _ => None,
         }
+    }
+}
+
+#[repr(C, align(4))]
+struct SectorCountExt {
+    low: u32,
+    high: u32,
+}
+
+impl SectorCountExt {
+    // todo DeviceGeometry
+    fn read(&self) -> u64 {
+        unsafe { core::ptr::read_unaligned(self as *const _ as *const u64) }
     }
 }
 
