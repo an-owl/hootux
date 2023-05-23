@@ -103,6 +103,8 @@ pub enum AtaCommand {
 
     SMART = 0xb0,
     SET_SECTOR_CONFIG = 0xb2,
+    /// This function is used with [SanitiseSubcommand] as teh features field. It is used for the
+    /// secure erasure of data from the device. Command args will be detailed in the subcommands.
     SANITIZE_DEVICE = 0xb4,
 
     CFA_WRITE_MULTIPLE_WITHOUT_ERASE = 0xcd,
