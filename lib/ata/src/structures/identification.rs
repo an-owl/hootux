@@ -197,7 +197,13 @@ impl DeviceIdentity {
         }
     }
 
-    pub fn check_command_support<C: super::super::command::CheckableCommand + Copy + 'static>(
+    /// This function checks if a command is supported.
+    /// This function returns an Option<bool>. When this fn returns `Some(b)` the support of the
+    /// command is indicated by `b`. If this fn returns `None` the command has no check implemented for it.
+    ///
+    /// Ths function can be used to check all command sets defined in [crate::command]   
+    // todo support checking features
+    pub fn is_supported<C: crate::command::CheckableCommand + Copy + 'static>(
         // would not build without static idk why this is not a ref
         &self,
         cmd: C,
@@ -208,25 +214,31 @@ impl DeviceIdentity {
         // this function is and probably always will be a fucking mess
         if cmd.type_id() == crate::command::AtaCommand::READ_LOG_DMA_EXT.type_id() {
             let cmd = unsafe { *(&cmd as *const _ as *const crate::command::AtaCommand) };
-
-            if let Some(n) = self.features.features_82.is_supported(cmd) {
-                return Some(n);
-            } else if let Some(n) = self.features.features_83.is_supported(cmd) {
-                return Some(n);
-            } else if let Some(n) = self.features119.is_supported(cmd) {
-                return Some(n);
-            } else if cmd == crate::command::AtaCommand::SANITIZE_DEVICE {
-                Some(
-                    self.sanitize_sub_cmd
-                        .is_supported(crate::command::SanitiseSubcommand::SANITIZE_STATUS_EXT),
-                )
-            }
+            return self.chk_ata_cmd(cmd);
         } else if cmd.type_id() == crate::command::SanitiseSubcommand::OVERWRITE_EXT.type_id() {
             let cmd = unsafe { *(&cmd as *const _ as *const crate::command::SanitiseSubcommand) };
             return Some(self.sanitize_sub_cmd.is_supported(cmd));
         }
 
         None
+    }
+
+    /// Internal component for [Self::is_supported] for checking [crate::command::AtaCommand]
+    fn chk_ata_cmd(&self, cmd: crate::command::AtaCommand) -> Option<bool> {
+        if let Some(n) = self.features.features_82.is_supported(cmd) {
+            Some(n)
+        } else if let Some(n) = self.features.features_83.is_supported(cmd) {
+            Some(n)
+        } else if let Some(n) = self.features119.is_supported(cmd) {
+            Some(n)
+        } else if cmd == crate::command::AtaCommand::SANITIZE_DEVICE {
+            Some(
+                self.sanitize_sub_cmd
+                    .is_supported(crate::command::SanitiseSubcommand::SANITIZE_STATUS_EXT),
+            )
+        } else {
+            None
+        }
     }
 
     pub fn world_wide_name(&self) -> Option<u64> {
