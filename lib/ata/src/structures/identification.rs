@@ -288,14 +288,14 @@ impl DeviceIdentity {
     pub fn get_device_geometry(&self) -> DeviceGeometry {
         // I'm not entirely sure if i should be using logical_sectors or sector_count_ext
         let lba = if self.get_transfer_cfg().map_or(false, |t| {
-            t.additional_features
+            t.additonal_supported
                 .contains(AdditonalSupport::EXTENDED_SECTOR_ADDRESSES)
         }) {
             self.sector_count_ext.read()
         } else if self.lba_28 == 0xfff_ffff {
             self.logical_sectors & 0xffff_ffff_ffff
         } else {
-            self.lba_28
+            self.lba_28 as u64
         };
 
         let logical_sec_size = if self
@@ -464,7 +464,7 @@ impl SanitizeSubcommands {
     ///
     /// [crate::command::SanitiseSubcommand::SANITIZE_STATUS_EXT] and [crate::command::SanitiseSubcommand::SANITIZE_FREEZE_LOCK_EXT]
     /// return the same value as [crate::command::AtaCommand::SANITIZE_DEVICE]. This should
-    /// be used to check whether the sanitize command set is available by [DeviceIdentity::check_command_support]
+    /// be used to check whether the sanitize command set is available by [DeviceIdentity::is_supported]
     fn is_supported(&self, cmd: super::super::command::SanitiseSubcommand) -> bool {
         use super::super::command::SanitiseSubcommand;
         if self.0 & (1 << 12) != 0 {
