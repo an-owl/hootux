@@ -1,0 +1,13 @@
+[package]
+name = "ahci"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+hootux = { path = "../../kernel" }
+volatile = "0.4.6"
+bitflags = "2.1.0"
+ata = {path = "../../lib/ata"}
+spin = "0.9.8"
