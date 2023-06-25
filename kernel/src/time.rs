@@ -9,7 +9,7 @@
 pub mod acpi_pm_timer;
 pub(crate) type TimerResult = Result<(), TimerError>;
 
-static SYSTEM_TIME: spin::RwLock<SystemTime> = spin::RwLock::new(SystemTime::new());
+static SYSTEM_TIME: SystemTime = SystemTime::new();
 static SYSTEM_TIMEKEEPER: spin::RwLock<Option<alloc::boxed::Box<(dyn TimeKeeper + Sync + Send)>>> =
     spin::RwLock::new(None);
 
@@ -146,43 +146,71 @@ impl<T: Timer> Timer for ThreadSafeTimer<T> {
 /// Struct for recording duration since boot
 #[derive(Copy, Clone)]
 struct SystemTime {
+    dirty: core::sync::atomic::AtomicBool,
     /// time recorded when self was last updated
-    time: u64,
+    time: core::sync::atomic::AtomicU64,
 
     /// timer count when self was last updated
-    last_check: u64,
+    last_check: core::sync::atomic::AtomicU64,
 }
 
 impl SystemTime {
     const fn new() -> Self {
+        use core::sync::atomic;
         Self {
-            time: 0,
-            last_check: 0,
+            dirty: atomic::AtomicBool::new(false),
+            time: atomic::AtomicU64::new(0),
+            last_check: atomic::AtomicU64::new(0),
         }
     }
 
     /// Returns the current time in nanoseconds since boot
-    fn get_system_time(&mut self) -> u64 {
-        self.update();
-        self.time
+    fn get_system_time(&self) -> u64 {
+        if !self.update() {
+            // This will prevent deadlocks when trying to get the time. But attempt to get the up
+            // to date value. This will introduce jitter to the system clock but im not too
+            // concerned with that
+            for _ in 0..50 {
+                if !self.dirty.load(atomic::Ordering::Acquire) {
+                    break;
+                }
+                core::hint::spin_loop()
+            }
+        }
+        self.time.load(atomic::Ordering::Relaxed)
     }
 
     /// Sets self to time 0 and records the clock count
-    fn init(&mut self) {
-        self.last_check = SYSTEM_TIMEKEEPER.read().as_ref().unwrap().time_since(0).1
+    fn init(&self) {
+        self.last_check.store(
+            SYSTEM_TIMEKEEPER.read().as_ref().unwrap().time_since(0).1,
+            atomic::Ordering::Relaxed,
+        )
+
         // panics if called before `kernel_init_timer`
     }
 
     /// Syncs the system time with the current clock count
-    fn update(&mut self) {
-        let (period, recorded_clock) = SYSTEM_TIMEKEEPER
-            .read()
-            .as_ref()
-            .unwrap()
-            .time_since(self.last_check);
-
-        self.time += period;
-        self.last_check = recorded_clock
+    fn update(&self) -> bool {
+        if let Ok(_) = self.dirty.compare_exchange_weak(
+            false,
+            true,
+            atomic::Ordering::Acquire,
+            atomic::Ordering::Relaxed,
+        ) {
+            let (period, recorded_clock) = SYSTEM_TIMEKEEPER
+                .read()
+                .as_ref()
+                .unwrap()
+                .time_since(self.last_check.load(atomic::Ordering::Relaxed));
+            self.time.fetch_add(period, atomic::Ordering::Relaxed);
+            self.last_check
+                .store(recorded_clock, atomic::Ordering::Relaxed);
+            self.dirty.store(false, atomic::Ordering::Release);
+            true
+        } else {
+            false
+        }
     }
 }
 
@@ -195,20 +223,19 @@ pub trait TimeKeeper {
     fn time_since(&self, old_time: u64) -> (u64, u64);
 }
 
-/// Public interface for [SystemTime::get_system_time]
+/// Returns the current time in nanoseconds since boot.
 pub fn get_sys_time() -> u64 {
     // todo: speed up with try read. on fail skip update
-    SYSTEM_TIME.write().get_system_time()
+    SYSTEM_TIME.get_system_time()
 }
 
+/// Attempts to update the system timer. If the timer is already being updated this will  
 pub(crate) fn update_timer() {
-    if let Some(mut t) = SYSTEM_TIME.try_write() {
-        t.update()
-    }
+    SYSTEM_TIME.update();
 }
 
 pub fn kernel_init_timer(timer: alloc::boxed::Box<(impl TimeKeeper + Sync + Send + 'static)>) {
     // This takes ownership but does not compile without 'static. WHY?
     *SYSTEM_TIMEKEEPER.write() = Some(timer);
-    SYSTEM_TIME.write().init();
+    SYSTEM_TIME.init();
 }
