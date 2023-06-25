@@ -1,9 +1,11 @@
 mod sleep;
 
+pub use crate::time::Duration;
 pub use sleep::Timer;
 
-pub async fn sleep(nsecs: u64) {
-    Timer::new(nsecs).await
+/// Sleeps for the number of specified milliseconds
+pub async fn sleep(msec: u64) {
+    Timer::new(Duration::millis(msec)).await
 }
 
 pub(crate) fn check_slp() {

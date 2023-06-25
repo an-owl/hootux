@@ -179,3 +179,39 @@ pub fn kernel_init_timer(timer: alloc::boxed::Box<(impl TimeKeeper + Sync + Send
     *SYSTEM_TIMEKEEPER.write() = Some(timer);
     SYSTEM_TIME.init();
 }
+
+#[derive(Copy, Clone, Debug, Ord, PartialOrd, Eq, PartialEq)]
+pub struct Duration {
+    nanos: u64,
+}
+
+impl Duration {
+    pub fn seconds(secs: u64) -> Self {
+        Self {
+            nanos: secs * 1000000000,
+        }
+    }
+
+    pub fn millis(milis: u64) -> Self {
+        Self {
+            nanos: milis * 1000000,
+        }
+    }
+
+    pub fn nanos(nanos: u64) -> Self {
+        Self { nanos }
+    }
+
+    pub fn get_nanos(&self) -> u64 {
+        self.nanos
+    }
+}
+
+impl core::fmt::Display for Duration {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        let sec = self.nanos / 1000000000;
+        let rem = self.nanos % 1000000000;
+
+        write!(f, "{}.{}", sec, rem)
+    }
+}
