@@ -72,12 +72,12 @@ pub struct Timer {
 
 impl Timer {
     /// Creates a new instance of self which will be ready in `duration` nanoseconds
-    pub fn new(duration: u64) -> Self {
+    pub fn new(duration: super::Duration) -> Self {
         let time = crate::time::get_sys_time();
         Self {
             inner: alloc::sync::Arc::new(SleepTimerInner {
                 in_queue: false.into(),
-                alarm: time + duration,
+                alarm: time + duration.get_nanos(),
                 waker: Default::default(),
             }),
         }
