@@ -69,6 +69,7 @@ fn handle_timer_and_calibrate() {
 /// Default timer handler. Updates system time then exits.
 fn timer_handler() {
     crate::time::update_timer();
+    crate::task::util::check_slp();
     unsafe { apic_eoi() };
 }
 

@@ -6,6 +6,7 @@ use core::{future::Future, pin::Pin};
 pub mod executor;
 pub mod keyboard;
 pub mod simple_executor;
+pub mod util;
 
 pub type InterruptQueue = crossbeam_queue::ArrayQueue<InterruptMessage>;
 
