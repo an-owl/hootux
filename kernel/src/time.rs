@@ -13,17 +13,6 @@ static SYSTEM_TIME: SystemTime = SystemTime::new();
 static SYSTEM_TIMEKEEPER: spin::RwLock<Option<alloc::boxed::Box<(dyn TimeKeeper + Sync + Send)>>> =
     spin::RwLock::new(None);
 
-/// This contains a reference to the system timer. Changing the concrete type is VERY UNSAFE and
-/// must be synchronised between threads. Failure to do so may cause missed timer interrupts or
-/// result in timer interrupts too early.
-///
-/// The method used to change the concrete type must broadcast to all cpus to switch clock-source.
-/// cpus must then switch clock-source and report it's completion when all cpus have switched
-/// clock-source the system may return to normal operation
-// todo: ensure that this cannot be changed without notifying all cpus
-#[thread_local]
-static mut IN_USE_TIMER: Option<&dyn Timer> = None;
-
 /// This enums variants reflect the error status of a function.
 #[derive(Debug)]
 pub enum TimerError {
@@ -95,56 +84,7 @@ impl From<crate::interrupts::apic::apic_structures::apic_types::TimerMode> for T
     }
 }
 
-/// Struct to wrap timers to ensure thread safety for global system timers
-#[derive(Debug)]
-struct ThreadSafeTimer<T: Timer> {
-    timer: alloc::sync::Arc<spin::RwLock<T>>,
-}
-
-impl<T: Timer> ThreadSafeTimer<T> {
-    fn new(timer: T) -> Self {
-        Self {
-            timer: alloc::sync::Arc::new(spin::RwLock::new(timer)),
-        }
-    }
-}
-
-impl<T: Timer> core::ops::Deref for ThreadSafeTimer<T> {
-    type Target = alloc::sync::Arc<spin::RwLock<T>>;
-
-    fn deref(&self) -> &Self::Target {
-        &self.timer
-    }
-}
-
-impl<T: Timer> Clone for ThreadSafeTimer<T> {
-    fn clone(&self) -> Self {
-        Self {
-            timer: self.timer.clone(),
-        }
-    }
-}
-
-impl<T: Timer> Timer for ThreadSafeTimer<T> {
-    fn get_division_mode(&self) -> u32 {
-        self.timer.read().get_division_mode()
-    }
-
-    fn set_division_mode(&mut self, div: u32) -> TimerResult {
-        self.timer.write().set_division_mode(div)
-    }
-
-    fn set_clock_count(&mut self, count: u64, mode: TimerMode) -> TimerResult {
-        self.timer.write().set_clock_count(count, mode)
-    }
-
-    fn get_initial_clock(&self) -> Result<u64, TimerError> {
-        self.timer.read().get_initial_clock()
-    }
-}
-
 /// Struct for recording duration since boot
-#[derive(Copy, Clone)]
 struct SystemTime {
     dirty: core::sync::atomic::AtomicBool,
     /// time recorded when self was last updated
