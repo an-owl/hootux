@@ -1,11 +1,11 @@
 mod privacy {
-    pub trait CheckSeal {}
+    pub trait Sealed {}
 }
 /// This is a marker trait for checking command compatibility and may not be be implemented outside
 /// of this crate
-pub trait CheckableCommand: privacy::CheckSeal {}
+pub trait CheckableCommand: privacy::Sealed {}
 
-impl<T> CheckableCommand for T where T: privacy::CheckSeal {}
+impl<T> CheckableCommand for T where T: privacy::Sealed {}
 
 #[repr(u8)]
 #[derive(Eq, PartialEq, Copy, Clone, Debug)]
@@ -139,7 +139,20 @@ pub enum AtaCommand {
     SECURITY_DISABLE_PASSWORD = 0xf6,
 }
 
-impl privacy::CheckSeal for AtaCommand {}
+impl AtaCommand {
+    pub fn is_nqc(&self) -> bool {
+        match self {
+            Self::NCQ_NON_DATA => true,
+            Self::READ_FPDMA_QUEUED => true,
+            Self::RECEIVE_FPDMA_QUEUED => true,
+            Self::SEND_FPDMA_QUEUED => true,
+            Self::WRITE_DMA_FUA_EXT => true,
+            _ => false,
+        }
+    }
+}
+
+impl privacy::Sealed for AtaCommand {}
 
 impl Into<u8> for AtaCommand {
     fn into(self) -> u8 {
@@ -160,7 +173,7 @@ pub enum SanitiseSubcommand {
     SANITIZE_ANTIFREEZE_LOCK_EXT = 0x40,
 }
 
-impl privacy::CheckSeal for SanitiseSubcommand {}
+impl privacy::Sealed for SanitiseSubcommand {}
 
 pub mod constructor {
     use crate::command::AtaCommand;
