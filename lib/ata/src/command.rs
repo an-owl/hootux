@@ -279,6 +279,19 @@ pub mod constructor {
         count: u16,
     }
 
+    impl SpanningCmd {
+        pub fn new(cmd_type: SpanningCmdType, lba: u64, count: u16) -> Option<Self> {
+            if (lba & !0xffff_ffff_ffff) != 0 {
+                return None;
+            }
+            Some(SpanningCmd {
+                cmd: cmd_type,
+                lba,
+                count,
+            })
+        }
+    }
+
     impl CommandConstructor for SpanningCmd {
         fn compose(self) -> ComposedCommand {
             let mut cmd = ComposedCommand::empty(self.cmd.into());
