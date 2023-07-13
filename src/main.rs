@@ -87,6 +87,7 @@ struct Options {
     export: bool,
     export_path: Option<String>,
     confg_path: String,
+    native_dbg_shell: bool,
 }
 
 impl Options {
@@ -112,7 +113,7 @@ impl Options {
             "e",
             "export",
             "Exports binary. By default located in `./target`. Cannot be used with --uefi",
-            "--export [OUT_FILE]",
+            "OUT_FILE",
             HasArg::Maybe,
             Occur::Optional,
         );
@@ -121,16 +122,24 @@ impl Options {
             "",
             "uefi",
             "Boots system using QEMU using UEFI image. Attempts to automatically locate firmware. Cannot be used with --bios",
-            "--uefi [PATH]",
+            "PATH",
             HasArg::Maybe,
             Occur::Optional
         );
         opts.opt(
             "",
             "config",
-            " overrides the config used by the runner",
-            "--config [PATH]",
+            "overrides the config used by the runner",
+            "PATH",
             HasArg::Yes,
+            Occur::Optional,
+        );
+        opts.opt(
+            "n",
+            "native-shell",
+            "Uses this shell for the debug window.",
+            "",
+            HasArg::No,
             Occur::Optional,
         );
 
@@ -212,6 +221,7 @@ impl Options {
             confg_path: matches
                 .opt_str("config")
                 .unwrap_or("runcfg.toml".to_string()),
+            native_dbg_shell: matches.opt_present("n"),
         }
     }
 
@@ -224,7 +234,7 @@ impl Options {
                 .expect(&format!("Failed to read config: {}", self.confg_path));
 
             s.parse::<Value>()
-                .expect(&format!("Failed to parse {}'", self.confg_path))
+                .expect(&format!("Failed to parse {}", self.confg_path))
         } else {
             eprintln!("Failed to locate config file: {}", self.confg_path);
             std::process::exit(17);
@@ -402,6 +412,13 @@ impl Options {
                 }
             }
         }
+
+        // tricks next statement into thinking no shell is specified
+        let term_args = if self.native_dbg_shell {
+            None
+        } else {
+            term_args
+        };
 
         return if let Some(term) = term_args {
             // if a terminal has been specified
