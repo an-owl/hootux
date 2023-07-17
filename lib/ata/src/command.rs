@@ -141,12 +141,41 @@ pub enum AtaCommand {
 
 impl AtaCommand {
     pub fn is_nqc(&self) -> bool {
+        use AtaCommand::*;
         match self {
-            Self::NCQ_NON_DATA => true,
-            Self::READ_FPDMA_QUEUED => true,
-            Self::RECEIVE_FPDMA_QUEUED => true,
-            Self::SEND_FPDMA_QUEUED => true,
-            Self::WRITE_DMA_FUA_EXT => true,
+            NCQ_NON_DATA => true,
+            READ_FPDMA_QUEUED => true,
+            RECEIVE_FPDMA_QUEUED => true,
+            SEND_FPDMA_QUEUED => true,
+            WRITE_DMA_FUA_EXT => true,
+            _ => false,
+        }
+    }
+    pub fn is_pio(&self) -> bool {
+        use AtaCommand::*;
+        match self {
+            READ_SECTORS => true,
+            READ_SECTORS_EXT => true,
+            READ_STREAM_EXT => true,
+            READ_LOG_EXT => true,
+            WRITE_SECTORS => true,
+            WRITE_SECTORS_EXT => true,
+            CFA_WRITE_SECTORS_WITHOUT_ERASE => true,
+            WRITE_STREAM_EXT => true,
+            WRITE_LOG_EXT => true,
+            TRUSTED_RECEIVE => true,
+            TRUSTED_SEND => true,
+            CFA_TRANSLATE_SECTOR => true,
+            DOWNLOAD_MICROCODE => true,
+            SMART => true,
+            CFA_WRITE_MULTIPLE_WITHOUT_ERASE => true,
+            READ_BUFFER => true,
+            WRITE_BUFFER => true,
+            IDENTIFY_DEVICE => true,
+            SECURITY_SET_PASSWORD => true,
+            SECURITY_UNLOCK => true,
+            SECURITY_ERASE_UNIT => true,
+            SECURITY_DISABLE_PASSWORD => true,
             _ => false,
         }
     }
