@@ -1,18 +1,20 @@
+use crate::hba::command;
 use crate::register::*;
 
+#[derive(Debug)]
 #[repr(C)]
 pub(crate) struct PortControl {
     /// PxCLB:PxCLBU
-    command_list_base: Register<RegisterAddress<1028>>, // may only be 32bit check first.
+    command_list_base: HbaAddr<1028>, // may only be 32bit check first.
     /// PxFB:PxFBU
     /// Although this can be aligned to 256 bytes this is aligned to 4096 to avoid extra checks.
-    fis_base_address: Register<RegisterAddress<4096>>, // may only be 32 bit.
+    fis_base_address: HbaAddr<4096>, // may only be 32 bit.
     /// PxIS
-    interrupt_status: Register<InterruptStatus, ReadWriteClear<InterruptStatus>>,
+    pub(crate) interrupt_status: Register<InterruptStatus, ReadWriteClear<InterruptStatus>>,
     /// PxIE
     interrupt_enable: Register<InterruptEnable>,
     /// PxCMD
-    cmd_status: Register<CommStatus>,
+    pub(crate) cmd_status: Register<CommStatus>,
     _res0: core::mem::MaybeUninit<u32>,
     /// PxTFD
     task_file_data: Register<TaskFileData, ReadOnly>,
@@ -25,9 +27,9 @@ pub(crate) struct PortControl {
     /// PxSERR
     sata_err: Register<SataErr>,
     /// PxSCAT
-    sata_active: Register<CmdIssueBitfield, ReadWriteClear<CmdIssue>>,
+    sata_active: CmdIssue,
     /// PxCI
-    command_issue: Register<CmdIssueBitfield, ReadWriteClear<CmdIssue>>,
+    command_issue: CmdIssue,
     /// PxSNTF
     sata_notification: Register<SataNotification, ReadWriteClear<SataNotifyAck>>,
     /// PxFBS
@@ -40,11 +42,9 @@ pub(crate) struct PortControl {
 }
 
 impl PortControl {
-    pub fn get_cmd_table_addr(&self) -> u64 {
-        // SAFETY: This is safe because if qword is not supported then the upper half will be driven to 0
-        unsafe { self.command_list_base.read().qword.inner }
-    }
-
+    /// Returns the state of the device connected to the port. This fn will return [crate::PortState::None]
+    /// if the port is not implemented. The caller should query [super::general_control::GeneralControl]
+    /// for implemented ports.
     pub fn get_port_state(&self) -> crate::PortState {
         use crate::PortState;
         return if self
@@ -53,78 +53,43 @@ impl PortControl {
             .contains(CommStatus::COLD_PRESENCE_STATE)
         {
             PortState::Cold
-        } else if self.sata_status.read().power_management() != PowerState::Active {
-            PortState::Warm
         } else if self.sata_status.read().dev_detect() == DeviceDetection::InComm {
-            PortState::Hot
+            if self.sata_status.read().power_management() == PowerState::Active {
+                PortState::Hot
+            } else {
+                PortState::Warm
+            }
         } else {
             PortState::None
         };
     }
 
-    /// Returns the first available command slot
-    pub(crate) fn get_free_cmd(&self) -> Option<u8> {
-        if self.command_issue.read().inner == u32::MAX {
-            None
-        } else {
-            Some(self.command_issue.read().inner.trailing_zeros() as u8)
-        }
-    }
-}
-
-/// This struct is to allow code to interact with a [RegisterAddress] without needing to know it's
-/// exact size.
-///
-/// A is a mask to align
-#[repr(transparent)]
-#[derive(Copy, Clone, Default)]
-pub struct AlignedAddress<T, const A: u16> {
-    inner: T,
-}
-
-impl<T, const A: u16> AlignedAddress<T, A> {
-    const _ASSERT_POWER: () = assert!(A.is_power_of_two());
-    /// Writes `src` into
-    pub fn set_addr<U>(&mut self, src: U)
-    where
-        U: Into<T> + core::ops::BitAnd<U, Output = U> + From<u16> + Eq + Clone,
-    {
-        assert!(src.clone().bitand((A - 1).into()) == 0.into());
-        self.inner = src.into()
-    }
-}
-
-/// This union is used to access an address register. A is used to check the alignment of the register
-/// and must be a power of two.
-///
-/// When 64bit addressing is supported the `qword` variant of this union should be used. This bit is
-/// in the [super::general_control::GeneralControl] struct, when [super::general_control::HbaCapabilities::QWORD_BIT_ADDRESSING] is set  
-///
-/// # Safety
-///
-/// The caller must ensure that the HBA supports 64bit addressing before accessing the `qword` variant.
-/// The caller must ensure that the higher 32bits of the address are cleared when accessing `dword`
-/// while 64bit addressing is supported. Using `dword` is discouraged if 64bit addressing is available.
-pub union RegisterAddress<const A: u16> {
-    pub(crate) dword: AlignedAddress<u32, A>,
-    pub(crate) qword: AlignedAddress<u64, A>,
-}
-
-impl<const A: u16> RegisterAddress<A> {
-    pub(crate) fn read_qword(&self) -> u64 {
-        unsafe { self.qword.inner }
+    pub(crate) fn set_cmd_table(&mut self, cmd_list: *const [command::CommandHeader; 32]) {
+        // *Should* never panic
+        let a = hootux::mem::mem_map::translate(cmd_list as *const _ as usize).unwrap();
+        self.command_list_base.set(a);
     }
 
-    pub(crate) const fn new_uninit() -> Self {
-        Self {
-            qword: AlignedAddress::default(),
-        }
+    /// Executes a command on command slot `cmd`.
+    /// For NQC commands use [Self::exec_nqc] instead.
+    ///
+    /// # Safety
+    ///
+    /// The caller must ensure that the FIS in the given command slot is valid and that the PRDT has
+    /// been configured correctly.
+    pub(crate) unsafe fn exec_cmd(&self, cmd: u8) {
+        self.command_issue.issue(cmd);
     }
-}
 
-unsafe impl<const A: u16> ClearReserved for RegisterAddress<A> {
-    /// This is not technically a safe implementation
-    fn clear_reserved(&mut self) {}
+    /// Identical to [Self::exec_cmd] for NQC commands.
+    pub(crate) unsafe fn exec_nqc(&self, cmd: u8) {
+        self.sata_active.issue(cmd);
+        self.command_issue.issue(cmd);
+    }
+
+    pub(crate) fn cmd_state(&self) -> u32 {
+        self.command_issue.0.get()
+    }
 }
 
 bitflags::bitflags! {
@@ -132,8 +97,9 @@ bitflags::bitflags! {
     ///
     /// Represents the port interrupt status register. All but explicitly mentioned flags in this
     /// register are cleared by writing a `1`
+    #[derive(Debug)]
     #[repr(transparent)]
-    struct InterruptStatus: u32 {
+    pub(crate) struct InterruptStatus: u32 {
         /// CPDS (R1C)
         ///
         /// A device change was detected by cold presence logic. Only valid if the port supports
@@ -214,6 +180,7 @@ bitflags::bitflags! {
 
     /// This is used to enable interrupts. When set allows the corresponding bit in [InterruptStatus]
     /// to generate an interrupt.
+    #[derive(Debug)]
     #[repr(transparent)]
     struct InterruptEnable: u32 {
         const COLD_PORT_DETECT = 1 << 31;
@@ -235,6 +202,7 @@ bitflags::bitflags! {
         const DEV_TO_HOST_FIS = 1;
     }
 
+    #[derive(Debug)]
     pub(crate) struct CommStatus: u32 {
         /// ASP (CD)
         ///
@@ -357,7 +325,7 @@ unsafe impl Acknowledge<InterruptStatus> for InterruptStatus {
 
 #[repr(u8)]
 #[derive(Eq, PartialEq, Debug, Default)]
-enum PowerState {
+pub enum PowerState {
     /// When this value is read the interface is ready to accept a new command, even if the
     /// previous operation has not been completed.
     #[default]
@@ -447,6 +415,7 @@ impl From<u8> for PowerState {
 }
 
 impl CommStatus {
+    #![allow(dead_code)]
     /// ICC (RW)
     ///
     /// Controls the power management states of the interface if the link layer is currently in the
@@ -500,6 +469,7 @@ unsafe impl ClearReserved for CommStatus {
 /// - D2H Register FIS
 /// - PIO setup FIS
 /// - Set device bits FIS
+#[derive(Debug)]
 #[repr(C)]
 struct TaskFileData {
     status: u8,
@@ -508,6 +478,7 @@ struct TaskFileData {
 }
 
 impl TaskFileData {
+    #![allow(dead_code)]
     /// Returns the latest copy of the task file error register.
     fn get_err(&self) -> u8 {
         self.err
@@ -524,6 +495,7 @@ impl TaskFileData {
 /// This register is set when the first D2H FIS is received from the device.
 // idk what any of this does
 #[repr(C)]
+#[derive(Debug)]
 struct PortSignature {
     sector_count: u8,
     lba_low: u8,
@@ -532,6 +504,7 @@ struct PortSignature {
 }
 
 impl PortSignature {
+    #![allow(dead_code)]
     pub fn sector_count(&self) -> u8 {
         self.sector_count
     }
@@ -551,21 +524,37 @@ impl PortSignature {
 
 /// PxSSTS (RO)
 #[repr(transparent)]
+#[derive(Debug)]
 struct SataStatus {
     inner: u32,
+}
+
+#[repr(u8)]
+#[derive(Copy, Clone, Eq, PartialEq)]
+enum DeviceDetection {
+    /// No device is connected to the port.
+    NoDevice = 0,
+    /// A device is connected to the but Physical communication is not established
+    NoComm,
+    /// A device is connected and communication has been established
+    InComm = 3,
+    /// The port is disabled.
+    Offline,
 }
 
 impl SataStatus {
     /// IPM
     ///
     /// This fn returns the current power state of the device.
-    /// The return value of this fn reclects the current state of the device not an active transition
+    /// The return value of this fn reflects the current state of the device not an active transition
+    #[allow(dead_code)]
     pub fn power_management(&self) -> PowerState {
         ((self.inner >> 8) as u8 & 0xf).into()
     }
 
     /// SPD
     /// Returns the interface speed if the device is enabled
+    #[allow(dead_code)]
     pub fn interface_speed(&self) -> Option<super::SataGeneration> {
         use super::SataGeneration;
         let t = (self.inner >> 4) & 0xf;
@@ -584,22 +573,9 @@ impl SataStatus {
     }
 }
 
-#[repr(u8)]
-#[derive(Copy, Clone, Eq, PartialEq)]
-enum DeviceDetection {
-    /// No device is connected to the port.
-    NoDevice = 0,
-    /// A device is connected to the but Physical communication is not established
-    NoComm,
-    /// A device is connected and communication has been established
-    InComm = 3,
-    /// The port is disabled.
-    Offline,
-}
-
 impl From<u32> for DeviceDetection {
     fn from(value: u32) -> Self {
-        match value | 7 {
+        match value & 7 {
             0 => Self::NoDevice,
             1 => Self::NoComm,
             3 => Self::InComm,
@@ -614,6 +590,7 @@ impl From<u32> for DeviceDetection {
 }
 
 /// SCR2
+#[derive(Debug)]
 struct SataControl {
     inner: u32,
 }
@@ -651,6 +628,7 @@ impl From<u32> for DeviceDetectionInit {
 }
 
 impl SataControl {
+    #![allow(dead_code)]
     /// IPM (RW) non-volatile
     ///
     /// Gets the power modes the HBA is allowed to transition to.
@@ -663,7 +641,7 @@ impl SataControl {
     /// See [Self::set_power_man_trans_allow]
     pub fn set_power_man_trans_allow(&mut self, mode: AllowedPowerMode) {
         self.inner &= !AllowedPowerMode::all().bits();
-        self.inner | mode.bits();
+        self.inner |= mode.bits();
     }
 
     /// SPD (RW)
@@ -683,7 +661,7 @@ impl SataControl {
 
     /// See [Self::get_allowed_limit]
     pub fn set_speed_limit(&mut self, limit: Option<super::SataGeneration>) {
-        self.inner & !0xf0;
+        self.inner &= !0xf0;
         self.inner |= limit.map_or(0, |g| g as u32);
     }
 
@@ -709,6 +687,7 @@ unsafe impl ClearReserved for SataControl {
 
 bitflags::bitflags! {
     /// DIAG (RWC)
+    #[derive(Debug)]
     #[repr(transparent)]
     struct SataErr: u32 {
         /// DIAG.X
@@ -791,33 +770,7 @@ bitflags::bitflags! {
     }
 }
 
-struct CmdIssueBitfield {
-    inner: u32,
-}
-
-impl CmdIssueBitfield {
-    /// Sets the relevant bit for `cmd`
-
-    /// Gets the state of the bit for `cmd`
-    pub fn get(&self, cmd: super::CmdIndex) -> bool {
-        if self.inner & 1 << cmd.index() != 0 {
-            true
-        } else {
-            false
-        }
-    }
-}
-
-struct CmdIssue {
-    inner: u32,
-}
-
-impl CmdIssue {
-    pub fn set(&mut self, cmd: super::CmdIndex) {
-        self.inner |= 1 << cmd.index();
-    }
-}
-
+#[derive(Debug)]
 #[repr(C)]
 struct SataNotification {
     notification: u16,
@@ -825,6 +778,7 @@ struct SataNotification {
 }
 
 impl SataNotification {
+    #![allow(dead_code)]
     pub fn get_bits(&self) -> u16 {
         self.notification
     }
@@ -850,6 +804,7 @@ struct SataNotifyAck {
 }
 
 impl SataNotifyAck {
+    #![allow(dead_code)]
     /// Creates a new acknowledgement using the mask `bits`.
     ///
     /// To create an empty acknowledgement use `Default::default()` instead
@@ -873,6 +828,7 @@ unsafe impl Acknowledge<SataNotification> for SataNotifyAck {
 }
 
 bitflags::bitflags! {
+    #[derive(Debug)]
     struct FisSwitchingCtl: u32 {
         /// SDE (RO)
         const SINGLE_DEVICE_ERROR = 1 << 2;
@@ -884,6 +840,7 @@ bitflags::bitflags! {
 }
 
 impl FisSwitchingCtl {
+    #![allow(dead_code)]
     /// DWE (RO)
     fn get_dev_err(&self) -> u8 {
         let t: u32 = self.bits();
@@ -955,11 +912,15 @@ unsafe impl Acknowledge<FisSwitchingCtl> for FisErrClear {
 /// Some fields in this register are RO/RW these fields will be marked as (CD1).
 /// These fields are Writable when [super::general_control::HbaCapabilitiesExt::DEVICE_SLEEP]
 /// and [DevSleep::sleep_present] are both set. Otherwise they should be treated as reserved.
+#[derive(Debug)]
 struct DevSleep {
     inner: u32,
 }
 
 impl DevSleep {
+    // power states currently not used.
+    #![allow(dead_code)]
+
     /// DM (RO)
     ///
     /// Multiplies the value returned by [Self::get_dev_idle_timeout].
@@ -1060,5 +1021,21 @@ impl DevSleep {
         } else {
             false
         }
+    }
+}
+
+#[repr(transparent)]
+#[derive(Debug)]
+struct CmdIssue(core::cell::Cell<u32>);
+
+impl CmdIssue {
+    fn issue(&self, cmd: u8) {
+        atomic::fence(atomic::Ordering::SeqCst);
+        if self.0.get() & 1 << cmd != 0 {
+            panic!("Command in progress")
+        }
+        self.0.set(1 << cmd);
+        core::hint::black_box(self);
+        atomic::fence(atomic::Ordering::SeqCst);
     }
 }

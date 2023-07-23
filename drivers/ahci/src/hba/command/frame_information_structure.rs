@@ -1,6 +1,6 @@
 use core::mem::MaybeUninit;
-use ata::command::constructor::MaybeOpaqueCommand;
 
+#[allow(dead_code)]
 pub struct ReceivedFis {
     dma_setup: MaybeUninit<DmaSetupFis>,
     _res0: [u8; 4],
@@ -13,12 +13,13 @@ pub struct ReceivedFis {
 }
 
 #[repr(transparent)]
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Default)]
 pub struct FisCommand {
     low: u8,
 }
 
 impl FisCommand {
+    #![allow(dead_code)]
     pub fn set_cmd_bit(&mut self, value: bool) {
         if value {
             self.low |= 1 << 7
@@ -41,18 +42,18 @@ impl FisCommand {
 #[repr(C)]
 #[derive(Clone)]
 pub struct RegisterHostToDevFis {
-    pub(super) fis_type: FisType,
-    pub(super) cfg: FisCommand,
-    pub(super) command: u8,
-    pub(super) features_low: u8,
-    pub(super) lba_low: [u8; 3],
-    pub(super) dev: u8,
-    pub(super) lba_high: [u8; 3],
-    pub(super) features_high: u8,
-    pub(super) count: u16,
-    pub(super) icc: u8,
-    pub(super) control: u8,
-    pub(super) aux: u32,
+    pub(crate) fis_type: FisType,
+    pub(crate) cfg: FisCommand,
+    pub(crate) command: u8,
+    pub(crate) features_low: u8,
+    pub(crate) lba_low: [u8; 3],
+    pub(crate) dev: u8,
+    pub(crate) lba_high: [u8; 3],
+    pub(crate) features_high: u8,
+    pub(crate) count: u16,
+    pub(crate) icc: u8,
+    pub(crate) control: u8,
+    pub(crate) aux: u32,
 }
 
 impl RegisterHostToDevFis {
@@ -65,22 +66,22 @@ impl RegisterHostToDevFis {
         count: u16,
         icc: u8,
         control: u8,
-        aux: u32
+        aux: u32,
     ) -> Self {
-        assert!(lba > 0x1000000000000);
+        assert!(lba < 1 << 48);
 
         // separations
-        let (lba_low,lba_high) = {
-            let lba_bytes: [u8;8] = lba.to_le_bytes();
-            let mut lba_low = [0u8;3];
-            let mut lba_high = [0u8;3];
+        let (lba_low, lba_high) = {
+            let lba_bytes: [u8; 8] = lba.to_le_bytes();
+            let mut lba_low = [0u8; 3];
+            let mut lba_high = [0u8; 3];
             lba_low[..].copy_from_slice(&lba_bytes[0..3]);
             lba_high[..].copy_from_slice(&lba_bytes[3..6]);
-            (lba_low,lba_high)
+            (lba_low, lba_high)
         };
 
-        let [features_low,features_high] = features.to_le_bytes();
-        let mut cfg = FisCommand{low: 0};
+        let [features_low, features_high] = features.to_le_bytes();
+        let mut cfg = FisCommand { low: 0 };
         cfg.set_port(port);
 
         Self {
@@ -98,24 +99,27 @@ impl RegisterHostToDevFis {
             aux,
         }
     }
-
-    fn set_lba(&mut self, lba: u64) {
-        assert!(lba < (1 << 48));
-        let b: [u8; 8] = lba.to_le_bytes();
-        self.lba_low.copy_from_slice(&b[0..3]);
-        self.lba_high.copy_from_slice(&b[3..6]);
-    }
 }
 
-impl From<&ata::command::constructor::ComposedCommand> for RegisterHostToDevFis {
-    fn from(value: &ata::command::constructor::ComposedCommand) -> Self {
+impl TryFrom<&ata::command::constructor::ComposedCommand> for RegisterHostToDevFis {
+    type Error = ();
+
+    fn try_from(value: &ata::command::constructor::ComposedCommand) -> Result<Self, Self::Error> {
         use ata::command::constructor::*;
-        let command = match value.command {
-            MaybeOpaqueCommand::Concrete(c) => c,
-            MaybeOpaqueCommand::Opaque(c) => match c {
-                OpaqueCommand::Read => ata::command::AtaCommand::READ_DMA_EXT,
-                OpaqueCommand::Write => {}
-            }
+        if let MaybeOpaqueCommand::Concrete(c) = value.command {
+            Ok(Self::new(
+                c,
+                0,
+                value.feature.unwrap_or(0),
+                value.lba.unwrap_or(0),
+                value.device.unwrap_or(0),
+                value.count.unwrap_or(0),
+                value.icc.unwrap_or(0),
+                0,
+                value.aux.unwrap_or(0),
+            ))
+        } else {
+            Err(())
         }
     }
 }
@@ -134,11 +138,13 @@ pub struct RegisterDevToHostFis {
     _res1: u32,
 }
 
+#[allow(dead_code)]
 pub struct D2HFlags {
     inner: u8,
 }
 
 impl D2HFlags {
+    #![allow(dead_code)]
     fn get_port(&self) -> u8 {
         self.inner & 0xf
     }
@@ -165,6 +171,8 @@ pub struct SetDevBitsFlags {
 }
 
 impl SetDevBitsFlags {
+    // maybe replace get_status_high/low with `get_status` that reruns both
+    #![allow(dead_code)]
     fn get_port(&self) -> u8 {
         self.low & 0xf
     }
@@ -186,22 +194,26 @@ impl SetDevBitsFlags {
     }
 }
 
+#[allow(dead_code)]
 pub struct DmaActiveD2H {
     fis_type: FisType,
     port: DmaActivePort,
     _res: u16,
 }
 
+#[allow(dead_code)]
 pub struct DmaActivePort {
     inner: u8,
 }
 
 impl DmaActivePort {
+    #![allow(dead_code)]
     fn get_port(&self) -> u8 {
         self.inner & 0xf
     }
 }
 
+#[allow(dead_code)]
 pub struct DmaSetupFis {
     fis_type: FisType,
     flags: DmaSetupFlags,
@@ -214,6 +226,7 @@ pub struct DmaSetupFis {
 }
 
 impl DmaSetupFis {
+    #![allow(dead_code)]
     /// Sets offset of the byte buffer in bits.
     ///
     /// # Panics
@@ -226,12 +239,14 @@ impl DmaSetupFis {
     }
 }
 
+#[allow(dead_code)]
 #[repr(transparent)]
 pub struct DmaSetupFlags {
     inner: u8,
 }
 
 impl DmaSetupFlags {
+    #![allow(dead_code)]
     fn get_port(&self) -> u8 {
         self.inner & 0xf
     }
@@ -275,6 +290,7 @@ impl DmaSetupFlags {
     }
 }
 
+#[allow(dead_code)]
 pub struct BistActivateFis {
     fis_type: FisType,
     port: u8, // 0..15 only
@@ -325,6 +341,8 @@ pub struct PioSetupFis {
 }
 
 impl PioSetupFis {
+    #![allow(dead_code)]
+
     /// Returns the lba given by the device
     fn get_lba(&self) -> u64 {
         let mut arr_le = [0u8; 8];
@@ -335,12 +353,14 @@ impl PioSetupFis {
     }
 }
 
+#[allow(dead_code)]
 #[repr(transparent)]
 pub struct PioSetupFlags {
     inner: u8,
 }
 
 impl PioSetupFlags {
+    #![allow(dead_code)]
     /// Sets the Port multiplier port
     ///
     /// # Panics
@@ -362,15 +382,8 @@ impl PioSetupFlags {
         self.inner & (1 << 6) != 0
     }
 }
-
-// todo i dont think i need this here
-pub struct DataFis<const N: usize> {
-    fis_type: FisType,
-    port: u8, // must < 16
-    _res: u16,
-    data: [u32; N],
-}
-
+// All variants exist here but not all are used. Some of this will probably always remain dead
+#[allow(dead_code)]
 #[repr(u8)]
 #[derive(Copy, Clone, Ord, PartialOrd, Eq, PartialEq)]
 pub enum FisType {
@@ -391,6 +404,7 @@ pub enum FisType {
 }
 
 impl FisType {
+    #![allow(dead_code)]
     /// Returns whether or not the FIS type is host to device.
     ///
     /// Reserved and vendor specific types always return false
