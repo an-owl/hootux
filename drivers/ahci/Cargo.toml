@@ -11,3 +11,6 @@ volatile = "0.4.6"
 bitflags = "2.1.0"
 ata = {path = "../../lib/ata"}
 spin = "0.9.8"
+atomic = "0.5.3"
+futures = { version = "0.3.28", default-features = false, features = ["alloc"] }
+log = "0.4.19"
