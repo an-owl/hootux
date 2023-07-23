@@ -1,6 +1,3 @@
-use alloc::boxed::Box;
-use core::any::Any;
-
 pub mod block;
 
 static SYSFS_ROOT: SysFsRoot = SysFsRoot::new();
