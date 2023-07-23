@@ -107,3 +107,45 @@ pub struct Aboe<T> {
 impl<T> ReadWriteMarker for Aboe<T> {}
 
 impl<T> Read1ClearMarker<T> for Aboe<T> {}
+
+/// This struct contains a physical address used by the HBA. The HBA may only support 32 bit addressing
+#[derive(Copy, Clone, Debug)]
+pub(crate) struct HbaAddr<const ALIGN: u32>(u64);
+
+impl<const ALIGN: u32> HbaAddr<ALIGN> {
+    const fn new() -> Self {
+        Self(0)
+    }
+
+    /// Sets the address of self to `addr`.
+    ///
+    /// # Panics
+    ///
+    /// This fn will panic if `addr` is not aligned to `ALIGN`
+    pub(crate) fn set(&mut self, addr: u64) {
+        assert_eq!(addr & (ALIGN - 1) as u64, 0);
+        unsafe { core::ptr::write_volatile(&mut self.0, addr) }
+    }
+
+    /// Sets only the low half of the address to `addr`.
+    ///
+    ///
+    ///# Panics
+    ///
+    /// This fn will panic if `addr` is not aligned to `ALIGN`
+    ///
+    /// # Safety
+    ///
+    /// The high 32bits if the address will be not be modified. This should only be used on devices
+    /// that use 32bit addressing
+    #[allow(dead_code)]
+    pub(crate) unsafe fn set_low(&mut self, addr: u32) {
+        assert_eq!(addr & ALIGN - 1, 0);
+        // casts to u64 to u32
+        unsafe { core::ptr::write_volatile(&mut (self.0 as u32), addr) }
+    }
+
+    pub(crate) fn read(&self) -> u64 {
+        unsafe { core::ptr::read_volatile(&self.0) }
+    }
+}
