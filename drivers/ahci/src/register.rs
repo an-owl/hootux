@@ -45,8 +45,9 @@ impl<T, M> Register<T, M> {
         M: ReadWriteMarker,
         T: ClearReserved,
     {
-        let t = self.read();
-        self.write(f(t));
+        let t = &mut self.inner;
+        f(t);
+        core::hint::black_box(self);
     }
 
     /// Allows non-volatile access to the inner data
