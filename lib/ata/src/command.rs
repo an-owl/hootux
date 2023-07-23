@@ -8,7 +8,9 @@ pub trait CheckableCommand: privacy::Sealed {}
 impl<T> CheckableCommand for T where T: privacy::Sealed {}
 
 #[repr(u8)]
-#[derive(Eq, PartialEq, Copy, Clone, Debug)]
+#[derive(
+    Eq, PartialEq, Copy, Clone, Debug, num_enum::TryFromPrimitive, num_enum::IntoPrimitive,
+)]
 #[allow(non_camel_case_types)]
 pub enum AtaCommand {
     // Read
@@ -30,7 +32,8 @@ pub enum AtaCommand {
     /// See [Self::WRITE_DMA]
     /// - Count: Size of this field is doubled. A value of 0 is treated as 65,536
     WRITE_DMA_EXT = 0x35,
-    /// Performs an uncached [Self::WRITE_DMA_EXT] regardless of the current caching policy.
+    /// Performs a [Self::WRITE_DMA_EXT] returning only after the data has been written to the non
+    /// volatile medium.
     WRITE_DMA_FUA_EXT = 0x3d,
 
     // Diagnostic
@@ -151,34 +154,6 @@ impl AtaCommand {
             _ => false,
         }
     }
-    pub fn is_pio(&self) -> bool {
-        use AtaCommand::*;
-        match self {
-            READ_SECTORS => true,
-            READ_SECTORS_EXT => true,
-            READ_STREAM_EXT => true,
-            READ_LOG_EXT => true,
-            WRITE_SECTORS => true,
-            WRITE_SECTORS_EXT => true,
-            CFA_WRITE_SECTORS_WITHOUT_ERASE => true,
-            WRITE_STREAM_EXT => true,
-            WRITE_LOG_EXT => true,
-            TRUSTED_RECEIVE => true,
-            TRUSTED_SEND => true,
-            CFA_TRANSLATE_SECTOR => true,
-            DOWNLOAD_MICROCODE => true,
-            SMART => true,
-            CFA_WRITE_MULTIPLE_WITHOUT_ERASE => true,
-            READ_BUFFER => true,
-            WRITE_BUFFER => true,
-            IDENTIFY_DEVICE => true,
-            SECURITY_SET_PASSWORD => true,
-            SECURITY_UNLOCK => true,
-            SECURITY_ERASE_UNIT => true,
-            SECURITY_DISABLE_PASSWORD => true,
-            _ => false,
-        }
-    }
 }
 
 impl privacy::Sealed for AtaCommand {}
@@ -192,7 +167,7 @@ impl Into<u8> for AtaCommand {
 /// Used with the [AtaCommand::SANITIZE_DEVICE] command.
 #[repr(u16)]
 #[allow(non_camel_case_types)]
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, num_enum::TryFromPrimitive, num_enum::IntoPrimitive)]
 pub enum SanitiseSubcommand {
     SANITIZE_STATUS_EXT = 0,
     CRYPTO_SCRAMBLE_EXT = 0x11,
