@@ -186,7 +186,14 @@ impl DmaAlloc {
 }
 
 unsafe impl Allocator for DmaAlloc {
-    fn allocate(&self, layout: Layout) -> Result<NonNull<[u8]>, AllocError> {
+    fn allocate(&self, mut layout: Layout) -> Result<NonNull<[u8]>, AllocError> {
+        // aligns and pads `layout` frame allocator requires size to to be aligned to 4k
+        // This can only run if align > 4k because align can only be power of 2
+        if layout.align() & (mem::PAGE_SIZE - 1) != 0 {
+            layout = layout.align_to(mem::PAGE_SIZE).unwrap();
+            layout = layout.pad_to_align();
+        }
+
         let addr = super::COMBINED_ALLOCATOR.lock().virt_allocate(layout)?;
         {
             let start = addr.cast::<u8>().as_ptr() as usize as u64;
