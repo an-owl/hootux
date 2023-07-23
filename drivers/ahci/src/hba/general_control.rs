@@ -1,5 +1,7 @@
 use crate::register::{ClearReserved, ReadOnly, Register};
 
+#[derive(Debug)]
+#[repr(C)]
 pub(crate) struct GeneralControl {
     /// CAP
     capabilities: Register<HbaCapabilities, ReadOnly>,
@@ -7,7 +9,7 @@ pub(crate) struct GeneralControl {
     interrupt_status: DwordHighClear, // does not use  register because it is W1C
     /// PI
     ///
-    /// Ports implemented. Bitfield corresponding to ports implemented by the hba.
+    /// Ports implemented. Bitfield corresponding to ports implemented by the HBA.
     ports: Register<PortImplemented, ReadOnly>,
     version: Register<VersionRegister>,
     ccc_control: Register<CCCControl>,
@@ -32,6 +34,20 @@ impl GeneralControl {
     /// This fn will panic if `port >= 32`
     pub fn check_port(&self, port: u8) -> bool {
         self.ports.read().implemented(port)
+    }
+
+    pub fn int_status(&self) -> u32 {
+        self.interrupt_status.read()
+    }
+
+    pub(crate) fn claim_from_firmware(&mut self) {
+        if self
+            .get_capabilities()
+            .1
+            .contains(HbaCapabilitiesExt::BIOS_HANDOFF)
+        {
+            self.bios_handoff_ctl_status.claim_blocking()
+        }
     }
 }
 
@@ -146,6 +162,7 @@ bitflags::bitflags! {
         const BIOS_HANDOFF = 1;
     }
 
+    #[derive(Debug)]
     #[repr(transparent)]
     pub(crate) struct GlobalHbaCtl: u32 {
         const AHCI_ENABLE = 31 << 1;
@@ -174,6 +191,7 @@ bitflags::bitflags! {
         const MESSAGE_RECIEVED = 1;
     }
 
+    #[derive(Debug)]
     pub(crate) struct FirmwareHandoffCtl: u32 {
         /// Indicates that the firmware is cleaning up for ownership change.
         const FW_BUSY = 1 << 4;
@@ -205,7 +223,8 @@ impl HbaCapabilities {
     /// Gen1: up to 1.5Gib/s
     /// Gen2: up to 3Gib/s
     /// Gen3: up to 6Gib/s
-    pub fn get_if_speed(&self) -> u8 {
+    #[allow(dead_code)]
+    pub(crate) fn get_if_speed(&self) -> u8 {
         let mut t: u32 = self.bits();
         t >>= 20;
         t &= 7;
@@ -213,14 +232,16 @@ impl HbaCapabilities {
     }
 
     /// Returns the maximum number of command slots per port
-    pub fn get_command_slots(&self) -> u8 {
+    pub(crate) fn get_command_slots(&self) -> u8 {
         let mut t: u32 = self.bits();
         t >>= 8;
-        t as u8 & 0xf
+        (t as u8 & 0x1f) + 1
     }
 
     /// Gets the number of supported ports.
-    pub fn port_count(&self) -> u8 {
+    #[allow(dead_code)]
+    // not sure if I even need this
+    pub(crate) fn port_count(&self) -> u8 {
         let t: u32 = self.bits();
         t as u8 & 0xf
     }
@@ -229,6 +250,7 @@ impl HbaCapabilities {
 /// Contain the current interrupt state of each port.
 /// Each bit `n` represents the status of port `n`
 #[repr(transparent)]
+#[derive(Debug)]
 struct DwordHighClear {
     inner: u32,
 }
@@ -260,6 +282,7 @@ impl DwordHighClear {
     }
 }
 
+#[derive(Debug)]
 #[repr(transparent)]
 struct PortImplemented(u32);
 
@@ -276,12 +299,14 @@ impl PortImplemented {
     }
 }
 
+#[derive(Debug)]
 #[repr(transparent)]
 struct VersionRegister {
     inner: u32,
 }
 
 impl VersionRegister {
+    #![allow(dead_code)]
     pub fn maj_min(&self) -> (u16, u16) {
         // Im pretty sure these do not need to be volatile
         let low = self.inner as u16;
@@ -320,12 +345,14 @@ impl TryFrom<(u16, u16)> for HbaVersion {
     }
 }
 
+#[derive(Debug)]
 #[repr(transparent)]
 pub(crate) struct CCCControl {
     inner: u32,
 }
 
 impl CCCControl {
+    #![allow(dead_code)]
     /// Sets timeout to `milis` milliseconds. Timer is used when CCC commands are in progress. When
     /// the timer reaches 0 a CCC interrupt will will be raised. The timer is reset when CCC
     /// interrupt is asserted.
@@ -356,7 +383,7 @@ impl CCCControl {
     /// # Safety
     ///
     /// The caller must ensure that CCC is disabled before calling this fn
-    pub unsafe fn set_completions(&mut self, completions: u8) {
+    unsafe fn set_completions(&mut self, completions: u8) {
         let mut t = self.inner;
         t &= !(0xff << 8);
         t |= (completions as u32) << 8;
@@ -364,7 +391,7 @@ impl CCCControl {
     }
 
     /// Sets the port used for a CCC interrupt. The port must be unused.
-    pub fn set_vector(&mut self, vector: u8) {
+    fn set_vector(&mut self, vector: u8) {
         assert!(vector < 32);
         let mut t = self.inner;
         t &= !(31 << 3);
@@ -373,7 +400,7 @@ impl CCCControl {
     }
 
     /// Enables or disables CCC.
-    pub fn enable(&mut self, state: bool) {
+    fn enable(&mut self, state: bool) {
         let mut t = self.inner;
         if state {
             t |= 1;
@@ -384,12 +411,15 @@ impl CCCControl {
     }
 }
 
+#[derive(Debug)]
 #[repr(transparent)]
 struct EnclosureManagement {
     inner: u32,
 }
 
 impl EnclosureManagement {
+    #![allow(dead_code)]
+
     /// Returns the offset of the message buffer from the beginning of ABAR
     // TODO: wtf is ABAR and how do i get it?
     pub fn offset(&self) -> isize {
@@ -408,9 +438,8 @@ impl EnclosureManagement {
 impl Register<FirmwareHandoffCtl> {
     /// Claims the HBA from the Firmware blocking until the Firmware releases it.
     pub fn claim_blocking(&mut self) {
-        self.update(|mut t| {
+        self.update(|t| {
             t.set(FirmwareHandoffCtl::OS_OWNED_SEMAPHORE, true);
-            t
         });
         while self.read().contains(FirmwareHandoffCtl::FW_OWNED_SEMAPHORE) {
             core::hint::spin_loop();
