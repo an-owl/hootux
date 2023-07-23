@@ -1,3 +1,5 @@
+use core::fmt::{Debug, Formatter};
+
 const _ASSERT: () = {
     assert!(core::mem::size_of::<DeviceIdentity>() == 512);
     assert!(core::mem::size_of::<TransferConfig>() == 14);
@@ -8,6 +10,7 @@ const _ASSERT: () = {
 /// This struct cannot be used configure the device.
 // A lot of the fields in this are marked as obsolete by the ACS-4 standard
 #[repr(C)]
+#[derive(Debug)]
 pub struct DeviceIdentity {
     general_cfg: GeneralCfg,
     _ob0: u16,
@@ -94,6 +97,7 @@ pub struct DeviceIdentity {
 }
 
 #[repr(C)]
+#[derive(Debug)]
 pub struct TransferConfig {
     pio_mode: PioMode,
     // TODO see ata spec 9.11.9.4.2
@@ -106,6 +110,7 @@ pub struct TransferConfig {
 }
 
 #[repr(C)]
+#[derive(Debug)]
 struct FeaturesSet {
     features_82: Features82,
     features_83: Features83,
@@ -346,6 +351,7 @@ pub struct VersionInfo {
 }
 
 #[repr(C)]
+#[derive(Debug)]
 struct Streaming {
     /// Number of sectors that provides optimum performance in streaming environments.
     /// Starting LBAs for streaming commands should be divisable by this value.
@@ -367,6 +373,7 @@ struct Streaming {
 ///
 /// When `self.multiple_lbas_per_sector == true` software should align operations to physical sector
 /// boundaries to optimize performance.
+#[derive(Debug)]
 pub struct DeviceGeometry {
     /// Number of logical sectors addressable on the device
     pub sector_count: u64,
@@ -391,7 +398,7 @@ impl DeviceGeometry {
 }
 
 #[repr(transparent)]
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 pub struct GeneralCfg(u16);
 
 impl GeneralCfg {
@@ -420,6 +427,7 @@ pub enum SpecificCfg {
 
 // TODO see ata spec 7.12.6.16
 #[repr(transparent)]
+#[derive(Debug)]
 struct TrustedComputing(pub u16);
 
 impl TrustedComputing {
@@ -434,6 +442,7 @@ pub struct InterfaceProperties {}
 bitflags::bitflags! {
     // TODO see ata spec 7.12.6.17
     #[repr(transparent)]
+    #[derive(Debug)]
     struct Capabilities: u16 {
         /// When clear the standby timer values are vendor specific
         const STANDARD_STANDBY_TIMER = 1 << 13;
@@ -456,6 +465,7 @@ impl Capabilities {
 }
 
 #[repr(transparent)]
+#[derive(Debug)]
 struct SanitizeSubcommands(pub u16);
 
 impl SanitizeSubcommands {
@@ -488,6 +498,7 @@ impl SanitizeSubcommands {
 }
 
 #[repr(transparent)]
+#[derive(Debug)]
 pub struct MultiwordDma(u16);
 
 impl MultiwordDma {
@@ -525,6 +536,7 @@ pub enum MultiwordDmaMode {
 
 /// For SATA mode 3 & 4 are supported
 #[repr(transparent)]
+#[derive(Debug)]
 struct PioMode(u16);
 
 impl PioMode {
@@ -540,6 +552,8 @@ impl PioMode {
 }
 
 bitflags::bitflags! {
+    #[derive(Debug)]
+    #[repr(transparent)]
     pub struct AdditonalSupport: u16 {
         const DETERMINISTIC_DATA_IN_TRIMM_LBA = 1 << 14;
         const LONG_PHYS_ALIGN_ERR_RORTING = 1 << 13;
@@ -555,6 +569,7 @@ bitflags::bitflags! {
 }
 
 #[repr(transparent)]
+#[derive(Debug)]
 pub struct QueueDepth(u16);
 
 impl QueueDepth {
@@ -566,6 +581,8 @@ impl QueueDepth {
 }
 
 bitflags::bitflags! {
+    #[derive(Debug)]
+    #[repr(transparent)]
     pub struct SataCap: u16 {
         /// [super::command::AtaCommand::READ_LOG_DMA_EXT] is equivalent to [super::command::AtaCommand::READ_LOG_DMA_EXT].
         // does this mean the DMA command uses PIO?
@@ -583,6 +600,8 @@ bitflags::bitflags! {
         const SUPPORTS_SATA_GEN1 = 1 << 1;
     }
 
+    #[derive(Debug)]
+    #[repr(transparent)]
     pub struct SataCap2: u16 {
         const POWER_DISABLE_ALWAYS_ENABLED = 1 << 8;
         const SUPPORTS_DEVSLP_TO_REDUCED_PWR_STATE = 1 << 7;
@@ -619,7 +638,8 @@ impl SataCap2 {
 }
 
 bitflags::bitflags! {
-    #[derive(Copy, Clone)]
+    #[repr(transparent)]
+    #[derive(Copy, Clone, Debug)]
     pub struct MajorVersion: u16 {
         const ACS_4 = 1 << 11;
         const ACS_3 = 1 << 10;
@@ -638,6 +658,8 @@ impl MajorVersion {
 }
 
 bitflags::bitflags! {
+    #[derive(Debug)]
+    #[repr(transparent)]
     pub struct Features82: u16 {
         const NOP = 1 << 14;
         const READ_BUFFER = 1 << 13;
@@ -669,6 +691,8 @@ impl Features82 {
 }
 
 bitflags::bitflags! {
+    #[derive(Debug)]
+    #[repr(transparent)]
     struct Features83: u16 {
         const FLUSH_CACHE_EXT = 1 << 13;
         const FLUSH_CACHE = 1 << 12;
@@ -696,6 +720,8 @@ impl Features83 {
 }
 
 bitflags::bitflags! {
+    #[derive(Debug)]
+    #[repr(transparent)]
     struct Features84: u16 {
         const IDLE_IMMEDIATE_WITH_UNLOAD = 1 << 13;
         const WORLD_WIDE_NAME = 1 << 8;
@@ -708,6 +734,7 @@ bitflags::bitflags! {
 }
 
 #[repr(C)]
+#[derive(Debug)]
 struct UltraDma {
     selected: u8,
     supported: u8,
@@ -747,6 +774,7 @@ impl UltraDma {
     }
 }
 
+#[derive(Debug)]
 pub enum UltraDmaMode {
     Mode0 = 1,
     Mode1 = 1 << 1,
@@ -758,6 +786,7 @@ pub enum UltraDmaMode {
 }
 
 #[repr(transparent)]
+#[derive(Debug)]
 struct EraseTime(u16);
 
 impl EraseTime {
@@ -772,11 +801,13 @@ impl EraseTime {
 }
 
 #[repr(C)]
+#[derive(Debug)]
 struct AdvancedPowerManagement {
     level: u8,
     _res: u8,
 }
 
+#[derive(Debug)]
 pub enum ApmLevel {
     MinimumStandby,
     IntermediateStandby(u8),
@@ -800,6 +831,8 @@ impl AdvancedPowerManagement {
 }
 
 bitflags::bitflags! {
+    #[derive(Debug)]
+    #[repr(transparent)]
     struct SectorGeom: u16 {
         const MULTIPLE_LOGICAL_PER_PHYS = 1 << 13;
         const LOGICAL_GREATHER_512_BYTES = 1 << 12;
@@ -815,6 +848,8 @@ impl SectorGeom {
 }
 
 bitflags::bitflags! {
+    #[derive(Debug)]
+    #[repr(transparent)]
     struct Features119: u16 {
         const DSN = 1 << 9;
         const MAX_ADDR_CFG = 1 << 8;
@@ -842,12 +877,8 @@ impl Features119 {
 }
 
 bitflags::bitflags! {
-    struct Features120: u16 {
-
-    }
-}
-
-bitflags::bitflags! {
+    #[derive(Debug)]
+    #[repr(transparent)]
     struct SecurityStatus: u16 {
         const MASTER_PASSWORD_CAPABILITY_MAX = 1 << 8;
         const ENHANCED_SECURE_ERASE = 1 << 5;
@@ -862,7 +893,16 @@ bitflags::bitflags! {
 #[repr(transparent)]
 struct FormFactor(u16);
 
+impl Debug for FormFactor {
+    fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
+        let mut t = f.debug_struct(core::any::type_name::<Self>());
+        t.field("form_factor", &self.form());
+        t.finish()
+    }
+}
+
 #[allow(non_camel_case_types)]
+#[derive(Debug)]
 pub enum DeviceFromFactor {
     NotReported = 0,
     Size5_25, // 5.25 inch
@@ -897,6 +937,7 @@ impl FormFactor {
 }
 
 #[repr(transparent)]
+#[derive(Debug)]
 struct DataManagement(u16);
 
 impl DataManagement {
@@ -908,6 +949,7 @@ impl DataManagement {
 
 bitflags::bitflags! {
     #[repr(transparent)]
+    #[derive(Debug)]
     struct SCTCommandTransport: u16 {
         const BIT_7 = 1 << 7;
         const DATA_TABLES = 1 << 5;
@@ -926,6 +968,7 @@ impl SCTCommandTransport {
 }
 
 #[repr(transparent)]
+#[derive(Debug)]
 struct SectorAlignment(u16);
 
 impl SectorAlignment {
@@ -936,6 +979,7 @@ impl SectorAlignment {
 }
 
 #[repr(transparent)]
+#[derive(Debug)]
 struct RotationRateField(u16);
 
 pub enum RotationRate {
@@ -956,6 +1000,7 @@ impl RotationRateField {
 }
 
 #[repr(transparent)]
+#[derive(Debug)]
 struct WriteReadVerifyMode(u16);
 
 pub enum WriteReadVerify {
@@ -985,6 +1030,19 @@ impl WriteReadVerifyMode {
 }
 
 struct TransportMajorVersion(u16);
+
+impl Debug for TransportMajorVersion {
+    fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
+        let mut t = f.debug_struct(core::any::type_name::<Self>());
+        if let Some(tif) = self.get_version() {
+            t.field("if", &tif);
+        } else {
+            t.field("if", &"Unknown");
+        };
+
+        t.finish()
+    }
+}
 
 #[derive(Debug, Copy, Clone)]
 pub enum TransportIf {
@@ -1058,6 +1116,19 @@ impl TransportMajorVersion {
 
 struct TransportMinorVersionField(u16);
 
+impl Debug for TransportMinorVersionField {
+    fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
+        let mut t = f.debug_struct(core::any::type_name::<Self>());
+        if let Some(v) = self.get_version() {
+            t.field("version", &v);
+        } else {
+            t.field("version", &"Unknown");
+        }
+
+        t.finish()
+    }
+}
+
 #[allow(non_camel_case_types)]
 #[derive(Debug, Copy, Clone)]
 pub enum TransportMinorVersion {
@@ -1090,6 +1161,16 @@ impl SectorCountExt {
     }
 }
 
+impl Debug for SectorCountExt {
+    fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
+        let mut t = f.debug_struct(core::any::type_name::<Self>());
+        t.field("inner", &self.read());
+
+        t.finish()
+    }
+}
+
+#[derive(Debug)]
 #[repr(C)]
 struct Integrity {
     validity: u8,
