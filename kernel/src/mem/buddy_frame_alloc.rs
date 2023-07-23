@@ -379,7 +379,7 @@ impl DmaRegion {
 
             // just removing the buddy is fine enough
 
-            let mut filter = self.free_list[i].drain_filter(|n| *n == buddy);
+            let mut filter = self.free_list[i].extract_if(|n| *n == buddy);
 
             if let None = filter.next() {
                 // still calls Box::new

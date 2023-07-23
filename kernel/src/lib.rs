@@ -12,7 +12,7 @@
 #![feature(allocator_api)]
 #![feature(thread_local)]
 #![feature(optimize_attribute)]
-#![feature(drain_filter)]
+#![feature(extract_if)]
 #![feature(linked_list_cursors)]
 #![feature(core_intrinsics)]
 #![feature(box_into_inner)]
