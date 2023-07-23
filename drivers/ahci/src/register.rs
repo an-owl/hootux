@@ -1,17 +1,17 @@
 #[repr(transparent)]
-pub struct Register<T, M = ReadWrite> {
+pub(crate) struct Register<T, M = ReadWrite> {
     inner: T,
     _phantom: core::marker::PhantomData<M>,
 }
 
 impl<T, M> Register<T, M> {
     /// Performs a volatile read and returns the inner data
-    pub fn read(&self) -> T {
+    pub(crate) fn read(&self) -> T {
         unsafe { core::ptr::read_volatile(&self.inner) }
     }
 
     /// Uses a volatile write to store the data
-    pub fn write(&mut self, mut src: T)
+    pub(crate) fn write(&mut self, mut src: T)
     where
         M: ReadWriteMarker,
         T: ClearReserved,
@@ -20,7 +20,7 @@ impl<T, M> Register<T, M> {
         unsafe { core::ptr::write_volatile(&mut self.inner, src) }
     }
 
-    pub fn clear<C: Acknowledge<T>>(&mut self, src: C)
+    pub(crate) fn clear<C: Acknowledge<T>>(&mut self, src: C)
     where
         M: Read1ClearMarker<C>,
     {
@@ -28,9 +28,9 @@ impl<T, M> Register<T, M> {
     }
 
     /// Runs the fn `f` on the inner value writing the result into self
-    pub fn update<F>(&mut self, f: F)
+    pub(crate) fn update<F>(&mut self, f: F)
     where
-        F: FnOnce(T) -> T,
+        F: FnOnce(&mut T),
         M: ReadWriteMarker,
         T: ClearReserved,
     {
@@ -39,7 +39,7 @@ impl<T, M> Register<T, M> {
     }
 
     /// Allows non-volatile access to the inner data
-    pub fn inner(&self) -> &T {
+    pub(crate) fn inner(&self) -> &T {
         &self.inner
     }
 }
