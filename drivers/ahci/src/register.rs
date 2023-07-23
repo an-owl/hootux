@@ -1,7 +1,18 @@
+use core::fmt::{Debug, Formatter};
+
 #[repr(transparent)]
 pub(crate) struct Register<T, M = ReadWrite> {
     inner: T,
     _phantom: core::marker::PhantomData<M>,
+}
+
+impl<T, M> Debug for Register<T, M>
+where
+    T: Debug,
+{
+    fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
+        Debug::fmt(&self.inner, f)
+    }
 }
 
 impl<T, M> Register<T, M> {
