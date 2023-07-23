@@ -16,7 +16,7 @@ pub struct DeviceIdentity {
     _ob0: u16,
     specific_cfg: u16,
     _ob1: [u16; 4],
-    _res_cfa: u16,
+    _res_cfa: [u16; 2],
     _re0: u16,
     serial: [u8; 20],
     _re1: [u16; 2],
@@ -26,6 +26,7 @@ pub struct DeviceIdentity {
     _ob3: u16,
     trusted_computing: TrustedComputing,
     capabilities: Capabilities,
+    cap_50: Capabilities50,
     _ob4: [u16; 2],
     wd_53: u16,
     _ob5: [u16; 5],
@@ -40,7 +41,8 @@ pub struct DeviceIdentity {
     queue_depth: QueueDepth,
     sata_cap: SataCap,
     sata_cap2: SataCap2,
-    sata_features: SataFeaturesEnabled,
+    sata_features: SataFeatures,
+    sata_features_en: SataFeaturesEnabled,
     major_version: MajorVersion, // word 80
     minor_version: u16, // see spec 7.13.6.39. if a driver wants to check this then that's it's fault
     features: FeaturesSet,
@@ -61,7 +63,7 @@ pub struct DeviceIdentity {
     world_wide_name: u64,
     _re2: [u16; 4],
     _ob8: u16,
-    logical_sector_size: u32, // count in words not bytes
+    logical_sector_size: LbaSize, // count in words not bytes
     features119: Features119,
     features119_copy: Features119,
     _re3: [u16; 6],
@@ -82,8 +84,10 @@ pub struct DeviceIdentity {
     wrv_mode_2_count: u32,
     _oba: [u16; 3],
     rpm: RotationRateField,
-    wrv_mode: WriteReadVerifyMode,
     _re6: u16,
+    _ob219: u16,
+    wrv_mode: WriteReadVerifyMode,
+    _re221: u16,
     transport_major_version: TransportMajorVersion,
     transport_minor_version: TransportMinorVersionField,
     _re7: [u16; 6],
@@ -307,22 +311,22 @@ impl DeviceIdentity {
             .sector_geom
             .contains(SectorGeom::LOGICAL_GREATHER_512_BYTES)
         {
-            512
+            self.logical_sector_size.read() << 1 // converts from words to bytes
         } else {
-            self.logical_sector_size << 1 // converts from words to bytes
+            512
         };
 
         let phys_sec_size = if self
             .sector_geom
             .contains(SectorGeom::MULTIPLE_LOGICAL_PER_PHYS)
         {
-            (logical_sec_size as u64) << self.sector_geom.log_sec_per_phys()
+            (logical_sec_size as u64) * self.sector_geom.log_sec_per_phys() as u64
         } else {
             logical_sec_size as u64
         };
 
         DeviceGeometry {
-            sector_count: lba + 1,
+            sector_count: lba,
             logical_sec_size,
             phys_sec_size,
 
@@ -363,7 +367,16 @@ struct Streaming {
     access_latency: u16,
 
     // this field has predefined values but i cant find what they are
-    performance_granularity: u32,
+    // this is supposed to be a u32 but it is misaligned in the DeviceIdentity
+    perf_granularity_low: u16,
+    perf_granularity_high: u16,
+}
+
+impl Streaming {
+    pub fn perf_granularity(&self) -> u32 {
+        let mut t = (self.perf_granularity_high as u32) << 16;
+        t | self.perf_granularity_low as u32
+    }
 }
 
 /// Contains the device geometry.
@@ -375,25 +388,41 @@ struct Streaming {
 /// boundaries to optimize performance.
 #[derive(Debug)]
 pub struct DeviceGeometry {
-    /// Number of logical sectors addressable on the device
-    pub sector_count: u64,
+    sector_count: u64,
     /// This field contains the size of each LBA
     pub logical_sec_size: u32,
     /// This field contains the physical size of each sector in the device.
     /// Operations should be aligned to physical sector boundaries for optimal performance.
     pub phys_sec_size: u64,
-    /// This field contains the number of logical sectors LBA 0 is offset into the first physical sector
-    ///
-    /// For example a device with 4K physical sectors where this value is
-    /// - 0: LBA 0 is the start of the first physical sector.
-    /// - 1: LBA 0 starts at byte 512 if the first physical sector.
-    /// - 2: LBA 0 starts at byte 1024 if the first physical sector.
-    pub alignment: u16,
+
+    alignment: u16,
 }
 
 impl DeviceGeometry {
-    pub fn multiple_lbas_per_sector(&self) -> bool {
-        self.logical_sec_size as u64 != self.phys_sec_size
+    /// Gets the number of logical sectors on the device.
+    pub fn lba_count(&self) -> u64 {
+        self.sector_count
+    }
+
+    /// Gets size in bytes of the logical sectors on the device.
+    pub fn logical_sec_size(&self) -> u32 {
+        self.logical_sec_size
+    }
+
+    /// Gets the size in bytes of the physical sectors the device.
+    pub fn phys_sec_size(&self) -> u64 {
+        self.phys_sec_size
+    }
+
+    /// Returns the offset of the first lba into the first physical sector.
+    ///
+    /// For example a device with 4K physical sectors where this value is
+    ///
+    /// - 0: LBA 0 is the start of the first physical sector.
+    /// - 1: LBA 0 starts at byte 512 if the first physical sector.
+    /// - 2: LBA 0 starts at byte 1024 if the first physical sector.
+    pub fn get_alignment(&self) -> u16 {
+        self.alignment
     }
 }
 
@@ -454,6 +483,11 @@ bitflags::bitflags! {
         const IORDY_MAYBE_DISABLED = 1 << 10;
         const LBA_SUPPORTED = 1 << 9;
         const DMA_SUPPORTED = 1 << 8;
+    }
+
+    #[derive(Debug)]
+    struct Capabilities50: u16 {
+        const MIN_STANDBY_TIME = 1;
     }
 }
 
@@ -612,6 +646,24 @@ bitflags::bitflags! {
         const SUPPORTS_NCQ_STREAMING = 1 << 4;
     }
 
+    #[derive(Debug)]
+    #[repr(transparent)]
+    pub struct SataFeatures: u16 {
+        const POWER_DISABLE = 1 << 12;
+        const REBUILD_ASSIST_SET = 1 << 11;
+        const HYBRID_INFORMATION = 1 << 10;
+        const DEVICE_SLEEP = 1 << 8;
+        const NQC_AUTOSENSE = 1 << 7;
+        const SOFTWARE_SETTINGS_PRESERVATION = 1 << 6;
+        const HARDWARE_FEATURE_CTL = 1 << 5;
+        const IN_ORDER_DATA_DELIVERY = 1 << 4;
+        const INIT_POWER_MANAGEMENT = 1 << 3;
+        const DMA_SAETUP_AUTO_ACTIVATION = 1 << 2;
+        const NON_ZERO_BUFF_OFFSETS = 1 << 1;
+    }
+
+    #[derive(Debug)]
+    #[repr(transparent)]
     pub struct SataFeaturesEnabled: u16 {
         const REBUILD_ASSIST = 1 << 11;
         const POWER_DISABLE = 1 << 10;
@@ -844,6 +896,28 @@ impl SectorGeom {
     pub fn log_sec_per_phys(&self) -> u16 {
         let shift = self.bits() & 0xf;
         1 << shift
+    }
+}
+
+// required for misaligned read of u32
+
+struct LbaSize {
+    lba_low: u16,
+    lba_high: u16,
+}
+
+impl Debug for LbaSize {
+    fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
+        let mut fmt = Formatter::debug_struct(f, core::any::type_name::<Self>());
+        fmt.field("len", &self.read());
+        fmt.finish()
+    }
+}
+
+impl LbaSize {
+    fn read(&self) -> u32 {
+        let t = self.lba_low as u32;
+        t | (self.lba_high as u32) << 16
     }
 }
 
