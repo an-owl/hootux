@@ -158,12 +158,6 @@ impl AtaCommand {
 
 impl privacy::Sealed for AtaCommand {}
 
-impl Into<u8> for AtaCommand {
-    fn into(self) -> u8 {
-        self as u8
-    }
-}
-
 /// Used with the [AtaCommand::SANITIZE_DEVICE] command.
 #[repr(u16)]
 #[allow(non_camel_case_types)]
@@ -279,7 +273,7 @@ pub mod constructor {
 
     /// Opaque commands are commands have multiple potential command that the driver may want fine
     /// control of.
-    #[derive(Copy, Clone, Debug)]
+    #[derive(Copy, Clone, Debug, Eq, PartialEq)]
     pub enum OpaqueCommand {
         Read,
         Write,
