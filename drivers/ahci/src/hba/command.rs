@@ -50,6 +50,11 @@ impl CommandHeader {
         self.description_info
             .update(|d| d.set(DescriptionInformation::PREFETCHABLE, value))
     }
+
+    pub(crate) fn set_write(&mut self, value: bool) {
+        self.description_info
+            .update(|f| f.set(DescriptionInformation::WRITE, value))
+    }
 }
 
 bitflags::bitflags! {

@@ -101,6 +101,14 @@ impl<'a> CommandTable<'a> {
         // See Note above
         unsafe { self.table.send_fis(fis, buff) }
     }
+
+    pub(super) fn set_write(&mut self, cmd: ata::command::AtaCommand) {
+        if cmd.is_write() {
+            unsafe { &mut *self.table.parent }.set_write(true)
+        } else {
+            unsafe { &mut *self.table.parent }.set_write(false)
+        }
+    }
 }
 
 /// This struct is a container for a command table. This struct is to enable control of the command
@@ -338,6 +346,12 @@ impl UnboundCommandTable {
                 .try_into()
                 .unwrap(),
         );
+
+        let ata_cmd = cmd
+            .command
+            .try_into()
+            .expect("Failed to convert u8 into AtaCommand");
+        (*self.parent).set_write(ata::command::AtaCommand::is_write(&ata_cmd));
 
         self.table.command_fis.send_cmd(&cmd);
 
