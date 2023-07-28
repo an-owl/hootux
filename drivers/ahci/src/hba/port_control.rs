@@ -17,7 +17,7 @@ pub(crate) struct PortControl {
     pub(crate) cmd_status: Register<CommStatus>,
     _res0: core::mem::MaybeUninit<u32>,
     /// PxTFD
-    task_file_data: Register<TaskFileData, ReadOnly>,
+    pub(crate) task_file_data: Register<TaskFileData, ReadOnly>,
     /// PxSIG
     signature: Register<PortSignature, ReadOnly>, // what dis?
     /// PxSSTS
@@ -88,6 +88,18 @@ impl PortControl {
     }
 
     pub(crate) fn cmd_state(&self) -> u32 {
+        self.command_issue.0.get()
+    }
+
+    pub(crate) fn tfd_wait(&self) {
+        let s = hootux::time::get_sys_time();
+        while self.task_file_data.read().status & 0x88 != 0 {
+            core::hint::spin_loop()
+        }
+        log::trace!("tfd_wait: {}ns", hootux::time::get_sys_time() - s);
+    }
+
+    pub(crate) fn get_ci(&self) -> u32 {
         self.command_issue.0.get()
     }
 }
@@ -469,9 +481,9 @@ unsafe impl ClearReserved for CommStatus {
 /// - D2H Register FIS
 /// - PIO setup FIS
 /// - Set device bits FIS
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 #[repr(C)]
-struct TaskFileData {
+pub(crate) struct TaskFileData {
     status: u8,
     err: u8,
     _reserved: u16,
@@ -480,13 +492,13 @@ struct TaskFileData {
 impl TaskFileData {
     #![allow(dead_code)]
     /// Returns the latest copy of the task file error register.
-    fn get_err(&self) -> u8 {
+    pub(crate) fn get_err(&self) -> u8 {
         self.err
     }
 
     /// Returns the status
-    fn get_status<T: From<u8>>(&self) -> T {
-        self.status.into()
+    pub(crate) fn get_status(&self) -> u8 {
+        self.status
     }
 }
 
