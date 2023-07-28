@@ -154,6 +154,40 @@ impl AtaCommand {
             _ => false,
         }
     }
+
+    /// Indicates if the command will write data to the device.
+    /// This fn can be used to determine whether the writable bit needs to be set in a AHCI command HEader
+    pub fn is_write(&self) -> bool {
+        match self {
+            AtaCommand::WRITE_DMA => true,
+            AtaCommand::WRITE_DMA_EXT => true,
+            AtaCommand::WRITE_DMA_FUA_EXT => true,
+            AtaCommand::WRITE_BUFFER => true,
+            AtaCommand::WRITE_BUFFER_DMA => true,
+            AtaCommand::DATA_SET_MANAGEMENT => true,
+            AtaCommand::DATA_SET_MANAGEMENT_XL => true,
+            AtaCommand::WRITE_SECTORS => true,
+            AtaCommand::WRITE_SECTORS_EXT => true,
+            AtaCommand::CFA_WRITE_SECTORS_WITHOUT_ERASE => true,
+            AtaCommand::WRITE_STREAM_DMA_EXT => true,
+            AtaCommand::WRITE_STREAM_EXT => true,
+            AtaCommand::WRITE_LOG_EXT => true,
+            AtaCommand::WRITE_UNCORRECTABLE_EXT => true,
+            AtaCommand::ZAC_MANAGEMENT_IN => true,
+            AtaCommand::WRITE_LOG_DMA_EXT => true,
+            AtaCommand::TRUSTED_SEND => true,
+            AtaCommand::TRUSTED_SEND_DMA => true,
+            AtaCommand::WRITE_FPDMA_QUEUED => true,
+            AtaCommand::SEND_FPDMA_QUEUED => true,
+            AtaCommand::ZAC_MANAGEMENT_OUT => true,
+            AtaCommand::CFA_WRITE_MULTIPLE_WITHOUT_ERASE => true,
+            AtaCommand::SECURITY_SET_PASSWORD => true,
+            AtaCommand::SECURITY_UNLOCK => true,
+            AtaCommand::SECURITY_ERASE_UNIT => true,
+            AtaCommand::SECURITY_DISABLE_PASSWORD => true,
+            _ => false,
+        }
+    }
 }
 
 impl privacy::Sealed for AtaCommand {}
