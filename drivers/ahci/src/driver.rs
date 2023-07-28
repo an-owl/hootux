@@ -1,9 +1,11 @@
 use crate::PortState;
+use ata::command::constructor;
 use ata::command::constructor::{CommandConstructor, MaybeOpaqueCommand, OpaqueCommand};
 use core::alloc::Allocator;
 use core::fmt::Formatter;
 use core::pin::Pin;
 use core::task::{Context, Poll};
+use futures::FutureExt;
 use hootux::allocator::alloc_interface::MmioAlloc;
 
 mod cmd_ctl;
@@ -12,6 +14,7 @@ pub(crate) type HbaInfoRef = alloc::sync::Arc<HbaInfo>;
 
 /// This struct contains HBA specific information that is shared between all components.
 /// This allows components to get information that they do not otherwise have direct access to.
+#[derive(Debug, Copy, Clone)]
 pub struct HbaInfo {
     is_64_bit: bool,
     queue_depth: u8,
@@ -123,6 +126,10 @@ impl AbstractHba {
             }
         }
     }
+
+    pub fn info(&self) -> HbaInfo {
+        *self.info
+    }
 }
 
 impl Drop for AbstractHba {
@@ -162,6 +169,7 @@ pub struct Port {
     active_cmd_fut: [spin::Mutex<Option<CmdFuture>>; 32],
     cmd_lock: CmdLock,
     cmd_queue: spin::Mutex<alloc::collections::VecDeque<CmdFuture>>,
+    err_chk: PortErrChk,
 }
 
 impl Port {
@@ -177,6 +185,7 @@ impl Port {
             active_cmd_fut: core::array::from_fn(|_| spin::Mutex::new(None)),
             cmd_lock: CmdLock::new(),
             cmd_queue: spin::Mutex::new(alloc::collections::VecDeque::new()),
+            err_chk: PortErrChk::new(),
         }
     }
 
@@ -190,7 +199,6 @@ impl Port {
             let oi = self.identity.lock().clone();
 
             if let Some(i) = oi {
-                log::info!("{:#x?}", i);
                 i
             } else {
                 // min alignment for alloc is 8. This should be u16
@@ -211,6 +219,12 @@ impl Port {
 
                 let id = DevIdentity::from(*id_raw);
 
+                if id.lba_count == 0 {
+                    let t = self.port.lock();
+                    let u = &*t;
+                    debug_assert!(id.lba_count == 0, "id bad");
+                    log::error!("id bad");
+                }
                 *self.identity.lock() = Some(id);
                 id
             }
@@ -249,8 +263,13 @@ impl Port {
     ///
     /// The caller must ensure that the buffer is correctly sized for the given command.
     async unsafe fn exec_cmd(&self, cmd: CmdFuture) -> Option<u8> {
+        // not allowed to run commands while in error state
+        if self.err_chk.is_err() {
+            return None;
+        }
         let slot = self.cmd_lock.get_cmd()?;
         let (fis, nqc) = if let Some(ret) = self.compile_fis(&cmd.data.cmd) {
+            cmd.data.nqc.store(true, atomic::Ordering::Relaxed);
             ret
         } else {
             self.get_identity().await;
@@ -265,6 +284,8 @@ impl Port {
         // fixme errors here should be handled
         table.send_fis(fis, b).expect("fixme");
         *self.active_cmd_fut[slot as usize].lock() = Some(cmd.clone());
+
+        self.port.lock().tfd_wait();
 
         // disables interrupts to minimize time between command start and updating the lock state.
         // could use x86_64 crate but i dont really want that for this.
@@ -295,20 +316,87 @@ impl Port {
     /// Checks for completed commands, wakes them and attempts to issue new commands from the queue.
     /// This may require waiting for [Self::get_identity]. This fn does not wait for command completion.
     async fn refresh_exec(&self) {
-        // only use implemented command slots
-        for i in 0..self.info.queue_depth() {
-            if self.chk_complete(i) {
-                // wake future and clear lock.
-                let c = self.active_cmd_fut[i as usize].lock().take().expect("Race");
-                c.ready();
-                self.cmd_lock.free(i);
+        if !self.err_chk.is_err() {
+            let tfd;
+            let ci;
+            {
+                let l = self.port.lock();
+                tfd = l.task_file_data.read();
+                ci = l.get_ci();
+            }
 
-                if let Some(c) = self.cmd_queue.lock().pop_front() {
-                    // SAFETY: In theory everything has been checked before it gets here
-                    unsafe { self.exec_cmd(c).await };
+            if let Some(c) = self.err_chk.chk(tfd, &self.cmd_lock, ci) {
+                // should never panic. If it does then exec_cmd() probably isn't working properly
+                let c = self.active_cmd_fut[c as usize].lock().take().unwrap();
+                c.err(CmdErr::DevErr(tfd.get_err()));
+            }
+
+            if !self.err_chk.is_err() {
+                // only use implemented command slots
+                for i in 0..self.info.queue_depth() {
+                    if self.chk_complete(i) {
+                        // wake future and clear lock.
+                        let c = self.active_cmd_fut[i as usize].lock().take().expect("Race");
+                        c.ready();
+                        self.cmd_lock.free(i);
+
+                        if let Some(c) = self.cmd_queue.lock().pop_front() {
+                            // SAFETY: In theory everything has been checked before it gets here
+                            unsafe { self.exec_cmd(c).await };
+                        }
+                    }
                 }
+            } else {
+                self.err_refresh();
+            }
+        } else {
+            self.err_refresh();
+        }
+    }
+
+    fn err_refresh(&self) {
+        // cannot run error check while commands are active.
+        if self.port.lock().get_ci() != 0 {
+            return;
+        }
+        let done = self.complete().trailing_zeros();
+        let err = self.port.lock().task_file_data.read().get_status();
+        let fut = self.active_cmd_fut[done as usize].lock().take().unwrap();
+        if err == 0 {
+            fut.ready()
+        } else {
+            fut.err(CmdErr::DevErr(err));
+        }
+
+        let n = self.err_chk.next();
+
+        // SAFETY: The safety guarantees must have been checked to reach this point.
+        if self.active_cmd_fut[n as usize]
+            .lock()
+            .as_ref()
+            .unwrap()
+            .data
+            .nqc
+            .load(atomic::Ordering::Relaxed)
+        {
+            unsafe { self.port.lock().exec_nqc(n) }
+        } else {
+            unsafe { self.port.lock().exec_cmd(n) }
+        }
+    }
+
+    /// Returns which commands are completed
+    fn complete(&self) -> u32 {
+        let mut ret = 0;
+        let ci = self.port.lock().get_ci();
+        for (i, s) in self.cmd_lock.cmd.iter().enumerate() {
+            let s = s.load(atomic::Ordering::Relaxed);
+            let mask = (1 << i);
+            if s == CmdLockState::Running && ci & mask == 0 {
+                ret |= mask;
             }
         }
+        ret
     }
 
     /// Checks if the given command has been completed.
@@ -332,6 +420,7 @@ impl Port {
                 state: atomic::Atomic::new(CmdState::Queued),
                 buff: atomic::Atomic::new(buff.map(|b| b as *mut [u8])),
                 waker: Default::default(),
+                nqc: atomic::Atomic::new(false),
             }),
         }
     }
@@ -352,15 +441,39 @@ impl Port {
         crate::hba::command::frame_information_structure::RegisterHostToDevFis,
         bool,
     )> {
+        let mut cmd = cmd.clone();
         match cmd.command {
-            MaybeOpaqueCommand::Concrete(c) => Some((cmd.try_into().unwrap(), c.is_nqc())), // this never panics on Concrete(_)
+            MaybeOpaqueCommand::Concrete(c) => Some(((&cmd).try_into().unwrap(), c.is_nqc())), // this never panics on Concrete(_)
             MaybeOpaqueCommand::Opaque(c) => {
                 let mut command = cmd.clone();
                 // todo this isn't permanent
                 command.command = MaybeOpaqueCommand::Concrete(match c {
-                    OpaqueCommand::Read => ata::command::AtaCommand::READ_DMA_EXT,
-                    OpaqueCommand::Write => ata::command::AtaCommand::WRITE_DMA_EXT,
+                    OpaqueCommand::Read => {
+                        let dev = cmd.device.unwrap_or(0) | (1 << 6);
+                        // required for READ_DMA_EXT
+                        command.device = Some(dev);
+                        ata::command::AtaCommand::READ_DMA_EXT
+                    }
+                    OpaqueCommand::Write => {
+                        let dev = cmd.device.unwrap_or(0) | (1 << 6);
+                        // required for WRITE_DMA_EXT
+                        command.device = Some(dev);
+                        ata::command::AtaCommand::WRITE_DMA_EXT
+                    }
                 });
+
+                // ensures that fields are compatible with with their commands
+                // this will require more building out
+                if c == OpaqueCommand::Read || c == OpaqueCommand::Write && !command.is_48_bit() {
+                    match cmd.count.expect("Caught disk IO command without count") {
+                        256 => cmd.count = Some(0),
+                        n if n > 256 => return None,
+                        _ => {}
+                    }
+                    if cmd.lba.expect("Caught disk IO without LBA") > 0xFFFFFFF {
+                        return None;
+                    }
+                }
 
                 let ncq = if let MaybeOpaqueCommand::Concrete(c) = &command.command {
                     c.is_nqc()
@@ -371,6 +484,75 @@ impl Port {
                 Some(((&command).try_into().unwrap(), ncq))
             }
         }
+    }
+
+    /// Reads from the device at `lba` for `len` sectors. The buffer is automatically sized to contain
+    /// the read data. The size of the buffer can be calculated using the data returned by [Self::get_identity]
+    ///
+    /// This fn will return Err(BadArgs) if `lba >= 0x1000000000000`
+    /// or if the given lba + count exceeds the last sector on the device.
+    pub async fn read(
+        &self,
+        lba: SectorAddress,
+        count: SectorCount,
+    ) -> Result<alloc::boxed::Box<[u8]>, CmdErr> {
+        use ata::command::constructor;
+
+        let id = self.get_identity().await;
+        if id.exceeds_dev(lba, count) {
+            return Err(CmdErr::BadArgs);
+        }
+
+        let mut b = alloc::vec::Vec::new();
+        b.resize(id.lba_size as usize * count.count_ext() as usize, 0);
+        let mut b = b.into_boxed_slice();
+
+        let c = constructor::SpanningCmd::new(
+            constructor::SpanningCmdType::Read,
+            lba.raw(),
+            count.count_ext(),
+        )
+        .ok_or(CmdErr::BadArgs)?;
+
+        // SAFETY: This is safe because the command take a buffer and the buffer size is equal to
+        // the size of the expected data.
+        unsafe { self.issue_cmd(c.compose(), Some(&mut *b)) }.await?;
+        Ok(b)
+    }
+
+    /// This fn writes the given buffer to the device at starting at `lba`.
+    ///
+    /// This fn will return Err(BadArgs) if the size of given buffer is not aligned to the logical
+    /// sector size of the device or the buffer + `lba` exceeds the size of the device.
+    pub async fn write(&self, lba: SectorAddress, buff: &mut [u8]) -> Result<(), CmdErr> {
+        use ata::command::constructor;
+
+        let id = self.get_identity().await;
+        if buff.len() as u64 % id.lba_size != 0 {
+            return Err(CmdErr::BadArgs);
+        }
+
+        let count = SectorCount::new(
+            (buff.len() as u64 / id.lba_size)
+                .try_into()
+                .ok()
+                .ok_or(CmdErr::BadArgs)?,
+        )
+        .ok_or(CmdErr::BadArgs)?;
+
+        if id.exceeds_dev(lba, count) || buff.len() == 0 {
+            return Err(CmdErr::BadArgs);
+        }
+
+        let c = constructor::SpanningCmd::new(
+            constructor::SpanningCmdType::Write,
+            lba.raw(),
+            count.count_ext(),
+        )
+        .ok_or(CmdErr::BadArgs)?;
+        // SAFETY: This is safe because the the count has been calculated from the size of the buffer.
+        unsafe { self.issue_cmd(c.compose(), Some(buff)) }.await?;
+        Ok(())
     }
 
     fn get_state(&self) -> PortState {
@@ -402,6 +584,18 @@ pub struct DevIdentity {
     offset: u16,
     /// Total number of LBAs on the device. Commands may never exceed this LBA. This has a maximum value of `0xFFFF_FFFF_FFFF`
     lba_count: u64,
+}
+
+impl DevIdentity {
+    /// Checks if the given args will exceed the last lba on the device.
+    /// This fn does not check that the arguments given to it are sane
+    ///
+    /// # Panics
+    ///
+    /// This fn will panic if `lba + count` overflows. (Not that it should ever be allowed to)
+    pub fn exceeds_dev(&self, lba: SectorAddress, count: SectorCount) -> bool {
+        lba.raw() + count.count_ext() as u64 > self.lba_count
+    }
 }
 
 impl From<ata::structures::identification::DeviceIdentity> for DevIdentity {
@@ -503,6 +697,8 @@ struct CmdDataInner {
     state: atomic::Atomic<CmdState>,
     buff: atomic::Atomic<Option<*mut [u8]>>,
     waker: futures::task::AtomicWaker,
+    // contains whether this command used NQC. This is here exclusively for error checking
+    nqc: atomic::Atomic<bool>,
 }
 
 impl CmdDataInner {
@@ -537,9 +733,13 @@ pub enum CmdErr {
     /// declared erroneous by the driver.
     AtaErr,
     /// The device signaled completion with an error.
-    DevErr,
-    /// The system is no longer in communication with the device.
+    /// Contains the error bits from the command.
+    DevErr(u8),
+    /// The system is no longer in communication with the target device.
     Disowned,
+    /// The caller gave invalid arguments to the fn. The fn should document arguments which may
+    /// cause this err.
+    BadArgs,
     /// An error was encountered while building the command. This differs from [Self::AtaErr] because
     /// the command itself was logically correct but an issue was encountered while building the command.
     BuildErr(cmd_ctl::CommandError),
@@ -580,5 +780,121 @@ impl core::future::Future for CmdFuture {
                 Poll::Pending
             }
         }
+    }
+}
+
+#[derive(Copy, Clone, Ord, PartialOrd, Eq, PartialEq, Debug)]
+pub struct SectorAddress(u64);
+
+impl SectorAddress {
+    pub fn new(addr: u64) -> Option<Self> {
+        if addr < 1 << 48 {
+            Some(Self(addr))
+        } else {
+            None
+        }
+    }
+
+    fn raw(&self) -> u64 {
+        self.0
+    }
+}
+
+#[derive(Copy, Clone, Ord, PartialOrd, Eq, PartialEq, Debug)]
+pub struct SectorCount(core::num::NonZeroU32);
+
+impl SectorCount {
+    pub fn new(count: u32) -> Option<Self> {
+        match count {
+            0 => None,
+            n if n > (1 << 16) => None,
+            n => Some(Self(core::num::NonZeroU32::new(n).unwrap())), // zero is checked above
+        }
+    }
+
+    /// Returns the raw number of sectors for a 48 bit command.
+    /// This fn should be preferred over [Self::count].
+    fn count_ext(&self) -> u16 {
+        let n = self.0.get();
+        if n == 1 << 16 {
+            0
+        } else {
+            n as u16
+        }
+    }
+
+    /// Returns the raw sector count for 28 bit commands
+    fn count(&self) -> Option<u8> {
+        match self.0.get() {
+            256 => Some(0),
+            n if n > 256 => None,
+            n => Some(n as u8),
+        }
+    }
+}
+
+struct PortErrChk {
+    inner: spin::mutex::Mutex<PortErrChkInner>,
+}
+
+struct PortErrChkInner {
+    // Contains the active commands which may have triggered an error.
+    err_cmd: u32,
+    // Contains the command currently being checked.
+    err_chk: Option<u8>,
+}
+
+impl PortErrChk {
+    const fn new() -> Self {
+        Self {
+            inner: spin::Mutex::new(PortErrChkInner {
+                err_cmd: 0,
+                err_chk: None,
+            }),
+        }
+    }
+
+    /// Checks If the given args signal an error and attempts to determine which command triggered the error.
+    /// If the erroneous command cannot be determined immediately enters a state for checking which
+    /// command triggered the error.
+    fn chk(
+        &self,
+        tfd: crate::hba::port_control::TaskFileData,
+        lock: &CmdLock,
+        ci: u32,
+    ) -> Option<u8> {
+        let mut l = self.inner.lock();
+        if tfd.get_err() != 0 {
+            for (i, s) in lock.cmd.iter().enumerate() {
+                let bit = (1 << i);
+                if s.load(atomic::Ordering::Relaxed) == CmdLockState::Running && (ci & bit == 0) {
+                    l.err_cmd |= bit;
+                }
+            }
+
+            if l.err_cmd.count_ones() == 1 {
+                l.err_cmd = 0;
+                Some(l.err_cmd.trailing_zeros() as u8)
+            } else {
+                l.err_chk = Some(l.err_cmd.trailing_zeros() as u8);
+                None
+            }
+            // check if only one command is potential cause
+        } else {
+            None
+        }
+    }
+
+    fn is_err(&self) -> bool {
+        self.inner.lock().err_chk.is_some()
+    }
+
+    /// Returns the next command to be checked for errors
+    fn next(&self) -> u8 {
+        let mut l = self.inner.lock();
+        let ret = l.err_chk;
+        l.err_chk = Some(l.err_cmd.trailing_zeros() as u8);
+        l.err_cmd ^ 1 << l.err_chk.unwrap();
+        ret.unwrap()
     }
 }
