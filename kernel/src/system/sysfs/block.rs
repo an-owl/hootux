@@ -1,14 +1,22 @@
-use alloc::string::{String, ToString};
-use core::fmt::Display;
-use core::ops::{Deref, Index};
+use alloc::{boxed::Box, string::String, sync::Arc};
+use core::fmt::{Display, Formatter};
 
+/// This alias is for counting the number of devices available. This is an alias to help if changing
+/// the size is eve required.
 type BlockDevCounter = u32;
-type BlockDevGeom = u64;
+
+/// This Alias exists for a similar reason to [BlockDevCounter]. Its purpose is for handling block
+/// device geometry.
+/// At some point in the future it may be necessary to increase the size of this
+type BlockDevGeomIntegral = u64;
+
+/// This alias is for handling "async" functions which are dynamically dispatched.
+/// Currently traits that contain `async` fn's cannot be made into a trait object
+/// however that is required by this module.
+type BoxFut<T> = Box<dyn core::future::Future<Output = T>>;
 
 pub struct BlockDeviceList {
-    list: spin::RwLock<
-        alloc::collections::BTreeMap<BlockDevId, alloc::boxed::Box<dyn SysFsBlockDevice>>,
-    >,
+    list: spin::RwLock<alloc::collections::BTreeMap<BlockDeviceId, Arc<dyn SysFsBlockDevice>>>,
 }
 
 impl BlockDeviceList {
@@ -24,165 +32,136 @@ impl BlockDeviceList {
     ///
     /// This fn will panic if `device` already exists within the SysFs. It is an error for a device
     /// to be owned twice and the internal mechanism BlockDeviceList uses checks this anyway.
-    pub fn register_dev<D: SysFsBlockDevice>(&self, device: D) {
-        let dev = alloc::boxed::Box::new(device);
+    pub fn register_dev<D: SysFsBlockDevice + 'static>(&self, device: D) {
+        let dev = Arc::new(device);
         let id = dev.get_id();
 
         let ret = self.list.write().insert(id, dev);
 
         if ret.is_some() {
-            panic!(
-                "Very very big off. BlockDevice already exists id {}",
-                id.token()
-            )
+            panic!("Very very big oof. BlockDevice already exists id {}", id)
         }
     }
 
     /// Removes a device an all its artifacts from the SysFs
-    pub fn remove_dev(&self, id: BlockDeviceId) -> Option<alloc::boxed::Box<dyn BlockDevClass>> {
+    pub fn remove_dev(&self, id: BlockDeviceId) -> Option<Arc<dyn SysFsBlockDevice>> {
         self.list.write().remove(&id)
     }
 
     /// Returns a reference to the the requested block device. If it exists
-    pub fn fetch(&self, id: BlockDeviceId) -> Option<&dyn SysFsBlockDevice> {
-        Some(&**self.list.read().get(&id)?)
+    pub fn fetch(&self, id: BlockDeviceId) -> Option<Arc<dyn SysFsBlockDevice>> {
+        // unwraps result derefs the box clones it and re-boxes it
+        Some(self.list.read().get(&id)?.clone())
     }
 }
 
-/// SysFsBlockDevice is intended to contain controls for interacting with a block device that is
-/// exported via its driver.
+/// A Unique identifier for a block device.
 ///
-/// An implementation should exhibit certain behaviours such as interior mutability.
-/// Interior mutability is required to allow mutable assesses without requiring mutable
-/// access to parent structures. Which allows multiple CPUs to access system resources at the same
-/// time.
-///
-/// A block device may have artifacts linked to it such as partitions. A block device should be
-/// aware of this and be able to disable these artifacts.
-///
-/// Any block operations on the block device may reject the given buffer has incorrect geometry.
-trait SysFsBlockDevice: Sync + Send + BlockDev {
-    /// Disables all artifacts for this device in the SysFs
-    fn disable(&self);
-
-    /// Returns the unique id for this device
-    fn get_id(&self) -> BlockDeviceId;
-
-    fn as_any(self: &mut alloc::boxed::Box<Self>) -> &mut Box<dyn Any>;
-}
-
+/// This struct is made up of components that allow a driver to quickly and easily provide an
+/// identity to a block device. This struct is composed of a reference to the name of the driver
+/// that manages the device and its instance number which are provided by the system upon the
+/// creation of this struct. An instance of a driver refers to the task which manages the device.
+/// A driver may choose to spawn as many or as few instances as it wants per device.
+// hey as long as it works
+/// The driver must provide a identifier which is unique to the instance, if an instance manages
+/// multiple devices this may be set to `None` and it will be omitted. The identifiers have no
+/// specific purpose apart from identification and therefore are not required to follow any specific
+/// convention.
 #[derive(Copy, Clone, Ord, PartialOrd, Eq, PartialEq)]
-struct BlockDeviceId {
-    class: alloc::boxed::Box<dyn BlockDevClass>, // this should be a zero pointer anyway
-    dev_num: BlockDevCounter,
+pub struct BlockDeviceId {
+    name: &'static str,
+    instance: usize,
+    device: Option<usize>,
 }
 
-enum BlockDevIoErr {
+#[non_exhaustive]
+#[derive(Eq, PartialEq, Debug, Copy, Clone)]
+pub enum BlockDevIoErr {
+    /// The buffer size is not aligned to the geometry specified by the device.
     Misaligned,
+    /// Attempted to access a block outside of the devices range.
     OutOfRange,
+    /// General geometry error.
+    GeomError,
+    /// The driver encountered an error while in operation that prevented it from completing the
+    /// requested operation.
+    HardwareError,
+    /// The driver itself encountered a software error.
+    ///
+    /// This should **only** be used to indicate bugs. It is reasonable to panic if this error occurs
+    InternalDriverErr,
+    /// The device had been disabled or removed and may not be accessed anymore. All further
+    /// operations will return this error.
+    DeviceOffline,
 }
 
-impl BlockDeviceId {
-    pub fn new<C: BlockDevClass>(class: C) -> Self {
-        Self {
-            class,
-            dev_num: class.alloc_id(),
-        }
+impl Display for BlockDeviceId {
+    fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
+        // ahci,0,15 will be "ahci-0-15"
+        // drv,1,None will be "drv-1"
+        write!(
+            f,
+            "{}-{}{}",
+            self.name,
+            self.instance,
+            self.device
+                .map_or(String::new(), |f| alloc::format!("-{}", f))
+        )
     }
-
-    pub fn token(&self) -> String {
-        let mut t = self.class.get_token().to_string();
-        t += "-";
-        t += &*into_alphas(self.dev_num);
-        t
-    }
 }
 
-fn into_alphas(mut num: BlockDevCounter) -> String {
-    const BASE: BlockDevCounter = 26;
-    let mut buff = String::with_capacity(num.div_ceil(26) as usize);
-
-    while num > BASE {
-        buff += (&into_alpha(num % BASE)) as &str;
-        num /= BASE
-    }
-
-    buff
-}
-
-/// Helper function to convert integer into char
-fn into_alpha(num: BlockDevCounter) -> char {
-    debug_assert!(num < 26);
-    let mut index = 0x61; // ASCII "a"
-
-    index + BlockDevCounter;
-
-    char::from(index)
-}
-
-/// Trait for a block device. This is an interface for reading and writing blocks of data of a
-/// predefined size.
-trait BlockDev {
-    /// Reads `T` from the device.  Implementations may return Err(_) if the size of `T` is not
+/// This trait is for interacting with block devices.
+///
+/// Implementations of this trait should use this trait as a supertrait instead of exposing it directly.
+///
+/// Block device operations are done in blocks (hence the name) the size of these blocks can be
+/// retrieved using [Self::geom]. All operations must be aligned to the block size however operations
+/// should always use the optimal block size where possible.
+pub trait BlockDev: Sync + Send {
+    /// Reads `T` from the device. Implementations may return Err(_) if the size of `T` is not
     /// aligned to [Self::get_bs]
-    async fn read<T>(
-        &self,
-        seek: BlockDevGeom,
-        size: usize,
-    ) -> Result<alloc::boxed::Box<T>, BlockDevIoErr>
-    where
-        T: Sized;
+    fn read(&self, seek: BlockDevGeom, size: usize) -> BoxFut<Result<Box<[u8]>, BlockDevIoErr>>;
 
     /// Writes the given buffer onto the device. The buffer size should be aligned to the devices
-    /// block size, this fn may return Err(_) if it is not. A reference to the buffer is returned
-    async unsafe fn write<T>(
+    /// block size, this fn may return Err(_) if it is not. A reference to the buffer is returned on completion.
+    fn write(
         &self,
         seek: BlockDevGeom,
-        buff: core::pin::Pin<&'static mut T>,
-    ) -> Result<(), BlockDevIoErr>;
+        buff: &'static [u8],
+    ) -> BoxFut<Result<&'static [u8], BlockDevIoErr>>;
 
     /// Returns a struct containing the geometry of the device.
     /// The device geometry must include the block size of the device and the number of blocks in
     /// the device.
-    fn geom<T>(&self) -> T;
+    fn geom(&self) -> BlockDevGeom;
+
+    fn as_any(&self) -> &dyn core::any::Any;
 }
 
-/// A buffer wrapper for a DMA operation. To allow the caller of [BlockDev::write] to reclaim the
-/// buffer after the operation has concluded
-#[derive(Clone)]
-pub struct BlockWriteBuffer<T> {
-    arc: alloc::sync::Arc<T>,
+pub struct BlockDevGeom {
+    /// The number of blocks this device contains.
+    pub blocks: BlockDevGeomIntegral,
+
+    /// The size in bytes per block, all operations are aligned to this size
+    pub bs: BlockDevGeomIntegral,
+
+    /// The optimal block size in bytes. Some devices emulate different sized blocks for compatibility,
+    /// this can slow down operations. This size should be used instead of [self.bs]  
+    pub obs: BlockDevGeomIntegral,
+
+    /// The largest transfer this device is capable of in a single transfer
+    /// Software may extend this value over multiple operations, if it doesnt is must return [BlockDevIoErr::GeomError] if the size is to large
+    pub max_blocks_per_transfer: BlockDevGeomIntegral,
 }
 
-impl<T> BlockWriteBuffer<T> {
-    pub fn decompose(self) -> Result<alloc::boxed::Box<T>, Self> {}
-}
-
-impl<T, U: Into<Arc<T>>> From<U> for BlockWriteBuffer<T> {
-    fn from(value: U) -> Self {
-        Self { arc: value.into() }
-    }
-}
-
-impl<T> Deref for BlockWriteBuffer<T> {
-    type Target = T;
-    fn deref(&self) -> &Self::Target {
-        &*self.arc
-    }
-}
-
-/// This trait is for a type used to identify a block device type, It is used dynamically within
-/// [BlockDeviceId]. It is recommended that it should be a ZST.
-trait BlockDevClass: Debug + Copy + Eq + Ord {
-    /// Returns a token uniquely identifying the block devices class. i.e. SATA, SCSI, USB
-    fn get_token(&self) -> &'static str;
-
-    /// Allocates a unique id number for the given class.
-    fn alloc_id(&self) -> BlockDevCounter;
-
-    /// Frees an id to be reused
-    ///
-    /// Note: This does not need to do anything.
-    /// Implementations may allocate by checking existing ids
-    fn free_id(&self, id: BlockDevCounter);
+/// Trait for block devices which are stored within the in the SysFs [BlockDeviceList]. Not
+/// all block devices should appear within this list. Partitions can be exported as block devices
+/// but are actually an interface to a hardware device (probably a `SysFsBlockDevice`).
+///
+/// This trait should only be implemented by structs that directly represent hardware devices
+///
+/// Implementations should use some form of reference counting
+pub trait SysFsBlockDevice: BlockDev {
+    /// Returns the unique id of the device
+    fn get_id(&self) -> BlockDeviceId;
 }
