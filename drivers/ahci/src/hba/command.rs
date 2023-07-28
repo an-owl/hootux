@@ -192,16 +192,23 @@ impl CommandTableRaw {
         let ptr = alloc
             .allocate(layout)
             .expect("System ran out of memory")
-            .as_ptr()
-            .cast::<u8>();
-        // SAFETY: The region can hold
-        let table = unsafe { core::mem::transmute(core::slice::from_raw_parts_mut(ptr, len)) };
+            .as_ptr();
+        // SAFETY: ptr is allocated and unused
+        unsafe {
+            (*ptr).fill(0);
+        }
+        let ptr = ptr.cast::<u8>();
+
+        // SAFETY: The allocated region can hold table, the calculation is done to construct `layout`
+        let table: *mut Self =
+            unsafe { core::mem::transmute(core::slice::from_raw_parts_mut(ptr, len)) };
 
         let addr = hootux::mem::mem_map::translate(table as *mut u8 as usize).expect("Found a bug");
         // SAFETY: This is safe because the region was allocated from DmaAlloc.
         let alloc = unsafe { alloc_interface::MmioAlloc::new(addr as usize) };
         // SAFETY: This region was allocated above and the pointer is never re-used
-        unsafe { (alloc::boxed::Box::from_raw_in(table, alloc), addr) }
+        let n = unsafe { (alloc::boxed::Box::from_raw_in(table, alloc), addr) };
+        n
     }
 
     /// Returns the length of the PRDT
