@@ -17,7 +17,8 @@ pub enum AtaCommand {
     /// Reads from the device using DMA.
     ///
     /// - LBA contains the first sector to be transferred.
-    /// - Count contains the number of sectors to be transferred. A value of 0 is treated as 256
+    /// - Count contains the number of sectors to be transferred. A value of 0 is treated as 256.
+    /// - Device Bit 6 contains "use LBA" bit, this ust be enabled to use LBA addressing else CHS is used.
     READ_DMA = 0xc8,
     /// See [Self::READ_DMA]
     /// - Count: Size of this field is doubled. A value of 0 is treated as 65,536
@@ -27,7 +28,8 @@ pub enum AtaCommand {
     /// Writes to the disk using DMA.
     ///
     /// - LBA contains the first sector to be written
-    /// - Count contains the number of sectors to be written. A value of 0 is treated as 256 sectors
+    /// - Count contains the number of sectors to be written. A value of 0 is treated as 256 sectors.
+    /// - Device Bit 6 contains "use LBA" bit, this ust be enabled to use LBA addressing else CHS is used.
     WRITE_DMA = 0xca,
     /// See [Self::WRITE_DMA]
     /// - Count: Size of this field is doubled. A value of 0 is treated as 65,536
@@ -101,11 +103,10 @@ pub enum AtaCommand {
 
     DOWNLOAD_MICROCODE = 0x92,
     DOWNLOAD_MICROCODE_DMA = 0x93,
-    MUTATE_EXT = 0x96,
     ZAC_MANAGEMENT_OUT = 0x9f,
 
     SMART = 0xb0,
-    SET_SECTOR_CONFIG = 0xb2,
+    SET_SECTOR_CONFIG_EXT = 0xb2,
     /// This function is used with [SanitiseSubcommand] as teh features field. It is used for the
     /// secure erasure of data from the device. Command args will be detailed in the subcommands.
     SANITIZE_DEVICE = 0xb4,
