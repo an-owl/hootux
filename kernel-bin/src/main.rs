@@ -23,7 +23,7 @@ use x86_64::VirtAddr;
 const BOOT_CONFIG: bootloader_api::BootloaderConfig = {
     use bootloader_api::config::Mapping;
     let mut cfg = bootloader_api::BootloaderConfig::new_default();
-    cfg.kernel_stack_size = 0x48000u64;
+    cfg.kernel_stack_size = 0x100000;
     cfg.mappings.physical_memory = Some(Mapping::Dynamic);
 
     cfg
