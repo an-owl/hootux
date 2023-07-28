@@ -113,10 +113,6 @@ impl<T> Read1ClearMarker<T> for Aboe<T> {}
 pub(crate) struct HbaAddr<const ALIGN: u32>(u64);
 
 impl<const ALIGN: u32> HbaAddr<ALIGN> {
-    const fn new() -> Self {
-        Self(0)
-    }
-
     /// Sets the address of self to `addr`.
     ///
     /// # Panics
@@ -145,6 +141,8 @@ impl<const ALIGN: u32> HbaAddr<ALIGN> {
         unsafe { core::ptr::write_volatile(&mut (self.0 as u32), addr) }
     }
 
+    // yea I'll probably use this at some point
+    #[allow(dead_code)]
     pub(crate) fn read(&self) -> u64 {
         unsafe { core::ptr::read_volatile(&self.0) }
     }
