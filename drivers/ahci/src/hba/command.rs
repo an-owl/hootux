@@ -242,12 +242,9 @@ impl CommandBuff {
                 as *mut frame_information_structure::RegisterHostToDevFis)
         };
         b.fis_type = fis.fis_type;
-        b.cfg = {
-            // a command will be sent if the command bit is toggled so it must be preserved
-            let mut cfg = fis.cfg.clone();
-            cfg.set_cmd_bit(b.cfg.get_cmd_bit());
-            cfg
-        };
+        b.cfg.set_port(0);
+        b.cfg.set_cmd_bit(true);
+        b.command = fis.command;
         b.features_low = fis.features_low;
         b.lba_low = fis.lba_low;
         b.aux = fis.aux;
@@ -261,18 +258,8 @@ impl CommandBuff {
 
         // writing to command send the FIS so it must be done last
         core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
-        b.command = fis.command;
-        core::hint::black_box(&b);
-        b.cfg.set_cmd_bit(true);
-        // prevents writes to b being optimized out
-        core::hint::black_box(&b);
-    }
 
-    // not used atm
-    #[allow(dead_code)]
-    fn reissue_cmd(&mut self) {
-        self.buff[1] ^= 1 << 7;
-        core::hint::black_box(self);
+        // prevents writes to b being optimized out
     }
 }
 
