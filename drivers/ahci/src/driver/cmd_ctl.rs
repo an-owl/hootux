@@ -355,12 +355,12 @@ impl UnboundCommandTable {
 
         self.table.command_fis.send_cmd(&cmd);
 
-        let t: ata::command::AtaCommand = cmd.command.try_into().unwrap();
+        let t: ata::command::AtaCommand = ata_cmd;
         // todo check if dev is ATAPI
-        if !t.is_nqc() && self.table.len() == 0 {
-            (*self.parent).set_prefetch(buff.is_some());
+        if !t.is_nqc() && self.table.len() != 0 {
+            (*self.parent).set_prefetch(true);
         }
-
+        core::hint::black_box(&self);
         Ok(())
     }
 }

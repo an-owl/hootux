@@ -1,5 +1,7 @@
 #![feature(allocator_api)]
 #![feature(int_roundings)]
+#![feature(array_methods)]
+#![feature(inline_const)]
 #![no_std]
 extern crate alloc;
 
@@ -8,7 +10,7 @@ pub(crate) mod hba;
 pub(crate) mod register;
 
 /// This enum is to represent the last known device state.
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Debug, Eq, PartialEq, Ord, PartialOrd, Copy, Clone)]
 enum PortState {
     /// The port is not implemented by the hba
     NotImplemented,
