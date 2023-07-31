@@ -447,3 +447,14 @@ impl PageTableLevel {
         };
     }
 }
+
+#[derive(Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Debug)]
+/// MemRegion represents different regions of physical memory by the number of bits they require to access.
+/// Some hardware devices can only use 32bit or more rarely 16bit addresses when accessing memory.
+/// This enum is used to differentiate between them.
+// impls are in buddy_frame_alloc.rs because they are only usd within that mod
+pub enum MemRegion {
+    Mem16,
+    Mem32,
+    Mem64,
+}

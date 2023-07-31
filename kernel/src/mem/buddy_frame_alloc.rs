@@ -1,3 +1,4 @@
+use super::MemRegion;
 use super::PAGE_SIZE;
 use crate::kernel_structures::mutex::ReentrantMutex;
 use bootloader_api::info::{MemoryRegion, MemoryRegions};
@@ -392,14 +393,7 @@ impl DmaRegion {
     }
 }
 
-#[derive(Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Debug)]
-pub enum MemRegion {
-    Mem16,
-    Mem32,
-    Mem64,
-}
-
-impl MemRegion {
+impl super::MemRegion {
     fn list<'a>(&self, alloc: &'a mut FrameAllocInner) -> &'a mut DmaRegion {
         match self {
             MemRegion::Mem16 => &mut alloc.mem_16,

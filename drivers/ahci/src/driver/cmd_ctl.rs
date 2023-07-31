@@ -416,8 +416,7 @@ impl DeadTable {
             Ok(_) => {
                 // init
                 // 1 is min size, just use mem32, the device initializing it may not be the only device using it.
-                let (table, addr) =
-                    CommandTableRaw::new(1, hootux::mem::buddy_frame_alloc::MemRegion::Mem32);
+                let (table, addr) = CommandTableRaw::new(1, hootux::mem::MemRegion::Mem32);
                 let t = alloc::boxed::Box::leak(table);
                 self.table.set(Some(t));
                 self.phys_addr.set(addr);
