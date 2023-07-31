@@ -5,7 +5,7 @@ edition = "2021"
 readme = "README.md"
  
  [workspace]
-members = ["loader","x86_msr","kernel","kernel-bin"]
+members = ["loader","x86_msr","kernel","kernel-bin","drivers/ahci","lib/ata"]
 
 [profile.dev]
 opt-level = 0
@@ -16,11 +16,11 @@ lto = false
 panic = 'abort'
 
 [dependencies]
-bootloader = "0.11"
+bootloader = "0.11.4"
 hootux = { path = "./kernel" }
 getopts = "0.2.21"
 toml = "0.7.2"
 
 [build-dependencies]
-bootloader = "0.11"
-hootux = { path = "kernel-bin", artifact = "bin",  target = "x86_64-unknown-none" }
+bootloader = "0.11.4"
+hootux-bin = { path = "kernel-bin", artifact = "bin",  target = "x86_64-unknown-none" }
