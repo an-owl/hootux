@@ -31,7 +31,7 @@ Hootux is built and run via the root crate which acts as a runner the built bina
 Hootux comes with a runner for running with qemu-system-x86_64 which can run bia the following commands.
 - `cargo run -- --uefi`  : will boot hootux in qemu using ovmf firmware
 - `cargo run -- --bios`  : will boot hootux in qemu using legacy boot
-- `cargo run -- --help ` : will provide a help message with extra arguments and their usages
+- `cargo run -- --help`  : will provide a help message with extra arguments and their usages
 
 Booting with uefi firmware requires the `runcfg.toml` to be set correctly. It requires at the very least to be pointed 
 to a working uefi firmware image at the key `uefi.bios` This project will not provide a working firmware. I also 
@@ -46,12 +46,13 @@ achieve them.
    - Move allocator into mem
      - that's where it should be
  - AHCI driver
-   - requires proper scheduling
+   - ~~requires proper scheduling~~
      - ~~requires somewhat accurate timer~~ 
        - ~~use apic timer~~
          - ~~figure out how fast apic timer is~~
-   - pci-e interface
-     - preferably backward compatible
+   - This is 90% done I just need to build a driver interface for it
+   - ~~pci-e interface~~
+     - ~~preferably backward compatible~~
  - Enhance Allocator
    - Add High level memory pool.
      - Use linked list to store regions > ORDER_MAX_SIZE in buddy alloc as (start,len)
@@ -65,7 +66,20 @@ achieve them.
  - Fix and write tests
    - because I really need to
  - Add gdbstub
+   - do mp first. to allow tasks to be run asynchronously while the debugger is doing things.
  - Multiprocessing
    - NUMA?
    - thread local allocators?
-    
+ - Add caching mechanism
+   - Because it seems useful and interesting to implement
+   - I need to figure out the best way to do this too.
+   - I'd like to use an ARC algorithm, but it seems a bit over my head.
+ - ANSI support
+   - This will require creating a font module using bitmaps not rasters
+ - VFS
+   - Support FAT filesystems
+   - EXT too maybe?
+   - Do psudoFSs first
+   - RAM-disk support
+     - With quotas
+     - This doesn't seem too hard.

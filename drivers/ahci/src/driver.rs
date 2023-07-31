@@ -239,6 +239,7 @@ impl Port {
     }
 
     /// Attempts to issue the command to the device. If the command list is full the command will be queued.
+    // todo: This fn should construct the PRDT. ATM it is only constructed when a command slot is free, doing it here will minimize command downtime.
     pub async unsafe fn issue_cmd(
         &self,
         cmd: ata::command::constructor::ComposedCommand,
