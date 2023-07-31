@@ -6,7 +6,7 @@
 //! address, 8-bit bus address, 6-bit device address and a 3-bit function id. PCI does not implement
 //! segment groups, in this case where a segment group is required it may be set to `0`
 
-use crate::allocator::alloc_interface::MmioAlloc;
+use crate::alloc_interface::MmioAlloc;
 use crate::system::pci::configuration::{register::HeaderType, PciHeader};
 use core::{cmp::Ordering, fmt::Formatter};
 

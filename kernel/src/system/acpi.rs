@@ -1,4 +1,4 @@
-use crate::allocator::alloc_interface::MmioAlloc;
+use crate::alloc_interface::MmioAlloc;
 use acpi::{AcpiHandler, PhysicalMapping};
 use core::alloc::{Allocator, Layout};
 use core::mem;
@@ -52,7 +52,7 @@ pub(crate) mod data_access {
     //! may not be accessed through memory. This is done using a type storing the bus address and size
     //! of the data. [DataAccessType] is provided to allow a universal access to needed data.
 
-    use crate::allocator::alloc_interface::MmioAlloc;
+    use crate::alloc_interface::MmioAlloc;
     use acpi::platform::address::{AccessSize, AddressSpace, GenericAddress};
     use core::alloc::{Allocator, Layout};
     use core::fmt::{Debug, Formatter};

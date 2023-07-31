@@ -1,4 +1,4 @@
-use crate::allocator::alloc_interface::MmioAlloc;
+use crate::alloc_interface::MmioAlloc;
 use crate::interrupts::apic::apic_structures::apic_types::TimerMode;
 use crate::interrupts::apic::pub_apic::SysApic;
 use crate::interrupts::apic::xapic::xApic;
@@ -12,7 +12,7 @@ pub mod xapic;
 
 /// Contains the cpus local APIC. Uses mutex in case of mischievous r/w
 #[thread_local]
-pub(crate) static LOCAL_APIC: KernelStatic<Box<dyn Apic, crate::allocator::GenericAlloc>> =
+pub(crate) static LOCAL_APIC: KernelStatic<Box<dyn Apic, crate::mem::allocator::GenericAlloc>> =
     KernelStatic::new();
 
 /// Trait for control over the Local Advanced Programmable Interrupt Controller

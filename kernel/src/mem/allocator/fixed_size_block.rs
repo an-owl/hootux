@@ -109,7 +109,7 @@ unsafe impl GlobalAlloc for Locked<FixedBlockAllocator> {
 }
 
 /// Fixed block style allocator with a complexity of O(1)~.
-pub(super) struct NewFixedBlockAllocator {
+pub(crate) struct NewFixedBlockAllocator {
     inner: UnsafeCell<FixedBlockInner>,
 }
 

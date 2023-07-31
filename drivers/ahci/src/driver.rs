@@ -6,7 +6,7 @@ use core::fmt::Formatter;
 use core::pin::Pin;
 use core::task::{Context, Poll};
 use futures::FutureExt;
-use hootux::allocator::alloc_interface::MmioAlloc;
+use hootux::alloc_interface::MmioAlloc;
 
 mod cmd_ctl;
 

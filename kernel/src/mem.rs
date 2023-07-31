@@ -16,10 +16,10 @@ use x86_64::{
 // l4 39-47
 // quick maffs
 
+pub mod allocator;
 pub mod buddy_frame_alloc;
 pub mod mem_map;
 pub(self) mod offset_page_table;
-pub mod page_table_tree;
 pub mod thread_local_storage;
 
 pub const PAGE_SIZE: usize = 4096;

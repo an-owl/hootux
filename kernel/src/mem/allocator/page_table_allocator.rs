@@ -1,4 +1,4 @@
-use crate::allocator::Locked;
+use super::Locked;
 use crate::mem;
 use crate::mem::{DummyFrameAlloc, PageTableLevel};
 use core::alloc::{AllocError, Allocator, Layout};

@@ -1,4 +1,4 @@
-use crate::allocator::align_up;
+use crate::mem::allocator::align_up;
 use core::alloc::{GlobalAlloc, Layout};
 
 struct ListNode {
