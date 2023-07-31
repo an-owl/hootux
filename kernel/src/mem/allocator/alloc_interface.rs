@@ -5,7 +5,7 @@ use core::{
     ptr::NonNull,
 };
 
-use crate::{allocator::HeapAlloc, mem};
+use crate::{mem, mem::allocator::HeapAlloc};
 use x86_64::{
     structures::paging::{page::PageRangeInclusive, Mapper, Page, PageTableFlags, Size4KiB},
     PhysAddr, VirtAddr,
@@ -121,7 +121,7 @@ unsafe impl Allocator for MmioAlloc {
                 .flush();
         }
 
-        crate::allocator::COMBINED_ALLOCATOR
+        super::COMBINED_ALLOCATOR
             .lock()
             .virt_deallocate(ptr, layout);
     }

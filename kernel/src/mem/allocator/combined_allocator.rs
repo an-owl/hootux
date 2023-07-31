@@ -1,11 +1,11 @@
-use crate::allocator::HeapAlloc;
+use super::HeapAlloc;
 use crate::mem;
 use crate::mem::PAGE_SIZE;
 use core::alloc::{AllocError, Layout};
 use core::ptr::NonNull;
 
 /// Provides a struct capable of holding allocators together providing full control of memory
-pub(super) struct DualHeap<S, I>
+pub(crate) struct DualHeap<S, I>
 where
     S: SuperiorAllocator,
     I: InferiorAllocator,
@@ -125,7 +125,7 @@ struct Hidden;
 /// This struct should only be used within HeapController, It is intended to bypass its mutex to
 /// allow each field to call the other while locked.
 // todo: using ReentrantMutex may have made this redundant, investigate removing
-pub(super) struct InteriorAlloc {
+pub(crate) struct InteriorAlloc {
     _inner: Hidden,
 }
 
@@ -240,7 +240,7 @@ impl InferiorAllocator for InteriorAlloc {
     }
 }
 
-pub(super) trait SuperiorAllocator: HeapAlloc {
+pub(crate) trait SuperiorAllocator: HeapAlloc {
     /// Initialize self at `*addr`.
     unsafe fn init(&mut self, addr: usize);
 

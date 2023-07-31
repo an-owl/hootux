@@ -20,7 +20,7 @@ impl CmdList {
     /// Allocates new command list with tables for each active command slot.
     pub(super) fn new(info: super::HbaInfoRef) -> Self {
         use core::alloc::Allocator;
-        let alloc = hootux::allocator::alloc_interface::DmaAlloc::new(info.mem_region(), 128);
+        let alloc = hootux::alloc_interface::DmaAlloc::new(info.mem_region(), 128);
         let mut cmd_list = [const { None }; 32];
 
         let table_top = alloc
@@ -80,7 +80,7 @@ impl Drop for CmdList {
         let ptr = self.table_top.cast();
         let layout = core::alloc::Layout::new::<[CommandHeader; 32]>();
         unsafe {
-            hootux::allocator::alloc_interface::DmaAlloc::new(self.info.mem_region(), 128)
+            hootux::alloc_interface::DmaAlloc::new(self.info.mem_region(), 128)
                 .deallocate(ptr, layout)
         }
     }
@@ -116,9 +116,9 @@ impl<'a> CommandTable<'a> {
 ///
 /// The PRDT has a minimum len of 1 and a maximum of 65536. A table len of `0` will be interpreted in hardware as 65536.
 ///
-/// The command table uses [hootux::allocator::alloc_interface::MmioAlloc] to prevent the struct
+/// The command table uses [hootux::alloc_interface::MmioAlloc] to prevent the struct
 /// from being dropped in physical memory. However allocations must be performed using
-/// [hootux::allocator::alloc_interface::DmaAlloc] because the physical memory structure cannot be fragmented.
+/// [hootux::alloc_interface::DmaAlloc] because the physical memory structure cannot be fragmented.
 ///
 /// # Safety
 ///
@@ -132,11 +132,10 @@ pub(crate) struct UnboundCommandTable {
     // This can be removed from Self along with `info` and moved into `CommandTable` which can be constructed as needed.
     // The rest must be kept within `super::Port` for optimization reasons.
     parent: *mut CommandHeader,
-    table: alloc::boxed::Box<CommandTableRaw, hootux::allocator::alloc_interface::MmioAlloc>,
+    table: alloc::boxed::Box<CommandTableRaw, hootux::alloc_interface::MmioAlloc>,
 }
 
-type BoxedCommandTable =
-    alloc::boxed::Box<CommandTableRaw, hootux::allocator::alloc_interface::MmioAlloc>;
+type BoxedCommandTable = alloc::boxed::Box<CommandTableRaw, hootux::alloc_interface::MmioAlloc>;
 
 impl UnboundCommandTable {
     /// Imports the new command table updating pointers and sizes.

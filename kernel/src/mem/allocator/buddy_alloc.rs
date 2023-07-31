@@ -101,7 +101,7 @@ impl BuddyHeapInner {
     /// #Safety
     /// This fn will map memory to `*self.end`
     unsafe fn stack_extend(&mut self) {
-        use crate::allocator::combined_allocator::InferiorAllocator;
+        use super::combined_allocator::InferiorAllocator;
         use x86_64::structures::paging::{page_table::PageTableFlags, FrameAllocator};
 
         // map new region

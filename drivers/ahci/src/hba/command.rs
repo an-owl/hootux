@@ -171,8 +171,7 @@ pub(crate) struct CommandTableRaw {
     prdt: [PhysicalRegionDescription],
 }
 
-type BoxedCommandTable =
-    alloc::boxed::Box<CommandTableRaw, hootux::allocator::alloc_interface::MmioAlloc>;
+type BoxedCommandTable = alloc::boxed::Box<CommandTableRaw, hootux::alloc_interface::MmioAlloc>;
 
 impl CommandTableRaw {
     /// Creates a new instance of self.
@@ -183,7 +182,7 @@ impl CommandTableRaw {
         region: hootux::mem::buddy_frame_alloc::MemRegion,
     ) -> (BoxedCommandTable, u64) {
         use core::alloc::Layout;
-        use hootux::allocator::alloc_interface;
+        use hootux::alloc_interface;
 
         let len = len.into();
         let alloc = alloc_interface::DmaAlloc::new(region, 256);

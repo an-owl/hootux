@@ -19,8 +19,8 @@
 #![feature(async_fn_in_trait)]
 
 extern crate alloc;
+pub use mem::allocator::alloc_interface;
 
-pub mod allocator;
 mod device_check;
 pub mod gdt;
 pub mod graphics;

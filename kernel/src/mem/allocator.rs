@@ -164,7 +164,7 @@ impl From<alloc_interface::MmioAlloc> for GenericAlloc {
 
 /// Provides a simple interface for allocating and deallocating virtual memory in a heap. Intended
 /// to work the same as [core::alloc::Allocator], however without allocating physical memory.
-unsafe trait HeapAlloc {
+pub(crate) unsafe trait HeapAlloc {
     /// Returns a pointer to the allocated region. returns [core::alloc:AllocError] on failure
     fn virt_allocate(&self, layout: Layout) -> Result<NonNull<[u8]>, AllocError>;
 
@@ -175,7 +175,7 @@ mod memory_counter {
 
     /// Struct for recording memory usage
     #[derive(Debug)]
-    pub(super) struct MemoryCounter {
+    pub(crate) struct MemoryCounter {
         free: usize,
         used: usize,
     }
