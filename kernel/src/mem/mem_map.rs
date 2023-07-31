@@ -164,3 +164,11 @@ pub fn translate(addr: usize) -> Option<u64> {
         Some(ret)
     }
 }
+
+/// This fn gets the physical address of a linear pointer.
+///
+/// This fn is a wrapper for [translate]
+// ptr is never dereferenced so this will only be a single impl
+pub fn translate_ptr<T>(ptr: *const T) -> Option<u64> {
+    translate(ptr as usize)
+}
