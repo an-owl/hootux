@@ -177,10 +177,7 @@ impl CommandTableRaw {
     /// Creates a new instance of self.
     /// If `len`. If `len == 0` a length of 65536 will be used.
     /// This fn will return the physical address of the returned `Self`
-    pub(crate) fn new(
-        len: u16,
-        region: hootux::mem::buddy_frame_alloc::MemRegion,
-    ) -> (BoxedCommandTable, u64) {
+    pub(crate) fn new(len: u16, region: hootux::mem::MemRegion) -> (BoxedCommandTable, u64) {
         use core::alloc::Layout;
         use hootux::alloc_interface;
 

@@ -28,10 +28,10 @@ impl HbaInfo {
         }
     }
 
-    pub(crate) fn mem_region(&self) -> hootux::mem::buddy_frame_alloc::MemRegion {
+    pub(crate) fn mem_region(&self) -> hootux::mem::MemRegion {
         match self.is_64_bit {
-            true => hootux::mem::buddy_frame_alloc::MemRegion::Mem64,
-            false => hootux::mem::buddy_frame_alloc::MemRegion::Mem32,
+            true => hootux::mem::MemRegion::Mem64,
+            false => hootux::mem::MemRegion::Mem32,
         }
     }
 

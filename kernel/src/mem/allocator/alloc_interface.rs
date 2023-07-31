@@ -172,13 +172,13 @@ unsafe impl Allocator for MmioAlloc {
 ///
 /// To access regions which are already allocated use [MmioAlloc]
 pub struct DmaAlloc {
-    region: mem::buddy_frame_alloc::MemRegion,
+    region: mem::MemRegion,
     phys_align: usize,
 }
 
 impl DmaAlloc {
     /// Initialises self using the given memory region and alignment. `phys_align` must be a power of two
-    pub fn new(region: mem::buddy_frame_alloc::MemRegion, phys_align: usize) -> Self {
+    pub fn new(region: mem::MemRegion, phys_align: usize) -> Self {
         assert!(phys_align.is_power_of_two());
         assert_ne!(phys_align, 0);
         Self { region, phys_align }
