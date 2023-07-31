@@ -373,8 +373,9 @@ struct Streaming {
 }
 
 impl Streaming {
+    #[allow(dead_code)]
     pub fn perf_granularity(&self) -> u32 {
-        let mut t = (self.perf_granularity_high as u32) << 16;
+        let t = (self.perf_granularity_high as u32) << 16;
         t | self.perf_granularity_low as u32
     }
 }
