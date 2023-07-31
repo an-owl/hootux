@@ -43,8 +43,8 @@ This part is mostly for my own sanity to try to manage what I want to do and to 
 achieve them.
 
  - Clean up memory module
-   - Move allocator into mem
-     - that's where it should be
+   - ~~Move allocator into mem~~
+     - ~~that's where it should be~~
  - AHCI driver
    - ~~requires proper scheduling~~
      - ~~requires somewhat accurate timer~~ 
