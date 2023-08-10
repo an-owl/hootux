@@ -8,6 +8,9 @@ use x86_64::PhysAddr;
 
 const ORDERS: usize = 9;
 const ORDER_MAX_SIZE: usize = PAGE_SIZE << (ORDERS - 1);
+/// ratio of [ORDER_MAX_SIZE] to [HIGH_ORDER_BLOCK_SIZE]
+const HIGH_ORDER_BLOCK_RATIO: u32 = 2;
+const HIGH_ORDER_BLOCK_SIZE: u32 = (ORDER_MAX_SIZE as u32) * HIGH_ORDER_BLOCK_RATIO;
 
 static MEM_MAP: crate::kernel_structures::KernelStatic<PreInitFrameAlloc> =
     crate::kernel_structures::KernelStatic::new();
@@ -305,6 +308,7 @@ struct FrameAllocInner {
 
 struct DmaRegion {
     free_list: [alloc::collections::LinkedList<usize>; ORDERS],
+    high_order: super::high_order_alloc::HighOrderAlloc<u64, HIGH_ORDER_BLOCK_SIZE>,
 }
 
 impl DmaRegion {
@@ -313,7 +317,23 @@ impl DmaRegion {
         if let Some(block) = self.free_list[order].pop_front() {
             Some(block)
         } else {
-            self.split(order).ok()?;
+            // attempts to allocate more memory from the high order allocator
+            if let Err(()) = self.split(order) {
+                // I'd prefer this to panic at compile time
+                let l = core::alloc::Layout::from_size_align(
+                    HIGH_ORDER_BLOCK_SIZE as usize,
+                    HIGH_ORDER_BLOCK_SIZE as usize,
+                )
+                .unwrap();
+                let (addr, _) = self.high_order.allocate(l)?.as_raw();
+                for i in 0..(HIGH_ORDER_BLOCK_RATIO as u64) {
+                    let addr = addr + (ORDER_MAX_SIZE * i as usize) as u64;
+                    // the new block should be inserted without merging with a buddy.
+                    self.free_list[ORDERS - 1].push_front(addr as usize);
+                }
+
+                self.split(order).ok()?;
+            }
 
             let ret = self.free_list[order].pop_front().unwrap(); // failure handled already
             return Some(ret);
@@ -375,7 +395,7 @@ impl DmaRegion {
     /// Rejoins the described block into the free list, joining as many buddies as possible.
     fn rejoin(&mut self, addr: usize, order: usize) {
         let mut use_ord = ORDERS - 1;
-        for i in order..ORDERS - 1 {
+        for i in order..ORDERS {
             let buddy = addr ^ Self::block_size(i);
 
             // just removing the buddy is fine enough
@@ -384,7 +404,21 @@ impl DmaRegion {
 
             if let None = filter.next() {
                 // still calls Box::new
-                drop(filter);
+                if i != ORDERS - 1 {
+                    drop(filter);
+                } else {
+                    // I could make this locate any adjacent memory regions and free those but this is just convenient
+
+                    // gets the address of the lower buddy regardless of whether this is the higher one or not.
+                    let ba = addr as u64 & !(HIGH_ORDER_BLOCK_SIZE - 1) as u64;
+
+                    // Will never return None
+                    let f = super::high_order_alloc::FreeMem::new(ba, HIGH_ORDER_BLOCK_SIZE as u64)
+                        .unwrap();
+                    self.high_order
+                        .free(f)
+                        .expect("Failed to move memory into HighOrderAlloc");
+                }
                 use_ord = i;
                 break;
             }
@@ -686,14 +720,17 @@ impl BuddyFrameAlloc {
 
                 mem_16: DmaRegion {
                     free_list: [const { alloc::collections::LinkedList::new() }; ORDERS],
+                    high_order: super::high_order_alloc::HighOrderAlloc::new(),
                 },
 
                 mem_32: DmaRegion {
                     free_list: [const { alloc::collections::LinkedList::new() }; ORDERS],
+                    high_order: super::high_order_alloc::HighOrderAlloc::new(),
                 },
 
                 mem_64: DmaRegion {
                     free_list: [const { alloc::collections::LinkedList::new() }; ORDERS],
+                    high_order: super::high_order_alloc::HighOrderAlloc::new(),
                 },
             }),
         }

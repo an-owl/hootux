@@ -14,6 +14,9 @@ pub const ORDER_ZERO_SIZE: usize = 4096;
 pub const ORDER_MAX_SIZE: usize = ORDER_ZERO_SIZE << ORDERS - 1;
 const NODE_SIZE: usize = 24; // should be value of sizeof::<alloc::collections::linked_list::Node<usize>>() this cant be asserted at runtime
 const DEFAULT_EXTEND_SIZE: usize = 8;
+/// ratio of [ORDER_MAX_SIZE] to [HIGH_ORDER_BLOCK_SIZE]
+const HIGH_ORDER_BLOCK_RATIO: u32 = 2;
+const HIGH_ORDER_BLOCK_SIZE: u32 = (ORDER_MAX_SIZE as u32) * HIGH_ORDER_BLOCK_RATIO;
 
 pub struct BuddyHeap {
     inner: core::cell::UnsafeCell<BuddyHeapInner>,
@@ -23,6 +26,7 @@ struct BuddyHeapInner {
     start: usize,
     end: usize,
     free_list: [allocator_linked_list::LinkedList<usize, InteriorAlloc>; ORDERS],
+    high_order: super::super::high_order_alloc::HighOrderAlloc<usize, HIGH_ORDER_BLOCK_SIZE>,
     mem_cnt: super::memory_counter::MemoryCounter, // all operations on this *should* be safe to unwrap
 }
 
@@ -37,6 +41,7 @@ impl BuddyHeap {
                 free_list: [const {
                     allocator_linked_list::LinkedList::new_in(unsafe { InteriorAlloc::new() })
                 }; ORDERS],
+                high_order: super::super::high_order_alloc::HighOrderAlloc::new(),
                 mem_cnt: super::memory_counter::MemoryCounter::new(0),
             }),
         }
@@ -69,6 +74,19 @@ impl BuddyHeapInner {
     ///
     /// This fn will panic if [core::alloc::AllocError] is encountered
     fn extend(&mut self, len: usize) {
+        if let Some(region) = self
+            .high_order
+            .allocate(Layout::from_size_align(len, 0x1000).unwrap())
+        // this returns a a FreeRegion not a pointer so the size is known regardless of the input
+        {
+            let (ptr, _) = region.as_raw();
+            for i in 0..(HIGH_ORDER_BLOCK_RATIO as usize) {
+                let bs = ptr + (ORDER_MAX_SIZE * i);
+                self.free_list[ORDERS - 1].push_back(i);
+            }
+            return;
+        }
+
         for i in 0..len {
             let new_block = self.end + (i * ORDER_MAX_SIZE);
             self.free_list[ORDERS - 1].push_back(new_block);
@@ -139,16 +157,36 @@ impl BuddyHeapInner {
     }
 
     /// Returns a region by calling [Self::extend_allocate].
-    /// Calls to this should be avoided because it will cause memory to leak.
-    // todo: use a better solution
+    ///
     fn alloc_huge(&mut self, layout: Layout) -> Result<NonNull<[u8]>, AllocError> {
-        // I seriously just do not want to deal with this
-        if layout.align() > ORDER_MAX_SIZE {
-            return Err(AllocError);
-        }
+        // ensures that size is aligned to HIGH_ORDER_BLOCK_SIZE
+        let l = if layout.align() < HIGH_ORDER_BLOCK_SIZE as usize {
+            layout
+                .align_to(HIGH_ORDER_BLOCK_SIZE as usize)
+                .unwrap()
+                .pad_to_align()
+        } else {
+            layout
+                .align_to(HIGH_ORDER_BLOCK_SIZE as usize)
+                .unwrap()
+                .pad_to_align()
+                .align_to(layout.align())
+                .unwrap()
+        };
 
-        let block_count = layout.size().div_ceil(ORDER_MAX_SIZE);
-        Ok(self.extend_allocate(block_count))
+        let t = if let Some(p) = self.high_order.allocate(l) {
+            p
+        } else {
+            let mut ne = self.end + layout.size();
+            if ne & !(layout.align() - 1) != 0 {
+                ne += layout.align();
+            }
+
+            self.extend(ne - self.end - 1); // end points to bit after last so sub 1
+            self.high_order.allocate(l).ok_or(AllocError)?
+        };
+        // SAFETY: ptr comes from allocator, it is safe.
+        Ok(unsafe { NonNull::new(t.into_ptr()).unwrap() })
     }
 
     /// Retrieves a block of size `order`, splitting and extending the heap as necessary
@@ -210,7 +248,7 @@ impl BuddyHeapInner {
     /// Rejoins the described block into the free list, joining as many buddies as possible.
     fn rejoin(&mut self, addr: usize, order: usize) {
         let mut use_ord = ORDERS - 1;
-        for i in order..ORDERS - 1 {
+        for i in order..ORDERS {
             let buddy = addr ^ Self::block_size(i);
 
             // just removing the buddy is fine enough
@@ -219,7 +257,24 @@ impl BuddyHeapInner {
 
             if let None = filter.next() {
                 // still calls Box::new
-                drop(filter);
+                if i != ORDERS - 1 {
+                    drop(filter);
+                } else {
+                    // I could make this locate any adjacent memory regions and free those but this is just convenient
+
+                    // gets the address of the lower buddy regardless of whether this is the higher one or not.
+                    let ba = addr & !((HIGH_ORDER_BLOCK_SIZE as usize) - 1);
+
+                    // Will never return None
+                    let f = super::super::high_order_alloc::FreeMem::new(
+                        ba,
+                        HIGH_ORDER_BLOCK_SIZE as usize,
+                    )
+                    .unwrap();
+                    self.high_order
+                        .free(f)
+                        .expect("Failed to move memory into HighOrderAlloc");
+                }
                 use_ord = i;
                 break;
             }
