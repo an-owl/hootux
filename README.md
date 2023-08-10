@@ -17,7 +17,7 @@ seems stupid.
 ### Dependencies
 
  - Rust is required to build this project. Installation instructions can be found [here](https://rustup.rs/)
- - `llvm-tools-preview` is required to build the bootloader and can be installed using `rustup component add llvm-tools-preview`
+ - `llvm-tools-preview` and `rust-src` is required to build the bootloader and can be installed using `rustup component add llvm-tools-preview`
  - all other dependencies will be fetched by cargo during the build process.
 
 ### Actually building
@@ -53,12 +53,12 @@ achieve them.
    - This is 90% done I just need to build a driver interface for it
    - ~~pci-e interface~~
      - ~~preferably backward compatible~~
- - Enhance Allocator
-   - Add High level memory pool.
-     - Use linked list to store regions > ORDER_MAX_SIZE in buddy alloc as (start,len)
-     - Use similar system to store unused phys memory. store 2Mib aligned pool and 1Gib aligned pool. 
-   - Add optimizations where possible
-   - Allow allocations greater than 4Mib
+ - ~~Enhance Allocator~~
+   - ~~Add High level memory pool.~~
+     - ~~Use linked list to store regions > ORDER_MAX_SIZE in buddy alloc as (start,len)~~ uses array instead
+     - ~~Use similar system to store unused phys memory. store 2Mib aligned pool and 1Gib aligned pool.~~ 
+   - ~~Add optimizations where possible~~
+   - ~~Allow allocations greater than 4Mib~~
  - BASIC shell
    - what why? 
    - because it's my kernel

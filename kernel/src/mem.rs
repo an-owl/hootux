@@ -18,6 +18,7 @@ use x86_64::{
 
 pub mod allocator;
 pub mod buddy_frame_alloc;
+mod high_order_alloc;
 pub mod mem_map;
 pub(self) mod offset_page_table;
 pub mod thread_local_storage;
@@ -457,4 +458,14 @@ pub enum MemRegion {
     Mem16,
     Mem32,
     Mem64,
+}
+
+impl MemRegion {
+    const fn region_of(addr: u64) -> Self {
+        match addr {
+            a if a < 0x10000 => Self::Mem16,
+            a if a < 0x100000000 => Self::Mem32,
+            _ => Self::Mem64,
+        }
+    }
 }
