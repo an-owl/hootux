@@ -52,7 +52,7 @@ fn kernel_main(b: &'static mut bootloader_api::BootInfo) -> ! {
 
         mem::set_sys_mem_tree_no_cr3(mapper);
 
-        allocator::init_comb_heap(0x4444_4000_0000);
+        mem::allocator::init_comb_heap(0x4444_4000_0000);
         mem::buddy_frame_alloc::drain_map();
     }
 

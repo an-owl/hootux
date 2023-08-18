@@ -46,7 +46,16 @@ fn check_dev(mcfg: &PciConfigRegions, mut dev: DeviceControl) {
         .push(super::meta::MetaInfo::from(&dev));
 
      */
-    super::PCI_DEVICES.insert(dev.address(), crate::kernel_structures::Mutex::new(dev));
+
+    let addr = dev.address();
+    let dev_ref = alloc::sync::Arc::new(spin::Mutex::new(dev)); // for kernel
+    super::PCI_DEVICES.insert(addr, dev_ref.clone());
+    crate::system::sysfs::get_sysfs()
+        .get_discovery()
+        .register_resource(alloc::boxed::Box::new(super::PciResourceContainer::new(
+            // for everything else
+            addr, dev_ref,
+        )));
 }
 
 fn check_fns(mcfg: &PciConfigRegions, addr: super::DeviceAddress) {
