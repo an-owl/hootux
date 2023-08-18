@@ -19,6 +19,7 @@ lazy_static::lazy_static! {
 }
 
 /// Attempts to lock a device function returns None is the device does not exist fr is not found.
+#[allow(dead_code)] // this will be used at some point
 pub(crate) fn get_function(
     addr: DeviceAddress,
 ) -> Option<alloc::sync::Arc<spin::Mutex<DeviceControl>>> {

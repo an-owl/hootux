@@ -95,11 +95,11 @@ impl DiscoveryDriver {
     pub fn get_busses(&self) -> alloc::vec::Vec<String> {
         let mut arr = alloc::vec::Vec::new();
         let l = self.inner.lock();
-        let mut rk = l.driver_registry.keys();
+        let rk = l.driver_registry.keys();
         for i in rk {
             arr.push(i.clone());
         }
-        let mut fk = l.free_resources.keys();
+        let fk = l.free_resources.keys();
         for i in fk {
             arr.push(i.clone());
         }

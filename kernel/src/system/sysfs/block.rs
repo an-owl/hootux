@@ -1,10 +1,6 @@
 use alloc::{boxed::Box, string::String, sync::Arc};
 use core::fmt::{Display, Formatter};
 
-/// This alias is for counting the number of devices available. This is an alias to help if changing
-/// the size is eve required.
-type BlockDevCounter = u32;
-
 /// This Alias exists for a similar reason to [BlockDevCounter]. Its purpose is for handling block
 /// device geometry.
 /// At some point in the future it may be necessary to increase the size of this
