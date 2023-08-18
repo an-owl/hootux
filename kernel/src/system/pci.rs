@@ -15,37 +15,14 @@ mod configuration;
 mod scan;
 
 lazy_static::lazy_static! {
-    static ref PCI_DEVICES: HwMap<DeviceAddress,crate::kernel_structures::mutex::Mutex<DeviceControl>> = HwMap::new();
+    static ref PCI_DEVICES: HwMap<DeviceAddress,alloc::sync::Arc<spin::Mutex<DeviceControl>>> = HwMap::new();
 }
-
-/*
-/// Iterates over initialized PCI devices after `skip` copying them into `buff`, returning the
-/// number of devices copied.
-pub fn get_dev_list(buff: &mut [meta::MetaInfo], skip: usize) -> usize {
-    let l = PCI_META.read();
-    let mut c = 0;
-    for (i, (o, b)) in core::iter::zip(l.iter().skip(skip), buff).enumerate() {
-        *b = *o;
-        c = i
-    }
-
-    c
-}
-
- */
-
-/*
-pub fn dev_count() -> usize {
-    PCI_META.read().len()
-}
-
- */
 
 /// Attempts to lock a device function returns None is the device does not exist fr is not found.
-pub fn get_function<'a>(addr: DeviceAddress) -> Option<DeviceBinding<'a>> {
-    Some(DeviceBinding {
-        inner: PCI_DEVICES.get(&addr)?,
-    })
+pub(crate) fn get_function(
+    addr: DeviceAddress,
+) -> Option<alloc::sync::Arc<spin::Mutex<DeviceControl>>> {
+    Some(PCI_DEVICES.get(&addr)?.clone())
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd)]
@@ -126,6 +103,7 @@ impl core::fmt::Debug for DeviceControl {
     }
 }
 
+/*
 pub struct DeviceBinding<'a> {
     inner: &'a crate::kernel_structures::mutex::Mutex<DeviceControl>,
 }
@@ -137,6 +115,8 @@ impl<'a> DeviceBinding<'a> {
         }
     }
 }
+
+ */
 
 pub struct LockedDevice<'a> {
     inner: crate::kernel_structures::mutex::MutexGuard<'a, DeviceControl>,
@@ -1008,5 +988,69 @@ impl CfgIntResult {
         } else {
             true
         }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct PciResourceContainer {
+    addr: DeviceAddress,
+    device: alloc::sync::Arc<spin::Mutex<DeviceControl>>,
+}
+
+impl PciResourceContainer {
+    fn new(addr: DeviceAddress, device: alloc::sync::Arc<spin::Mutex<DeviceControl>>) -> Self {
+        Self { addr, device }
+    }
+
+    /// Returns an [alloc::sync::Arc] containing the [DeviceControl]
+    pub fn dev(&self) -> alloc::sync::Arc<spin::Mutex<DeviceControl>> {
+        self.device.clone()
+    }
+
+    /// Returns the bus address of the function
+    pub fn addr(&self) -> DeviceAddress {
+        self.addr
+    }
+
+    /// Returns the function class
+    pub fn class(&self) -> u32 {
+        // todo change PCI class to u32 from [u8;3]
+        let mut c = [0u8; 4];
+        c[0..3].copy_from_slice(&self.device.lock().header.class()[..]);
+
+        u32::from_le_bytes(c)
+    }
+
+    /// Returns the vendor and device id's.
+    /// Note the order of id's are reversed from how they appear in the PCI specification
+    pub fn dev_id(&self) -> (u16, u16) {
+        let l = self.device.lock();
+        (l.header.vendor(), l.header.device())
+    }
+
+    /// Returns the [HeaderType] of the device. Most drivers will want [HeaderType::Generic]
+    pub fn header_type(&self) -> HeaderType {
+        self.device.lock().header.header_type()
+    }
+}
+
+impl super::driver_if::ResourceId for PciResourceContainer {
+    fn as_any(&self) -> &dyn core::any::Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn core::any::Any {
+        self
+    }
+
+    fn bus_name(&self) -> &str {
+        "pci"
+    }
+}
+
+impl core::fmt::Display for PciResourceContainer {
+    fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
+        write!(f, "{} bus addr: ", core::any::type_name::<Self>()).unwrap();
+        core::fmt::Display::fmt(&self.addr, f)
     }
 }
