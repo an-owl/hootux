@@ -83,3 +83,17 @@ achieve them.
    - RAM-disk support
      - With quotas
      - This doesn't seem too hard.
+ - Investigate making drivers the sole owners of PCI devices
+   - Kernel requires some ownership, pass a dyn Into<pci::DeviceControl> to the kernel
+ - Fix PCI ownership models
+   - Current idea, save al PCI functions in static arr of &dyn PciDevice drivers must implement this and place themselves into the arr
+     - This allows the kernel to have control through the static arr, requests cna be processed by the driver and the driver must reconfigure the pci dev.
+   - Also for BAR memory.
+     - Make kernel alloc the memory and keep a Arc<Option<*\[u8\]>> into it share it between all things that want to access it.
+ - Upgrade logger
+   - Add log buffer in memory tobe recalled later
+   - Print time in messages
+   - Print module in messages
+     - Debug and trace should have the full fn name
+     - Others should just mention the module name
+       - Except in debug mode do the full path
