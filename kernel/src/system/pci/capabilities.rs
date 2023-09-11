@@ -37,11 +37,7 @@ pub enum CapabilityId {
 }
 
 impl From<u8> for CapabilityId {
-    /// The expected value should be shifted right by 2.
-    /// The lowest 2 bits are ignored.
     fn from(value: u8) -> Self {
-        let value = value >> 2;
-
         match value {
             0x0 => Self::Null,
             0x1 => Self::PciPowerManagement,
