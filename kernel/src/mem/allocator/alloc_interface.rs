@@ -21,7 +21,7 @@ use x86_64::{
 ///
 /// MmioAlloc should **only** be used to access physical memory doing otherwise may lead to UB
 ///
-/// The constructors for this struct are unsafe because [core::alloc::Allocator:: cannot make
+/// The constructors for this struct are unsafe because [core::alloc::Allocator]'s methods cannot be marked unsafe
 #[derive(Copy, Clone)]
 pub struct MmioAlloc {
     addr: usize,
