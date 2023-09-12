@@ -57,10 +57,10 @@ impl From<u8> for CapabilityId {
             0xf => Self::SecureDevice,
             0x10 => Self::PciExpress,
             0x11 => Self::MsiX,
-            0x13 => Self::SataDataIndexConfig,
-            0x14 => Self::AdvancedFeatures,
-            0x15 => Self::EnhancedAllocation,
-            0x16 => Self::FlatteningPortalBridge,
+            0x12 => Self::SataDataIndexConfig,
+            0x13 => Self::AdvancedFeatures,
+            0x14 => Self::EnhancedAllocation,
+            0x15 => Self::FlatteningPortalBridge,
             e => Self::Reserved(e),
         }
     }
