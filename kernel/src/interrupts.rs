@@ -126,11 +126,23 @@ fn test_breakpoint() {
 pub enum InterruptIndex {
     Timer = PIC_0_OFFSET,
     Keyboard,
+    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+    Generic(u8),
+}
+
+impl From<u8> for InterruptIndex {
+    fn from(value: u8) -> Self {
+        Self::Generic(value)
+    }
 }
 
 impl InterruptIndex {
     fn as_u8(self) -> u8 {
-        self as u8
+        match self {
+            InterruptIndex::Timer => PIC_0_OFFSET,
+            InterruptIndex::Keyboard => PIC_0_OFFSET + 1,
+            InterruptIndex::Generic(n) => n,
+        }
     }
 
     fn as_usize(self) -> usize {
@@ -183,13 +195,33 @@ pub fn reserve_single(req_priority: u8) -> Option<u8> {
 /// given by `tid`.
 pub unsafe fn alloc_irq(
     irq: u8,
-    tid: alloc::sync::Arc<core::task::Waker>,
-    queue: &'static crate::task::InterruptQueue,
+    queue: crate::task::InterruptQueue,
     message: u64,
 ) -> Result<(), ()> {
-    let handle = vector_tables::InterruptHandle::new(tid, queue, message);
+    let handle = vector_tables::InterruptHandle::new(queue, message);
     vector_tables::IHR.set(
         irq,
         vector_tables::InterruptHandleContainer::Generic(handle),
     )
+}
+
+/// Frees the given IRQ.
+///
+/// # Safety
+///
+/// The caller must ensure that the IRQ will not be raised.
+/// If the IRQ is raised the may cause UB.
+pub(crate) unsafe fn free_irq(irq: InterruptIndex) -> Result<(), ()> {
+    vector_tables::IHR.free_irq(irq)
+}
+
+pub(crate) fn reg_waker(irq: InterruptIndex, waker: &core::task::Waker) -> Result<(), ()> {
+    if let vector_tables::InterruptHandleContainer::Generic(g) =
+        &*vector_tables::IHR.get(irq.as_u8()).write()
+    {
+        g.register(waker);
+        Ok(())
+    } else {
+        Err(())
+    }
 }
