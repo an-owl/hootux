@@ -1,6 +1,7 @@
 pub use crate::interrupts::apic::apic_structures::apic_types::InterruptDeliveryMode;
 use crate::system::pci::capabilities::CapabilityId;
 use crate::system::pci::DeviceControl;
+use core::alloc::Allocator;
 use core::any::Any;
 
 pub(crate) fn get_next_msi_affinity() -> u8 {
@@ -267,6 +268,9 @@ impl<'a> TryFrom<&'a mut DeviceControl> for MessageSigInt<'a> {
     }
 }
 
+/// MSI-X uses memory allocated within BAR memory to store registers as a result drivers using MSI-X
+/// should not access this memory directly. This struct provides methods that will alias these regions.
+/// They assume the driver does not access this memory and are not marked as `unsafe`.
 pub struct MessageSignaledIntX<'a> {
     parent: &'a mut DeviceControl,
     control: &'a mut MsiXControlBits,
@@ -314,62 +318,116 @@ impl<'a> TryFrom<&'a mut DeviceControl> for MessageSignaledIntX<'a> {
     }
 }
 
+pub struct MsiXVectorTable<'a> {
+    _phantom: core::marker::PhantomData<&'a ()>,
+    table: alloc::boxed::Box<[MsiXVectorEntry], crate::alloc_interface::MmioAlloc>,
+}
+
+impl<'a> MsiXVectorTable<'a> {
+    pub fn iter(&self) -> core::slice::Iter<MsiXVectorEntry> {
+        self.table.iter()
+    }
+
+    pub fn iter_mut(&mut self) -> core::slice::IterMut<MsiXVectorEntry> {
+        self.table.iter_mut()
+    }
+}
+
+impl<'a> core::ops::Index<u16> for MsiXVectorTable<'a> {
+    type Output = MsiXVectorEntry;
+
+    fn index(&self, index: u16) -> &Self::Output {
+        &self.table[index as usize]
+    }
+}
+
+impl<'a> core::ops::IndexMut<u16> for MsiXVectorTable<'a> {
+    fn index_mut(&mut self, index: u16) -> &mut Self::Output {
+        &mut self.table[index as usize]
+    }
+}
+
 impl<'a> MessageSignaledIntX<'a> {
     pub fn get_ctl(&self) -> MsiXControlBits {
         self.control.clone()
     }
 
     /// Returns a slice to the functions MSI-X Vector Table
-    pub fn get_vec_table(&self) -> &[MsiXVectorEntry] {
-        let id = self.table_bar;
-        let size = self.control.table_size() as usize;
-        let offset = self.table_offset;
+    pub fn get_vec_table(&self) -> MsiXVectorTable {
+        let t = self.parent.bar[self.table_bar as usize]
+            .as_ref()
+            .expect("PCI device did not implement BAR specified for MSI-X table");
+        let size = core::mem::size_of::<MsiXVectorEntry>() * self.control.table_size() as usize;
+        let addr = t.addr + self.table_offset as u64;
 
-        // validate_bar() will ensure that these do nto panic
-        let bar = self.parent.bar.get(&id).unwrap();
-        // SAFETY: validate_bar() will check that this address is correct.
-        let raw = unsafe { bar.virt_region.0.unwrap().as_ref() };
-        // SAFETY: This is safe because the offset is given by hardware and is guaranteed to be
-        // a valid safe address
-        let ptr = unsafe { raw.as_ptr().offset(offset as isize).cast() };
-        // SAFETY: Hardware guarantees that this is valid
-        unsafe { core::slice::from_raw_parts(ptr, size) }
+        // SAFETY: It's not really safe but it's documented
+        let alloc = unsafe { crate::alloc_interface::MmioAlloc::new(addr as usize) };
+        // Layout shouldn't panic, alloc may if liner memory is depleted
+        let ptr = alloc
+            .allocate(
+                core::alloc::Layout::from_size_align(
+                    size,
+                    core::mem::align_of::<MsiXVectorEntry>(),
+                )
+                .unwrap(),
+            )
+            .expect("System ran out of memory")
+            .cast()
+            .as_ptr();
+        // SAFETY: This is safe, ptr will always point to the existing vector table. The size is read directly from the hardware
+        let s = unsafe { core::slice::from_raw_parts_mut(ptr, self.control.table_size() as usize) };
+
+        // SAFETY: this is safe because it uses a reference not a pointer
+        MsiXVectorTable {
+            _phantom: core::marker::PhantomData,
+            table: unsafe { alloc::boxed::Box::from_raw_in(s, alloc) },
+        }
     }
 
-    /// Returns a mutable slice to the functions Vector table
-    pub fn get_vec_table_mut(&mut self) -> &mut [MsiXVectorEntry] {
-        let id = self.table_bar;
-        let size = self.control.table_size() as usize;
-        let offset = self.table_offset;
-        self.parent.validate_bar(id).unwrap(); // this will print a good enough message right?
-
-        // validate_bar() will ensure that these do nto panic
-        let bar = self.parent.bar.get_mut(&id).unwrap();
-        // SAFETY: validate_bar() will check that this address is correct.
-        let raw = unsafe { bar.virt_region.0.unwrap().as_mut() };
-        // SAFETY: This is safe because the offset is given by hardware and is guaranteed to be
-        // a valid safe address
-        let ptr = unsafe { raw.as_mut_ptr().offset(offset as isize).cast() };
-        // SAFETY: Hardware guarantees that this is valid
-        unsafe { core::slice::from_raw_parts_mut(ptr, size) }
-    }
-
+    /// Returns a reference to the Pending Bit Array
+    ///
+    /// # Safety
+    ///
+    /// Technically this fn is unsafe because it breaks rusts aliasing rules however the aliasing
+    /// rules are broken by the PBA regardless of whether this fn is called or not.  
     pub fn get_pba(&self) -> PendingBitArray {
-        let id = self.pba_bar;
         let size = self.control.table_size();
-        let offset = self.pba_offset;
 
-        let bar = self.parent.bar.get(&id).unwrap();
-        let slice = unsafe {
-            let raw = bar.virt_region.0.unwrap().as_mut();
-            let len = size.div_ceil(64);
-            let ptr = raw.as_ptr().offset(offset as isize).cast::<u64>();
-            core::slice::from_raw_parts(ptr, len as usize)
+        let bar = self.parent.bar[self.pba_bar as usize]
+            .as_ref()
+            .expect("PCI device did not implement BAR specified for MSI-X PBA");
+
+        // SAFETY: This aliases memory but this is documented.
+        let alloc = unsafe {
+            crate::alloc_interface::MmioAlloc::new((bar.addr + self.pba_offset as u64) as usize)
         };
 
+        let ptr = alloc
+            .allocate(
+                core::alloc::Layout::from_size_align(
+                    size.div_ceil(core::mem::size_of::<u64>() as u16) as usize,
+                    core::mem::align_of::<u64>(),
+                )
+                .unwrap(),
+            )
+            .unwrap()
+            .cast()
+            .as_ptr();
+
+        // SAFETY: This is safe the memory that is uninitialized is not accessible by PendingBitArray
+        let s = unsafe {
+            core::slice::from_raw_parts_mut(
+                ptr,
+                (size as usize).div_ceil(core::mem::size_of::<u64>()),
+            )
+        };
+        // SAFETY: The memory is initialized and only boxed once.
+        let b = unsafe { alloc::boxed::Box::from_raw_in(s, alloc) };
+
         PendingBitArray {
+            _phantom: core::marker::PhantomData,
             len: size,
-            array: volatile::Volatile::new(slice),
+            array: volatile::Volatile::new(b),
         }
     }
 }
@@ -410,8 +468,9 @@ impl MsiXVectorEntry {
 }
 
 pub struct PendingBitArray<'a> {
+    _phantom: core::marker::PhantomData<&'a ()>,
     len: u16,
-    array: volatile::Volatile<&'a [u64]>,
+    array: volatile::Volatile<alloc::boxed::Box<[u64], crate::alloc_interface::MmioAlloc>>,
 }
 
 impl<'a> PendingBitArray<'a> {
