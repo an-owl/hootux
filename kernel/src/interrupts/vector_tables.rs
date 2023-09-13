@@ -113,6 +113,22 @@ impl HandleRegistry {
         }
     }
 
+    /// Frees the given IRQ
+    ///
+    /// # Safety
+    ///
+    /// The caller must ensure that the IRQ will not be raised after this fn is called.
+    pub(super) unsafe fn free_irq(&self, vector: super::InterruptIndex) -> Result<(), ()> {
+        let mut e = InterruptHandleContainer::Empty;
+        core::mem::swap(&mut *self.arr[vector.as_usize()].write(), &mut e);
+        match e {
+            InterruptHandleContainer::Empty => Err(()),
+            InterruptHandleContainer::Reserved => Ok(()),
+            InterruptHandleContainer::SpecialHandle(_) => Ok(()),
+            InterruptHandleContainer::Generic(_) => Ok(()),
+        }
+    }
+
     /// Unsets the given vector handler.
     ///
     /// # Safety
@@ -212,8 +228,8 @@ pub(crate) fn alloc_irq_special(irq: u8, handle: fn()) -> Result<(), ()> {
 /// If this IRQ uses interrupt Coalescing the driver must handle this properly. Note that a message
 /// may occur more than once.
 pub struct InterruptHandle {
-    waker: alloc::sync::Arc<core::task::Waker>,
-    queue: &'static crate::task::InterruptQueue,
+    waker: futures_util::task::AtomicWaker,
+    queue: crate::task::InterruptQueue,
     vector: crate::task::InterruptMessage,
 }
 
@@ -223,13 +239,9 @@ impl InterruptHandle {
     /// # Safety
     ///
     /// This fn is unsafe because the caller must ensure that the [crate::task::TaskId] is handed by `queue`
-    pub const unsafe fn new(
-        waker: alloc::sync::Arc<core::task::Waker>,
-        queue: &'static crossbeam_queue::ArrayQueue<crate::task::InterruptMessage>,
-        message: u64,
-    ) -> Self {
+    pub const unsafe fn new(queue: crate::task::InterruptQueue, message: u64) -> Self {
         Self {
-            waker,
+            waker: futures_util::task::AtomicWaker::new(),
             queue,
             vector: crate::task::InterruptMessage(message),
         }
@@ -239,10 +251,14 @@ impl InterruptHandle {
     pub fn call(&self) {
         // as docs mention: on fail message is discarded
         self.queue.push(self.vector).unwrap_or(());
-        self.waker.wake_by_ref();
+        self.waker.wake();
 
         // SAFETY: This is an interrupt handler
         unsafe { super::apic::apic_eoi() };
+    }
+
+    pub fn register(&self, waker: &core::task::Waker) {
+        self.waker.register(&waker)
     }
 }
 
