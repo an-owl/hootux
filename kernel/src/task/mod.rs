@@ -52,3 +52,14 @@ impl TaskId {
         TaskId(NEXT_ID.fetch_add(1, Ordering::Relaxed))
     }
 }
+
+pub fn run_task(fut: Pin<Box<dyn Future<Output = ()> + Send>>) {
+    let t = Task::new(fut);
+
+    let mut e = SYS_EXECUTOR.try_lock().unwrap(); // You started an AP without reworking the executor for MP if this panics
+    e.spawn(t);
+}
+
+pub fn run_exec() -> ! {
+    SYS_EXECUTOR.try_lock().unwrap().run()
+}
