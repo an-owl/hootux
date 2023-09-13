@@ -319,15 +319,18 @@ impl DeviceControl {
     /// The caller must ensure that any vector above `override_count` will never be triggered
     pub unsafe fn cfg_interrupts(
         &mut self,
-        waker: alloc::sync::Arc<core::task::Waker>,
-        queue: &'static crate::task::InterruptQueue,
+        queue: crate::task::InterruptQueue,
         override_count: Option<u16>,
-    ) -> CfgIntResult {
-        assert!(override_count.unwrap_or(0) > 2048);
+    ) -> (
+        CfgIntResult,
+        Option<alloc::vec::Vec<crate::interrupts::InterruptIndex>>,
+    ) {
+        assert!(override_count.unwrap_or(0) < 2048);
 
         if let Some(_) = self.capabilities.get(&capabilities::CapabilityId::MsiX) {
-            let ret = self.cfg_msi_x(waker.clone(), queue, override_count);
-            if ret.success() {
+            let ret = self.cfg_msi_x(queue.clone(), override_count);
+            if ret.0.success() {
+                debug_assert!(ret.1.is_some()); // driver did not properly acquire resource
                 return ret;
             }
         }
@@ -346,13 +349,14 @@ impl DeviceControl {
                 }
             };
 
-            let ret = self.cfg_msi(waker.clone(), queue, oc);
-            if ret.success() {
+            let ret = self.cfg_msi(queue.clone(), oc);
+            if ret.0.success() {
+                debug_assert!(ret.1.is_some()); // driver did not properly acquire resource
                 return ret;
             }
         }
 
-        self.cfg_legacy_int(waker, queue)
+        self.cfg_legacy_int(queue)
     }
 
     /// Configures MSI-X for the device function.
@@ -370,17 +374,19 @@ impl DeviceControl {
     /// This fn will panic if `override_count.unwrap_or(0) > 2048`
     fn cfg_msi_x(
         &mut self,
-        waker: alloc::sync::Arc<core::task::Waker>,
-        queue: &'static crate::task::InterruptQueue,
+        queue: crate::task::InterruptQueue,
         override_count: Option<u16>,
-    ) -> CfgIntResult {
+    ) -> (
+        CfgIntResult,
+        Option<alloc::vec::Vec<crate::interrupts::InterruptIndex>>,
+    ) {
         use capabilities::msi;
-        assert!(override_count.unwrap_or(0) > 2048);
+        assert!(override_count.unwrap_or(0) < 2048);
 
         let mut msi = {
             match capabilities::msi::MessageSignaledIntX::try_from(self) {
                 Ok(r) => r,
-                Err(_) => return CfgIntResult::Failed,
+                Err(_) => return (CfgIntResult::Failed, None),
             }
         };
 
@@ -415,7 +421,7 @@ impl DeviceControl {
                 reserved_irq.push(n);
             } else {
                 if reserved_irq.len() == 0 {
-                    return CfgIntResult::Failed;
+                    return (CfgIntResult::Failed, None);
                 } else {
                     break;
                 }
@@ -425,13 +431,13 @@ impl DeviceControl {
         // set handlers
         for (i, n) in reserved_irq.iter().enumerate() {
             unsafe {
-                crate::interrupts::alloc_irq(*n, waker.clone(), queue, i as u64)
+                crate::interrupts::alloc_irq(*n, queue.clone(), i as u64)
                     .expect("Failed to allocate reserved IRQ");
             }
         }
 
         let mut ret = alloc::vec::Vec::with_capacity(vectors as usize);
-        for (i, e) in msi.get_vec_table_mut().iter_mut().enumerate() {
+        for (i, e) in msi.get_vec_table().iter_mut().enumerate() {
             let loc_msg = i % reserved_irq.len();
             let i_vec = reserved_irq[loc_msg];
             e.set_entry(
@@ -446,12 +452,15 @@ impl DeviceControl {
             let t_count = msi.get_ctl().table_size();
             if count < t_count {
                 for v in count..t_count {
-                    msi.get_vec_table_mut()[v as usize].mask(true)
+                    msi.get_vec_table()[v].mask(true)
                 }
             }
         }
 
-        CfgIntResult::SetMsiX(ret)
+        (
+            CfgIntResult::SetMsiX(ret),
+            Some(reserved_irq.iter().map(|n| (*n).into()).collect()),
+        )
     }
 
     /// Configures MSI for the device function.
@@ -480,16 +489,18 @@ impl DeviceControl {
     /// raise an interrupt above this value  
     unsafe fn cfg_msi(
         &mut self,
-        waker: alloc::sync::Arc<core::task::Waker>,
-        queue: &'static crate::task::InterruptQueue,
+        queue: crate::task::InterruptQueue,
         override_count: Option<u16>,
-    ) -> CfgIntResult {
+    ) -> (
+        CfgIntResult,
+        Option<alloc::vec::Vec<crate::interrupts::InterruptIndex>>,
+    ) {
         use capabilities::msi;
         assert!(override_count.unwrap_or(0) < 32);
 
         let mut msi = match msi::MessageSigInt::try_from(self) {
             Ok(r) => r,
-            Err(_) => return CfgIntResult::Failed,
+            Err(_) => return (CfgIntResult::Failed, None),
         };
 
         let req_vec = msi
@@ -514,7 +525,7 @@ impl DeviceControl {
                         use_vectors = n.next_power_of_two() >> 1;
                         assert!(use_vectors >= 32);
                         if use_vectors == 0 {
-                            return CfgIntResult::Failed;
+                            return (CfgIntResult::Failed, None);
                         }
                     }
                 }
@@ -522,9 +533,13 @@ impl DeviceControl {
         };
 
         // set handler is IHR
+        let mut irqs = alloc::vec::Vec::with_capacity(count as usize);
         for (i, irq) in (irq..irq + count).enumerate() {
-            crate::interrupts::alloc_irq(irq, waker.clone(), queue, i as u64)
-                .expect("Failed to allocate reserved IRQ")
+            x86_64::instructions::interrupts::without_interrupts(|| {
+                crate::interrupts::alloc_irq(irq, queue.clone(), i as u64)
+                    .expect("Failed to allocate reserved IRQ")
+            });
+            irqs.push(irq.into());
         }
 
         msi.set_interrupt(
@@ -547,15 +562,17 @@ impl DeviceControl {
             }
         }
 
-        CfgIntResult::SetMsi(count, req_vec)
+        (CfgIntResult::SetMsi(count, req_vec), Some(irqs))
     }
 
     #[allow(unused_variables)]
     unsafe fn cfg_legacy_int(
         &mut self,
-        waker: alloc::sync::Arc<core::task::Waker>,
-        queue: &crate::task::InterruptQueue,
-    ) -> CfgIntResult {
+        queue: crate::task::InterruptQueue,
+    ) -> (
+        CfgIntResult,
+        Option<alloc::vec::Vec<crate::interrupts::InterruptIndex>>,
+    ) {
         unimplemented!()
     }
 
@@ -975,7 +992,8 @@ pub enum CfgIntResult {
 
     /// Indicates that the device is configured with legacy interrupts.
     /// In this mode the Interrupt messages only indicate mow many times this function has requested
-    /// an interrupt
+    /// an interrupt.
+    /// All messages will be 1.
     SetLegacy,
 
     /// Indicates that the kernel failed to configure the function.
@@ -983,11 +1001,45 @@ pub enum CfgIntResult {
 }
 
 impl CfgIntResult {
-    fn success(&self) -> bool {
+    pub fn success(&self) -> bool {
         if let Self::Failed = self {
             false
         } else {
             true
+        }
+    }
+}
+
+impl crate::task::int_message_queue::MessageCfg for CfgIntResult {
+    fn count(&self) -> usize {
+        match self {
+            CfgIntResult::SetMsi(a, _) => *a as usize,
+            CfgIntResult::SetMsiX(v) => v.len(),
+            CfgIntResult::SetLegacy => 1,
+            CfgIntResult::Failed => panic!(
+                "Called MsgConfig::count() on {}::Failed",
+                core::any::type_name::<Self>()
+            ),
+        }
+    }
+
+    #[track_caller]
+    fn message(&self, vector: usize) -> crate::task::InterruptMessage {
+        if vector < self.count() {
+            match self {
+                CfgIntResult::SetMsi(_, _) => crate::task::InterruptMessage(vector as u64),
+                CfgIntResult::SetMsiX(a) => a[vector],
+                CfgIntResult::SetLegacy => crate::task::InterruptMessage(1),
+                CfgIntResult::Failed => panic!(
+                    "Called MsgConfig::message() on {}::Failed",
+                    core::any::type_name::<Self>()
+                ),
+            }
+        } else {
+            panic!(
+                "Attempted to request message for vector: {vector:}, at {}",
+                core::panic::Location::caller()
+            )
         }
     }
 }
