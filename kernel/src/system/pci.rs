@@ -996,7 +996,7 @@ impl PciResourceContainer {
     pub fn class(&self) -> u32 {
         // todo change PCI class to u32 from [u8;3]
         let mut c = [0u8; 4];
-        c[0..3].copy_from_slice(&self.device.lock().header.class()[..]);
+        c[1..4].copy_from_slice(&self.device.lock().header.class()[..]);
 
         u32::from_le_bytes(c)
     }
@@ -1012,14 +1012,14 @@ impl PciResourceContainer {
     pub fn header_type(&self) -> HeaderType {
         self.device.lock().header.header_type()
     }
+
+    pub fn get_inner(&self) -> alloc::sync::Arc<spin::Mutex<DeviceControl>> {
+        self.device.clone()
+    }
 }
 
 impl super::driver_if::ResourceId for PciResourceContainer {
-    fn as_any(&self) -> &dyn core::any::Any {
-        self
-    }
-
-    fn as_any_mut(&mut self) -> &mut dyn core::any::Any {
+    fn as_any(self: alloc::boxed::Box<Self>) -> alloc::boxed::Box<dyn core::any::Any> {
         self
     }
 
