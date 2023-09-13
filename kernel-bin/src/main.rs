@@ -114,9 +114,10 @@ fn kernel_main(b: &'static mut bootloader_api::BootInfo) -> ! {
     #[cfg(test)]
     test_main();
 
-    let mut executor = executor::Executor::new();
-    executor.spawn(Task::new(keyboard::print_key()));
-    executor.run();
+    init_static_drivers();
+
+    task::run_task(Box::pin(keyboard::print_key()));
+    task::run_exec(); //executor.run();
 }
 
 fn say_hi() {
@@ -128,6 +129,10 @@ fn say_hi() {
     println!(r#" |( )/ "#);
     println!(r#" | " | "#);
     println!(r#" /    \"#);
+}
+
+fn init_static_drivers() {
+    ahci::init()
 }
 
 #[cfg(not(test))]
