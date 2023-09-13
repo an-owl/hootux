@@ -97,13 +97,11 @@ impl<T: MessageCfg> Stream for IntMessageQueue<T> {
 }
 
 impl<T: MessageCfg> Drop for IntMessageQueue<T> {
-    #[track_caller]
     fn drop(&mut self) {
         if !self.interrupts.is_empty() {
             panic!(
-                "Attempted to drop {} without freeing IRQs in {}",
-                core::any::type_name::<Self>(),
-                core::panic::Location::caller()
+                "Attempted to drop {} without freeing IRQs",
+                core::any::type_name::<Self>()
             );
         }
     }
