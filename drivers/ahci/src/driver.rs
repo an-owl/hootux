@@ -1,14 +1,14 @@
+use crate::hba::port_control::InterruptStatus;
 use crate::PortState;
-use ata::command::constructor;
 use ata::command::constructor::{CommandConstructor, MaybeOpaqueCommand, OpaqueCommand};
 use core::alloc::Allocator;
 use core::fmt::Formatter;
 use core::pin::Pin;
 use core::task::{Context, Poll};
-use futures::FutureExt;
 use hootux::alloc_interface::MmioAlloc;
 
 mod cmd_ctl;
+pub(crate) mod kernel_if;
 
 pub(crate) type HbaInfoRef = alloc::sync::Arc<HbaInfo>;
 
@@ -18,13 +18,23 @@ pub(crate) type HbaInfoRef = alloc::sync::Arc<HbaInfo>;
 pub struct HbaInfo {
     is_64_bit: bool,
     queue_depth: u8,
+    mech_presence_switch: bool,
+    pci_addr: hootux::system::pci::DeviceAddress,
 }
 
 impl HbaInfo {
-    pub(crate) fn from_general(ctl: &crate::hba::general_control::GeneralControl) -> Self {
+    pub(crate) fn from_general(
+        ctl: &crate::hba::general_control::GeneralControl,
+        pci_addr: hootux::system::pci::DeviceAddress,
+    ) -> Self {
         Self {
             is_64_bit: ctl.get_capabilities().0.supports_qword_addr(),
             queue_depth: ctl.get_capabilities().0.get_command_slots(),
+            mech_presence_switch: ctl
+                .get_capabilities()
+                .0
+                .contains(crate::hba::general_control::HbaCapabilities::PRESENCE_SWITCH),
+            pci_addr,
         }
     }
 
@@ -57,9 +67,9 @@ impl AbstractHba {
     ///
     /// The caller must ensure that the given location points to a AHCI HBA configuration region,
     /// and uses an appropriate caching mode.
-    pub unsafe fn new(region: alloc::boxed::Box<[u8; 2048], MmioAlloc>) -> Self {
-        let r = alloc::boxed::Box::leak(region);
-        let hba = crate::hba::HostBusAdapter::from_raw(r as *mut _ as *mut u8);
+    pub unsafe fn new(region: &mut [u8], bus_addr: hootux::system::pci::DeviceAddress) -> Self {
+        let r = region;
+        let hba = crate::hba::HostBusAdapter::from_raw(r);
         let crate::hba::HostBusAdapter {
             general,
             vendor: _vendor,
@@ -68,14 +78,16 @@ impl AbstractHba {
 
         general.claim_from_firmware();
 
-        let info = alloc::sync::Arc::new(HbaInfo::from_general(general));
-        let mut raw_ports = ports.each_mut().map(|p| Some(p));
+        let info = alloc::sync::Arc::new(HbaInfo::from_general(general, bus_addr));
+        let mut raw_ports: alloc::vec::Vec<Option<&mut crate::hba::port_control::PortControl>> =
+            ports.into_iter().map(|p| Some(p)).collect();
 
         let mut ports = [const { None }; 32];
 
+        // unimplemented ports stay None
         for (i, p) in raw_ports.iter_mut().enumerate() {
             if general.check_port(i as u8) {
-                ports[i] = Some(Port::new(p.take().unwrap(), info.clone()))
+                ports[i] = Some(Port::new(p.take().unwrap(), info.clone(), i as u8))
             }
         }
 
@@ -110,19 +122,13 @@ impl AbstractHba {
         }
     }
 
-    /// Returns a reference to the given port.
-    ///
-    /// # Panics
-    ///
-    /// This fn will panic if `port > 31` or if the port is not implemented.
-    pub(crate) fn get_port(&self, port: u8) -> &Port {
-        &self.ports[port as usize].as_ref().unwrap()
-    }
-
+    /// Refreshes execution on all ports that raised an interrupt.
     pub(crate) async fn chk_ports(&self) {
-        for i in &self.ports {
-            if let Some(p) = i {
-                p.refresh_exec().await;
+        let t = self.general.int_status();
+        self.general.clear_int(t);
+        for i in 0..32 {
+            if t & 1 << i != 0 {
+                self.ports[i].as_ref().expect("CCC Bug?").update().await;
             }
         }
     }
@@ -156,7 +162,10 @@ impl Drop for AbstractHba {
 }
 
 pub struct Port {
+    index: u8,
     info: HbaInfoRef,
+    // see port comment
+    known_state: atomic::Atomic<PortState>,
     identity: spin::Mutex<Option<DevIdentity>>,
     // I dont think this actually needs to be a mutex.
     // The vast majority of accesses to this are reads.
@@ -173,12 +182,18 @@ pub struct Port {
 }
 
 impl Port {
-    fn new(port: &'static mut crate::hba::port_control::PortControl, info: HbaInfoRef) -> Self {
+    fn new(
+        port: &'static mut crate::hba::port_control::PortControl,
+        info: HbaInfoRef,
+        index: u8,
+    ) -> Self {
         let tables = cmd_ctl::CmdList::new(info.clone());
         port.set_cmd_table(tables.table_addr());
 
         Self {
+            index,
             info,
+            known_state: atomic::Atomic::new(port.get_port_state()),
             identity: spin::Mutex::new(None),
             port: spin::Mutex::new(port),
             cmd_tables: tables,
@@ -220,8 +235,6 @@ impl Port {
                 let id = DevIdentity::from(*id_raw);
 
                 if id.lba_count == 0 {
-                    let t = self.port.lock();
-                    let u = &*t;
                     debug_assert!(id.lba_count == 0, "id bad");
                     log::error!("id bad");
                 }
@@ -268,6 +281,7 @@ impl Port {
         if self.err_chk.is_err() {
             return None;
         }
+
         let slot = self.cmd_lock.get_cmd()?;
         let (fis, nqc) = if let Some(ret) = self.compile_fis(&cmd.data.cmd) {
             cmd.data.nqc.store(true, atomic::Ordering::Relaxed);
@@ -355,13 +369,27 @@ impl Port {
         }
     }
 
+    /// Enter error handling state. Each command will be retried one by one, if the command returns
+    /// another error it will be aborted.
+    /* todo currently transmission errors will abort a single command.
+      atm im not too sure how to deal with this
+      data errors should have a certain threshold before declaring a device as failed
+      but I'm not too sure how to handle this.
+      should it be fails:time ratio or success:fail ratio
+      if a single command fails 10 times but others succeed should just that command be aborted?
+    */
     fn err_refresh(&self) {
         // cannot run error check while commands are active.
         if self.port.lock().get_ci() != 0 {
+            self.err_chk.inner.lock().waiting = true;
             return;
         }
+        self.err_chk.inner.lock().waiting = false;
+
         let done = self.complete().trailing_zeros();
         let err = self.port.lock().task_file_data.read().get_status();
+
+        // take because the future is now concluded
         let fut = self.active_cmd_fut[done as usize].lock().take().unwrap();
         if err == 0 {
             fut.ready()
@@ -392,7 +420,7 @@ impl Port {
         let ci = self.port.lock().get_ci();
         for (i, s) in self.cmd_lock.cmd.iter().enumerate() {
             let s = s.load(atomic::Ordering::Relaxed);
-            let mask = (1 << i);
+            let mask = 1 << i;
             if s == CmdLockState::Running && ci & mask == 0 {
                 ret |= mask;
             }
@@ -418,7 +446,7 @@ impl Port {
         CmdFuture {
             data: alloc::sync::Arc::new(CmdDataInner {
                 cmd,
-                state: atomic::Atomic::new(CmdState::Queued),
+                state: atomic::Atomic::new(CmdState::Waiting),
                 buff: atomic::Atomic::new(buff.map(|b| b as *mut [u8])),
                 waker: Default::default(),
                 nqc: atomic::Atomic::new(false),
@@ -559,11 +587,175 @@ impl Port {
     fn get_state(&self) -> PortState {
         self.port.lock().get_port_state()
     }
+
+    /// Sets the enabled interrupts for the port.
+    ///
+    /// If any bits are not allowed they will be returned and the interrupt status will not be updated.
+    unsafe fn set_int_enable(
+        &self,
+        ie: crate::hba::port_control::InterruptEnable,
+    ) -> Result<(), crate::hba::port_control::InterruptEnable> {
+        // check cold presence(cmd.cpd), mechanical presence (cap1)
+        use crate::hba::port_control::InterruptEnable;
+        let mut err = Ok(());
+        if ie.contains(InterruptEnable::COLD_PORT_DETECT) {
+            if !self
+                .port
+                .lock()
+                .cmd_status
+                .read()
+                .contains(crate::hba::port_control::CommStatus::COLD_PRESENCE_DETECTION)
+            {
+                err = Err(InterruptEnable::COLD_PORT_DETECT);
+            }
+        }
+        if ie.contains(InterruptEnable::DEVICE_MECHANICAL_PRESENCE) {
+            if !self.info.mech_presence_switch {
+                if let Err(i) = &mut err {
+                    *i |= InterruptEnable::DEVICE_MECHANICAL_PRESENCE;
+                } else {
+                    err = Err(InterruptEnable::DEVICE_MECHANICAL_PRESENCE);
+                }
+            }
+        }
+
+        err?; //returns on err
+        self.port.lock().interrupt_enable.write(ie);
+        Ok(())
+    }
+
+    /// Attempts to handle the ports current interrupt status.
+    /// An interrupt does **not** need to be raised to call this fn.
+    ///
+    /// - If the port status is changed it will be updated and [Self::state_update] will be called.
+    /// - If a fatal data error is detected all commands will be restarted
+    /// - If a task file error was detected [Self::err_refresh] will be called. Determining which command caused the error and completing all others.
+    /// - If a command completion was detected this fn will return true and [Self::refresh_exec] must be called.
+    fn handle_int(&self) -> bool {
+        let is = {
+            let l = self.port.lock();
+            let is = l.interrupt_status.read();
+            is
+        };
+
+        if is.intersects(
+            InterruptStatus::COLD_PORT_DETECT
+                | InterruptStatus::DEVICE_MECHANICAL_PRESENCE
+                | InterruptStatus::PORT_CONNECT_CHANGE,
+        ) {
+            self.int_clear(InterruptStatus::all());
+            self.state_update();
+            return false;
+        }
+
+        let chk = InterruptStatus::INTERFACE_FATAL;
+        if is.contains(chk.clone()) {
+            // clear should be called first. In case more occur.
+            self.int_clear(chk);
+
+            // retry all commands
+            for (i, s) in self.cmd_lock.cmd.iter().enumerate() {
+                let mut l = 0;
+                if s.load(atomic::Ordering::Relaxed) == CmdLockState::Running {
+                    l |= 1 << i;
+                }
+                self.port.lock().set_ci(l);
+            }
+            log::warn!("{self}: Interface fatal data error detected, Retrying");
+
+            // basically clear anything that will be set by a command
+            self.int_clear(
+                InterruptStatus::INTERFACE_FATAL
+                    | InterruptStatus::DESCRIPTOR_PROCESSED
+                    | InterruptStatus::TASK_FILE_ERROR
+                    | InterruptStatus::INTERFACE_NON_FATAL
+                    | InterruptStatus::DMA_SETUP_FIS
+                    | InterruptStatus::OVERFLOW
+                    | InterruptStatus::PIO_SETUP_FIS,
+            );
+        }
+
+        let chk = InterruptStatus::TASK_FILE_ERROR;
+        if is.contains(chk.clone()) {
+            self.err_refresh();
+            self.int_clear(chk.clone() | InterruptStatus::DEV_TO_HOST_FIS); // its unknown which command returned err so they must all be retried
+            return false;
+        }
+        let chk = InterruptStatus::DEV_TO_HOST_FIS;
+        if is.contains(chk.clone()) {
+            return true;
+        }
+        return false;
+    }
+
+    /// Handles unexpected device state updates.
+    fn state_update(&self) {
+        let ks = self.known_state.load(atomic::Ordering::Relaxed);
+        match self.get_state() {
+            PortState::NotImplemented => unreachable!(), // get_state() cannot return this
+            PortState::None => {
+                self.abandon_cmd();
+                self.known_state
+                    .store(PortState::None, atomic::Ordering::Relaxed);
+            }
+            PortState::Cold => {
+                if ks == PortState::Hot {
+                    // port has become unavailable
+                    log::warn!("AHCI: {} has been detected via Cold Presence Detection without being removed", self);
+                    self.abandon_cmd();
+                } else if ks == PortState::Warm {
+                    log::warn!("AHCI: {} has been detected via Cold Presence Detection without being removed", self);
+                }
+
+                todo!()
+                // notify system & wait for input?
+                // identify the device and leave it?
+            }
+            PortState::Warm => todo!(), // not sure what to do here because im pretty sure this would be software controlled
+            PortState::Hot => todo!(),  // add new block device
+        }
+    }
+
+    /// Abandons all commands.
+    ///
+    /// This should be called in the event that the device becomes unavailable.
+    fn abandon_cmd(&self) {
+        for i in &self.active_cmd_fut {
+            let t = i.lock().take();
+            if t.is_none() {
+                continue;
+            }
+            t.unwrap().err(CmdErr::Disowned)
+        }
+
+        let mut ql = self.cmd_queue.lock();
+        while let Some(c) = ql.pop_front() {
+            c.err(CmdErr::Disowned);
+        }
+    }
+
+    /// Clears the interrupt status' specified in `int`.
+    /// The caller should ensure that any interrupts to be cleared are handled properly.
+    fn int_clear(&self, int: InterruptStatus) {
+        self.port.lock().interrupt_status.clear(int);
+    }
+
+    async fn update(&self) {
+        if self.handle_int() {
+            self.refresh_exec().await
+        }
+    }
 }
 
 impl core::fmt::Debug for Port {
     fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
         core::fmt::Debug::fmt(&self.port, f)
+    }
+}
+
+impl core::fmt::Display for Port {
+    fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
+        write!(f, "{} - {}", self.info.pci_addr, self.index)
     }
 }
 
@@ -718,10 +910,8 @@ unsafe impl Sync for CmdDataInner {}
 
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 enum CmdState {
-    /// The command is queued and waiting to be issued to the device
-    Queued,
-    /// The Command is currently being processed by the device.
-    InProgress,
+    /// The command is waiting to be completed
+    Waiting,
     /// The command has completed is awaiting finalization.
     Completed,
     /// An error was detected. The data within the buffer may or may not be ready.
@@ -839,6 +1029,7 @@ struct PortErrChk {
 }
 
 struct PortErrChkInner {
+    waiting: bool,
     // Contains the active commands which may have triggered an error.
     err_cmd: u32,
     // Contains the command currently being checked.
@@ -849,6 +1040,7 @@ impl PortErrChk {
     const fn new() -> Self {
         Self {
             inner: spin::Mutex::new(PortErrChkInner {
+                waiting: false,
                 err_cmd: 0,
                 err_chk: None,
             }),
@@ -867,7 +1059,7 @@ impl PortErrChk {
         let mut l = self.inner.lock();
         if tfd.get_err() != 0 {
             for (i, s) in lock.cmd.iter().enumerate() {
-                let bit = (1 << i);
+                let bit = 1 << i;
                 if s.load(atomic::Ordering::Relaxed) == CmdLockState::Running && (ci & bit == 0) {
                     l.err_cmd |= bit;
                 }
@@ -887,7 +1079,8 @@ impl PortErrChk {
     }
 
     fn is_err(&self) -> bool {
-        self.inner.lock().err_chk.is_some()
+        let l = self.inner.lock();
+        l.err_chk.is_some() || l.waiting
     }
 
     /// Returns the next command to be checked for errors
@@ -895,7 +1088,9 @@ impl PortErrChk {
         let mut l = self.inner.lock();
         let ret = l.err_chk;
         l.err_chk = Some(l.err_cmd.trailing_zeros() as u8);
-        l.err_cmd ^ 1 << l.err_chk.unwrap();
+
+        // clears the bit being checked
+        l.err_cmd ^= 1 << l.err_chk.unwrap();
         ret.unwrap()
     }
 }

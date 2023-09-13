@@ -25,23 +25,36 @@ pub(crate) struct HostBusAdapter {
     /// Vendor specific registers are defined at the hardware level and must be identified by the
     /// vendor/device in the PCI configuration region
     pub vendor: &'static mut [u8; 0x60],
-    pub ports: &'static mut [port_control::PortControl; 32],
+    // An unspecified number of ports are implemented, this contains all ports which are mapped by ABAR
+    pub ports: alloc::vec::Vec<&'static mut port_control::PortControl>,
 }
 
 impl HostBusAdapter {
     /// Constructs Self from a pointer to the HBA configuration region.
-    pub unsafe fn from_raw(ptr: *mut u8) -> Self {
-        let gen: &mut general_control::GeneralControl = &mut *ptr.cast();
+    pub unsafe fn from_raw(ptr: &mut [u8]) -> Self {
+        let gen: &mut general_control::GeneralControl = &mut *ptr.as_mut_ptr().cast();
 
-        let vendor = &mut *ptr.offset(0xa0).cast();
+        let vendor = &mut *ptr.as_mut_ptr().offset(0xa0).cast();
 
-        // ports
-        let ports = &mut *ptr.offset(0x100).cast();
+        let port_count =
+            ((ptr.len() - 0x100) / core::mem::size_of::<port_control::PortControl>()).min(32);
+        let mut arr = alloc::vec::Vec::with_capacity(port_count);
+
+        for i in 0..port_count {
+            arr.push(
+                &mut *ptr
+                    .as_mut_ptr()
+                    .offset(
+                        (i * core::mem::size_of::<port_control::PortControl>()) as isize + 0x100,
+                    )
+                    .cast(),
+            )
+        }
 
         Self {
             general: gen,
             vendor,
-            ports,
+            ports: arr,
         }
     }
 }

@@ -101,14 +101,6 @@ impl<'a> CommandTable<'a> {
         // See Note above
         unsafe { self.table.send_fis(fis, buff) }
     }
-
-    pub(super) fn set_write(&mut self, cmd: ata::command::AtaCommand) {
-        if cmd.is_write() {
-            unsafe { &mut *self.table.parent }.set_write(true)
-        } else {
-            unsafe { &mut *self.table.parent }.set_write(false)
-        }
-    }
 }
 
 /// This struct is a container for a command table. This struct is to enable control of the command
@@ -173,7 +165,7 @@ impl UnboundCommandTable {
         }
 
         let mut of = alloc::vec::Vec::new();
-        let mut index = core::cell::Cell::new(0); // counts the number of table entries used only mutate in flush()
+        let index = core::cell::Cell::new(0); // counts the number of table entries used only mutate in flush()
 
         let mut rem = region.len(); // who?
         let mut ptr = region.as_ptr();
@@ -283,7 +275,7 @@ impl UnboundCommandTable {
 
     /// Attempts to locate an aligned block form a pointer and a remainder.
     /// Returns the size of the block and address of the next block if any remains.
-    fn gen_blk(mut ptr: *const u8, rem: usize) -> (usize, Option<*const u8>) {
+    fn gen_blk(ptr: *const u8, rem: usize) -> (usize, Option<*const u8>) {
         const INC: usize = hootux::mem::PAGE_SIZE;
 
         let addr = ptr as usize;

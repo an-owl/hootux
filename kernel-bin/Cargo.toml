@@ -11,3 +11,5 @@ bootloader_api = "0.11.4"
 log = "0.4.17"
 x86_64 = "0.14.10"
 acpi = "4.1.1"
+
+ahci = { path = "../drivers/ahci" }

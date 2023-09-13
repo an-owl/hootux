@@ -12,7 +12,7 @@ alloc-debug-serial = [] #This is for debugging the memory allocator
 bootloader_api = "0.11.4"
 volatile = "0.4.6"
 lazy_static = {version = "1.0", features = ["spin_no_std"]}
-spin = "0.5.2"
+spin = "0.9.8"
 x86_64 = "0.14.9"
 uart_16550 = "0.2.16"
 pic8259 = "0.10.2"
