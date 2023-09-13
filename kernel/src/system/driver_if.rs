@@ -1,6 +1,9 @@
 use alloc::string::ToString;
 use alloc::{boxed::Box, string::String};
 
+// todo move to sysfs
+pub static DISCOVERY: DiscoveryDriver = DiscoveryDriver::new();
+
 pub trait DriverProfile: Send {
     // todo fis link
     /// The [driver if] calls this fn to attempt to start a drier instance for this resource.
@@ -38,13 +41,26 @@ pub trait DriverProfile: Send {
 /// system to prevent further issues.
 ///
 /// The display implementation should output the type and a simple way to identify the resource.
-pub trait ResourceId: core::fmt::Display + Send {
-    fn as_any(&self) -> &dyn core::any::Any;
-
-    fn as_any_mut(&mut self) -> &mut dyn core::any::Any;
+pub trait ResourceId: core::fmt::Display + Send + core::any::Any {
+    fn as_any(self: Box<Self>) -> Box<dyn core::any::Any>;
 
     /// See [DriverProfile::bus_name]
     fn bus_name(&self) -> &str;
+}
+
+/// Trait to get [core::any::TypeId] of &dyn ResourceId, where [core::any::Any::type_id] may not
+/// give the id of the concrete value.  
+pub trait WhoIsResource: core::any::Any + Send + seal::Sealed {
+    fn whois(&self) -> core::any::TypeId {
+        self.type_id()
+    }
+}
+impl<T: ?Sized> WhoIsResource for T where T: ResourceId {}
+
+mod seal {
+    pub trait Sealed {}
+
+    impl<T: ?Sized> Sealed for T where T: super::ResourceId {}
 }
 
 #[derive(Eq, PartialEq, Copy, Clone, Debug)]
@@ -124,6 +140,10 @@ impl DiscoveryDriverInner {
     /// Registers the driver into self checking if any instances can be started.
     fn register_drv(&mut self, driver: Box<dyn DriverProfile>) {
         self.locate_res(&*driver);
+        log::debug!(
+            "Reg driver: Resource busses: {:?}",
+            self.free_resources.keys()
+        );
         if let Some(list) = self.driver_registry.get_mut(driver.bus_name().into()) {
             list.push(driver);
         } else {
@@ -137,7 +157,7 @@ impl DiscoveryDriverInner {
     /// Attempts to bind a driver to `resource` if no driver can be started the resource is registers within `self`.
     fn register_res(&mut self, resource: Box<dyn ResourceId>) {
         log::trace!("Registered resource {}", resource);
-
+        log::debug!("Resource busses: {:?}", self.free_resources.keys());
         if let Some(r) = self.locate_drv(resource) {
             if let Some(l) = self.free_resources.get_mut(r.bus_name().into()) {
                 l.push(r);
@@ -155,11 +175,11 @@ impl DiscoveryDriverInner {
     fn locate_drv(&self, resource: Box<dyn ResourceId>) -> Option<Box<dyn ResourceId>> {
         let bus: String = resource.bus_name().into();
         let mut res = Some(resource);
-        if let Some(list) = self.driver_registry.get(&*bus) {
+        if let Some(list) = self.driver_registry.get(&bus) {
             for i in list {
                 let (s, r) = i.try_start(res.take().unwrap());
                 if s == MatchState::Success {
-                    assert!(!r.is_none(), "Driver unexpectedly did not consume resource");
+                    assert!(r.is_none(), "Driver unexpectedly did not consume resource");
                 } else {
                     assert!(r.is_some(), "Driver unexpectedly dropped resource");
                     res = r;
@@ -183,7 +203,7 @@ impl DiscoveryDriverInner {
                 let id = format_args!("{i}").to_string();
                 let (s, r) = drv.try_start(i);
                 if s == MatchState::Success {
-                    assert!(!r.is_none(), "Driver unexpectedly did not consume resource");
+                    assert!(r.is_none(), "Driver unexpectedly did not consume resource");
                     log::trace!("Driver started for {id}");
                 } else {
                     list.push(r.expect("Driver unexpectedly dropped resource"));
