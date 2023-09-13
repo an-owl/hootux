@@ -6,6 +6,8 @@
 //! address, 8-bit bus address, 6-bit device address and a 3-bit function id. PCI does not implement
 //! segment groups, in this case where a segment group is required it may be set to `0`
 
+// todo move all the BAR stuff into it's own module.
+
 use crate::alloc_interface::MmioAlloc;
 use crate::system::pci::configuration::{register::HeaderType, PciHeader};
 use core::{cmp::Ordering, fmt::Formatter};
@@ -89,7 +91,7 @@ pub struct DeviceControl {
     class: [u8; 3],
     cfg_region: alloc::boxed::Box<[u8; 4096], MmioAlloc>, // should alloc be generic?
     header: &'static mut dyn PciHeader, // maybe replace this in favour of fetching this when its needed from cfg_region
-    bar: alloc::collections::BTreeMap<u8, BarInfo>,
+    bar: [Option<BarInfo>; 6],
     capabilities:
         alloc::collections::BTreeMap<capabilities::CapabilityId, capabilities::CapabilityPointer>,
 }
@@ -103,21 +105,6 @@ impl core::fmt::Debug for DeviceControl {
         d.finish()
     }
 }
-
-/*
-pub struct DeviceBinding<'a> {
-    inner: &'a crate::kernel_structures::mutex::Mutex<DeviceControl>,
-}
-
-impl<'a> DeviceBinding<'a> {
-    pub fn lock(&self) -> LockedDevice {
-        LockedDevice {
-            inner: self.inner.lock(),
-        }
-    }
-}
-
- */
 
 pub struct LockedDevice<'a> {
     inner: crate::kernel_structures::mutex::MutexGuard<'a, DeviceControl>,
@@ -186,7 +173,7 @@ impl DeviceControl {
             },
         };
 
-        let mut bar = alloc::collections::BTreeMap::new();
+        let mut bar = [const { None }; 6];
         let mut bar_iter = 0..header.bar_count();
         while let Some(i) = bar_iter.next() {
             if let Some(info) = BarInfo::new(&mut *header, i) {
@@ -195,7 +182,7 @@ impl DeviceControl {
                     // the result is not important but the iter needs to be advanced
                     bar_iter.next();
                 }
-                bar.insert(i, info);
+                bar[i as usize] = Some(info);
             }
         }
 
@@ -249,8 +236,8 @@ impl DeviceControl {
         self.class
     }
 
-    pub fn get_bar(&self, id: u8) -> Option<BarInfo> {
-        Some(self.bar.get(&id)?.clone())
+    pub fn get_bar(&self, id: u8) -> Option<&BarInfo> {
+        self.bar[id as usize].as_ref()
     }
 
     pub fn capability(
@@ -598,6 +585,9 @@ impl DeviceControl {
 // Because of how BARS need to be used they are interacted with using DeviceControl not their own
 // type. So BAR stuff will get its own impl block
 impl DeviceControl {
+    // bar allocation does nto work. Requires control of root complex
+    // also requires some sense of stability for PCI mem management
+    /*
     /// Sets the given BAR to use the given physical address
     ///
     /// # Panics
@@ -635,7 +625,7 @@ impl DeviceControl {
         if self.header.bar_count() <= id {
             return Err(BarError::IllegalId);
         }
-        let b = *self.bar.get(&id).ok_or(BarError::IdInvalid)?;
+        let b = &self.bar[id as usize].ok_or(BarError::IdInvalid)?;
 
         if p_addr & (b.align - 1) != 0 {
             panic!("Addr not aligned");
@@ -651,18 +641,19 @@ impl DeviceControl {
             BarType::Qword(_) => self.header.bar_long(id).unwrap().write(p_addr),
         };
 
-        let bar = self.bar.get_mut(&id).unwrap();
-        bar.addr = read_back;
+        let b = &mut self.bar[id as usize].unwrap();
+        b.addr = read_back;
         let saved_region = {
             let ptr = region.as_ptr() as *mut u8;
             let len = region.len() * core::mem::size_of::<T>();
             // will not panic `ptr` is from existing ref
             core::ptr::NonNull::new(core::slice::from_raw_parts_mut(ptr, len)).unwrap()
         };
-        bar.virt_region.0 = Some(saved_region);
+        b.virt_region.0 = Some(saved_region);
 
-        Ok(*bar)
+        Ok(*b)
     }
+     */
 
     /// Attempts to validate the information stored within the given BAR id.
     /// Checks are done in the following order
@@ -675,15 +666,15 @@ impl DeviceControl {
     /// see [BarError] for more information
     pub fn validate_bar(&mut self, id: u8) -> Result<(), BarError> {
         use configuration::register::BarType;
-        use x86_64::structures::paging::Mapper;
         if id > self.header.bar_count() {
             return Err(BarError::IllegalId);
         }
-        let bar = *self.bar.get(&id).ok_or(BarError::IdInvalid)?;
+        let bar = self.bar[id as usize].as_ref().ok_or(BarError::IdInvalid)?;
         // panic sources and unsafe blocks are checked by match
         let p_addr_reg = match bar.reg_info {
             BarType::DwordIO => return Err(BarError::BarIsIO),
             BarType::Dword(_) => self.header.bar(id).unwrap().read() as u64,
+            // SAFETY: This is safe because the bar is known to be 64bit
             BarType::Qword(_) => unsafe { self.header.bar_long(id).unwrap().read() },
         };
 
@@ -691,43 +682,7 @@ impl DeviceControl {
             return Err(BarError::PhysAddrMismatch);
         }
 
-        let found_addr = {
-            // SAFETY: this is safe because this does not dereference the address
-            let addr = unsafe { bar.region_start() }.ok_or(BarError::VirtAddressMismatch)?;
-            let page = x86_64::structures::paging::Page::<x86_64::structures::paging::Size4KiB>::containing_address(x86_64::VirtAddr::from_ptr(addr));
-            match crate::mem::SYS_MAPPER.get().translate_page(page) {
-                Ok(a) => a.start_address().as_u64(),
-                Err(_) => return Err(BarError::VirtAddressMismatch), // todo create better translate fn
-            }
-        };
-
-        if found_addr == p_addr_reg {
-            Ok(())
-        } else {
-            Err(BarError::VirtAddressMismatch)
-        }
-    }
-
-    /// Automatically locate the physical region and set the pointer internally. This fn may result
-    /// in memory leaks if the memory region was allocated by the system.
-    ///
-    /// # Safety
-    ///
-    /// The caller must ensure that the physical region is located within Reserved memory
-    pub unsafe fn locate_region(&mut self, id: u8) -> Result<BarInfo, BarError> {
-        use core::alloc::Allocator;
-        self.locate_bar(id)?;
-
-        // locate_bar will return Err if this call will fail
-        let b = self.bar.get_mut(&id).unwrap();
-        let alloc = MmioAlloc::new(b.addr as usize);
-
-        // layout will not panic, allocate might
-        let region = alloc
-            .allocate(core::alloc::Layout::from_size_align(b.align as usize, 1).unwrap())
-            .expect("System ran out of memory");
-        b.virt_region.0 = Some(region);
-        Ok(*b)
+        Ok(())
     }
 
     /// Validates that the given bar exists
@@ -736,15 +691,8 @@ impl DeviceControl {
         if id > self.header.bar_count() {
             return Err(BarError::IllegalId);
         }
-        self.bar.get(&id).ok_or(BarError::IdInvalid)?;
+        self.bar[id as usize].as_ref().ok_or(BarError::IdInvalid)?;
         Ok(())
-    }
-
-    pub fn fetch_region(&mut self, id: u8) -> Result<*mut [u8], BarError> {
-        self.validate_bar(id)?;
-        let bar = self.bar.get(&id).unwrap().virt_region.0.unwrap().as_ptr();
-
-        Ok(bar)
     }
 }
 
@@ -760,9 +708,6 @@ pub enum BarError {
     BarIsIO,
     /// Returned when the address in the BAR and its associated `BarInfo` contain differing addresses
     PhysAddrMismatch,
-    /// Returned when the virtual address within the `BarInfo` and the physical address do not match
-    /// or when it is not set.
-    VirtAddressMismatch,
 }
 
 /// Caches information about Base Address Registers
@@ -773,24 +718,12 @@ pub enum BarError {
 /// identifying whether the BAR is "Prefetchable". When the region is prefetchable the region's
 /// cache mode should be either "Write Through" or "Write Combining" which is preferred
 /// - `virt_Region` This is a pointer (when known) to the virtual address that the bar is mapped to.
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug)]
 pub struct BarInfo {
     id: u8,
     align: u64,
     reg_info: configuration::register::BarType,
     addr: u64,
-    virt_region: BarPtr,
-}
-
-#[derive(Debug, Copy, Clone)]
-struct BarPtr(Option<core::ptr::NonNull<[u8]>>);
-
-unsafe impl Sync for BarPtr {}
-unsafe impl Send for BarPtr {}
-impl Default for BarPtr {
-    fn default() -> Self {
-        Self(None)
-    }
 }
 
 impl BarInfo {
@@ -828,7 +761,6 @@ impl BarInfo {
                     align,
                     reg_info,
                     addr: bar.read() as u64,
-                    virt_region: BarPtr::default(),
                 }
                 .into();
 
@@ -861,7 +793,6 @@ impl BarInfo {
                     align,
                     reg_info,
                     addr: bar_long.read(),
-                    virt_region: BarPtr::default(),
                 }
                 .into();
 
@@ -877,18 +808,14 @@ impl BarInfo {
         }
     }
 
-    /// Returns a pointer to the start fo the mapped region
-    ///
-    /// # Safety
-    ///
-    /// This should not be dereferenced without a lock to its associated [DeviceControl]
-    pub unsafe fn region_start(&self) -> Option<*const u8> {
-        let t = self.virt_region.0?;
-        Some(t.as_ptr() as *const u8)
+    /// Returns a layout which describes the referenced region. The returned value will **never** include padding.
+    pub fn layout(&self) -> core::alloc::Layout {
+        let a = self.align;
+        core::alloc::Layout::from_size_align(a as usize, a as usize).unwrap()
     }
 
-    pub fn align(&self) -> u64 {
-        self.align
+    pub fn addr(&self) -> u64 {
+        self.addr
     }
 }
 
