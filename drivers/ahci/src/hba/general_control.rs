@@ -49,6 +49,14 @@ impl GeneralControl {
             self.bios_handoff_ctl_status.claim_blocking()
         }
     }
+
+    pub(crate) fn get_control(&self) -> GlobalHbaCtl {
+        self.host_ctl.read()
+    }
+
+    pub(crate) fn clear_int(&self, mask: u32) {
+        self.interrupt_status.clear_multiple(mask)
+    }
 }
 
 bitflags::bitflags! {
@@ -249,18 +257,31 @@ impl HbaCapabilities {
 
 /// Contain the current interrupt state of each port.
 /// Each bit `n` represents the status of port `n`
+///
+/// # Safety
+///
+/// DwordHighClear should only be used for registers that use a "write 1 to clear", using on nat
+/// other kind of memory may cause UB.
+/// Access to self should be prevented across multiple CPUs. This is self uses interior mutability while being [Send].
+/// Normal writes may be cached or cascaded, this may not be allowed for writes to self.
+/// On x86 systems the memory region that self exists within must be uncached.
+/// Methods accessing self include fences to prevent write cascading.   
 #[repr(transparent)]
 #[derive(Debug)]
 struct DwordHighClear {
-    inner: u32,
+    inner: core::cell::UnsafeCell<u32>,
 }
 
+unsafe impl Send for DwordHighClear {}
+
 impl DwordHighClear {
-    /// Clears the interrupt for `port`
-    pub fn clear(&mut self, port: u8) {
+    /// Clears the bit at the offset `port`
+    pub fn clear(&self, port: u8) {
         let mask = 1 << port;
-        // SAFETY: This is safe because dst is taken by reference
-        unsafe { core::ptr::write_volatile(&mut self.inner, mask) }
+
+        // SAFETY: See doc for Self
+        unsafe { core::ptr::write_volatile(self.inner.get(), mask) }
+        atomic::fence(atomic::Ordering::Release);
     }
 
     /// Clears vectors where the bits in `mask` are 1
@@ -272,13 +293,17 @@ impl DwordHighClear {
     /// assert_eq!(t.read(),0xffffff00)
     ///
     /// ```
-    pub fn clear_multiple(&mut self, mask: u32) {
-        unsafe { core::ptr::write_volatile(&mut self.inner, mask) }
+    pub fn clear_multiple(&self, mask: u32) {
+        // SAFETY: See doc for Self
+        unsafe { core::ptr::write_volatile(self.inner.get(), mask) }
+        atomic::fence(atomic::Ordering::Release);
     }
 
     /// Returns the raw value of the register.
     pub fn read(&self) -> u32 {
-        unsafe { core::ptr::read_volatile(&self.inner) }
+        // SAFETY: See doc for Self
+        atomic::fence(atomic::Ordering::Acquire);
+        unsafe { core::ptr::read_volatile(self.inner.get()) }
     }
 }
 

@@ -12,7 +12,7 @@ pub(crate) struct PortControl {
     /// PxIS
     pub(crate) interrupt_status: Register<InterruptStatus, ReadWriteClear<InterruptStatus>>,
     /// PxIE
-    interrupt_enable: Register<InterruptEnable>,
+    pub(crate) interrupt_enable: Register<InterruptEnable>,
     /// PxCMD
     pub(crate) cmd_status: Register<CommStatus>,
     _res0: core::mem::MaybeUninit<u32>,
@@ -102,6 +102,13 @@ impl PortControl {
     pub(crate) fn get_ci(&self) -> u32 {
         self.command_issue.0.get()
     }
+
+    /// Starts multiple commands using the `cmds` as a mask. Commands already running will remain unchanged.
+    ///
+    /// This fn should be used for error handling
+    pub(crate) fn set_ci(&self, cmds: u32) {
+        self.command_issue.0.set(cmds);
+    }
 }
 
 bitflags::bitflags! {
@@ -109,7 +116,7 @@ bitflags::bitflags! {
     ///
     /// Represents the port interrupt status register. All but explicitly mentioned flags in this
     /// register are cleared by writing a `1`
-    #[derive(Debug)]
+    #[derive(Debug, Copy, Clone)]
     #[repr(transparent)]
     pub(crate) struct InterruptStatus: u32 {
         /// CPDS (R1C)
@@ -132,12 +139,16 @@ bitflags::bitflags! {
         const HOST_BUS_DATA_ERR = 1 << 28;
         /// IFS (R1C)
         ///
-        /// Indicates the HBA encountered an error that caused a transfer to stop. todo see 6.1.2
+        /// Indicates the HBA encountered an error that caused a transfer to stop. This occurs when
+        /// when an error occurs when a data FIS is received incorrectly the transfer is then aborted.
+        /// When this occurs the driver should attempt to retry the command. If this error continues
+        /// to occur then the driver should treat the device as failed.
         const INTERFACE_FATAL = 1 << 27;
         /// INFS (R1C)
         ///
         /// Indicates the HBA encountered an error on the sata interface but was able to continue
-        /// operation.
+        /// operation. This occurs when a non-data FIS is received incorrectly. WHen this occurs the
+        /// HBA will retransmit the FIS.
         const INTERFACE_NON_FATAL = 1 << 26;
         /// OFS (R1C)
         ///
@@ -192,9 +203,9 @@ bitflags::bitflags! {
 
     /// This is used to enable interrupts. When set allows the corresponding bit in [InterruptStatus]
     /// to generate an interrupt.
-    #[derive(Debug)]
+    #[derive(Debug, Copy, Clone)]
     #[repr(transparent)]
-    struct InterruptEnable: u32 {
+    pub(crate) struct InterruptEnable: u32 {
         const COLD_PORT_DETECT = 1 << 31;
         const TASK_FILE_ERROR = 1 << 30;
         const HOST_BUS_FATAL = 1 << 29;
