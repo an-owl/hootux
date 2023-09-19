@@ -140,10 +140,7 @@ impl DiscoveryDriverInner {
     /// Registers the driver into self checking if any instances can be started.
     fn register_drv(&mut self, driver: Box<dyn DriverProfile>) {
         self.locate_res(&*driver);
-        log::debug!(
-            "Reg driver: Resource busses: {:?}",
-            self.free_resources.keys()
-        );
+
         if let Some(list) = self.driver_registry.get_mut(driver.bus_name().into()) {
             list.push(driver);
         } else {
@@ -157,7 +154,6 @@ impl DiscoveryDriverInner {
     /// Attempts to bind a driver to `resource` if no driver can be started the resource is registers within `self`.
     fn register_res(&mut self, resource: Box<dyn ResourceId>) {
         log::trace!("Registered resource {}", resource);
-        log::debug!("Resource busses: {:?}", self.free_resources.keys());
         if let Some(r) = self.locate_drv(resource) {
             if let Some(l) = self.free_resources.get_mut(r.bus_name().into()) {
                 l.push(r);
