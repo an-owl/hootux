@@ -33,8 +33,8 @@ impl<T: MessageCfg> IntMessageQueue<T> {
     /// The caller must ensure that any IRQs managed by `self` will not be raised after this fn is called.
     /// The caller may **not** do this globally masking interrupts.
     pub unsafe fn drop_irq(&mut self) {
-        for i in &self.interrupts {
-            crate::interrupts::free_irq(*i).expect("Double free IRQ");
+        while let Some(i) = self.interrupts.pop() {
+            crate::interrupts::free_irq(i).expect("Double free IRQ");
         }
     }
 
