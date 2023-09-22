@@ -164,7 +164,9 @@ impl HandleRegistry {
         let mut found_start = None;
         let mut found = 0;
 
-        for (i, v) in self.arr.iter().skip(start as usize).enumerate() {
+        let start = start.max(32);
+
+        for (i, v) in self.arr.iter().enumerate().skip(start as usize) {
             match *v.read() {
                 InterruptHandleContainer::Empty if found_start.is_none() => {
                     found_start = Some(i);
