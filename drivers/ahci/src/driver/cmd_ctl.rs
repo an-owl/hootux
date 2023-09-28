@@ -77,7 +77,12 @@ impl Drop for CmdList {
     fn drop(&mut self) {
         use core::alloc::Allocator;
 
+        for i in &mut self.list {
+            drop(i.take());
+        }
+
         let ptr = self.table_top.cast();
+
         let layout = core::alloc::Layout::new::<[CommandHeader; 32]>();
         unsafe {
             hootux::alloc_interface::DmaAlloc::new(self.info.mem_region(), 128)
