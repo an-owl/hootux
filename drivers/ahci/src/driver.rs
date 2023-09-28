@@ -1,5 +1,6 @@
 use crate::hba::port_control::InterruptStatus;
 use crate::PortState;
+use crate::CRATE_NAME;
 use ata::command::constructor::{CommandConstructor, MaybeOpaqueCommand, OpaqueCommand};
 use core::alloc::Allocator;
 use core::fmt::Formatter;
@@ -7,10 +8,17 @@ use core::pin::Pin;
 use core::task::{Context, Poll};
 use hootux::alloc_interface::MmioAlloc;
 
+pub mod block;
 mod cmd_ctl;
 pub(crate) mod kernel_if;
 
 pub(crate) type HbaInfoRef = alloc::sync::Arc<HbaInfo>;
+
+const NEXT_ID: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
+///
+fn new_instance_id() -> usize {
+    NEXT_ID.fetch_add(1, atomic::Ordering::Relaxed)
+}
 
 /// This struct contains HBA specific information that is shared between all components.
 /// This allows components to get information that they do not otherwise have direct access to.
@@ -20,6 +28,7 @@ pub struct HbaInfo {
     queue_depth: u8,
     mech_presence_switch: bool,
     pci_addr: hootux::system::pci::DeviceAddress,
+    driver_instance: usize,
 }
 
 impl HbaInfo {
@@ -35,6 +44,7 @@ impl HbaInfo {
                 .0
                 .contains(crate::hba::general_control::HbaCapabilities::PRESENCE_SWITCH),
             pci_addr,
+            driver_instance: new_instance_id(),
         }
     }
 
@@ -55,8 +65,8 @@ impl HbaInfo {
 
 pub struct AbstractHba {
     info: HbaInfoRef,
-    general: &'static mut crate::hba::general_control::GeneralControl,
-    ports: [Option<Port>; 32],
+    general: spin::Mutex<&'static mut crate::hba::general_control::GeneralControl>,
+    ports: [Option<alloc::sync::Arc<Port>>; 32],
     state: [atomic::Atomic<PortState>; 32],
 }
 
@@ -87,16 +97,17 @@ impl AbstractHba {
         // unimplemented ports stay None
         for (i, p) in raw_ports.iter_mut().enumerate() {
             if general.check_port(i as u8) {
-                ports[i] = Some(Port::new(p.take().unwrap(), info.clone(), i as u8))
+                ports[i] = Some(alloc::sync::Arc::new(Port::new(
+                    p.take().unwrap(),
+                    info.clone(),
+                    i as u8,
+                )))
             }
         }
 
         for i in &ports {
             if let Some(p) = i {
-                p.port
-                    .lock()
-                    .interrupt_status
-                    .clear(crate::hba::port_control::InterruptStatus::all());
+                p.port.lock().interrupt_status.clear(InterruptStatus::all());
 
                 p.enable(true);
             }
@@ -104,7 +115,7 @@ impl AbstractHba {
 
         let ret = Self {
             info,
-            general,
+            general: spin::Mutex::new(general),
             ports,
             state: core::array::from_fn(|_| atomic::Atomic::new(PortState::NotImplemented)),
         };
@@ -145,14 +156,20 @@ impl AbstractHba {
     pub fn info(&self) -> HbaInfo {
         *self.info
     }
+
+    fn int_enable(&self, state: bool) {
+        self.general.lock().int_enable(state);
+    }
 }
 
 impl Drop for AbstractHba {
     fn drop(&mut self) {
+        self.general.lock().int_enable(false);
         // todo: ensure that other CPUs haven't locked self.
         // do this by taking self into its own task, and checking all mutexes and commands
         // until they are free. Poll until true.
-        let t = { self.general as *mut _ as *mut [u8; 2048] };
+
+        let t = { *self.general.lock() as *const _ as *const [u8; 2048] };
         let a = unsafe { MmioAlloc::new(0) };
 
         // ports must be dropped because they reference the HBA struct.
@@ -163,7 +180,7 @@ impl Drop for AbstractHba {
         // SAFETY: References (apart from general) are dropped.
         unsafe {
             a.deallocate(
-                core::ptr::NonNull::new(t).unwrap().cast(),
+                core::ptr::NonNull::new(t.cast_mut()).unwrap().cast(),
                 core::alloc::Layout::from_size_align(2048, 2048).unwrap(),
             );
         }
@@ -265,8 +282,8 @@ impl Port {
     pub async unsafe fn issue_cmd(
         &self,
         cmd: ata::command::constructor::ComposedCommand,
-        buff: Option<&mut [u8]>,
-    ) -> Result<Option<&mut [u8]>, CmdErr> {
+        buff: Option<&[u8]>,
+    ) -> Result<Option<&[u8]>, CmdErr> {
         let fut = self.construct_future(cmd, buff);
 
         // this probably won't end up waiting
@@ -276,7 +293,7 @@ impl Port {
 
         // SAFETY: This is safe because the buffer is originally given as a ref.
         // The deref must occur because the buffer may not have an associated lifetime.
-        fut.await.map(|k| k.map(|b| unsafe { &mut *b }))
+        fut.await.map(|k| k.map(|b| unsafe { &*b }))
     }
 
     /// Attempts to send the cmd to the device Returns the command slot used.
@@ -293,7 +310,7 @@ impl Port {
 
         let slot = self.cmd_lock.get_cmd()?;
         let (fis, nqc) = if let Some(ret) = self.compile_fis(&cmd.data.cmd) {
-            cmd.data.nqc.store(true, atomic::Ordering::Relaxed);
+            cmd.data.nqc.store(ret.1, atomic::Ordering::Relaxed);
             ret
         } else {
             self.get_identity().await;
@@ -306,7 +323,7 @@ impl Port {
 
         // actually sends the command to the device.
         // fixme errors here should be handled
-        table.send_fis(fis, b).expect("fixme");
+        table.send_fis(fis, b.map(|d| d.cast_mut())).expect("fixme");
         *self.active_cmd_fut[slot as usize].lock() = Some(cmd.clone());
 
         self.port.lock().tfd_wait();
@@ -340,6 +357,7 @@ impl Port {
     /// Checks for completed commands, wakes them and attempts to issue new commands from the queue.
     /// This may require waiting for [Self::get_identity]. This fn does not wait for command completion.
     async fn refresh_exec(&self) {
+        // check if the port is currently in the err state
         if !self.err_chk.is_err() {
             let tfd;
             let ci;
@@ -450,13 +468,13 @@ impl Port {
     fn construct_future(
         &self,
         cmd: ata::command::constructor::ComposedCommand,
-        buff: Option<&mut [u8]>,
+        buff: Option<&[u8]>,
     ) -> CmdFuture {
         CmdFuture {
             data: alloc::sync::Arc::new(CmdDataInner {
                 cmd,
                 state: atomic::Atomic::new(CmdState::Waiting),
-                buff: atomic::Atomic::new(buff.map(|b| b as *mut [u8])),
+                buff: atomic::Atomic::new(buff.map(|b| b as *const [u8])),
                 waker: Default::default(),
                 nqc: atomic::Atomic::new(false),
             }),
@@ -490,7 +508,7 @@ impl Port {
                         let dev = cmd.device.unwrap_or(0) | (1 << 6);
                         // required for READ_DMA_EXT
                         command.device = Some(dev);
-                        ata::command::AtaCommand::READ_DMA_EXT
+                        ata::command::AtaCommand::READ_SECTORS_EXT
                     }
                     OpaqueCommand::Write => {
                         let dev = cmd.device.unwrap_or(0) | (1 << 6);
@@ -562,7 +580,7 @@ impl Port {
     ///
     /// This fn will return Err(BadArgs) if the size of given buffer is not aligned to the logical
     /// sector size of the device or the buffer + `lba` exceeds the size of the device.
-    pub async fn write(&self, lba: SectorAddress, buff: &mut [u8]) -> Result<(), CmdErr> {
+    pub async fn write(&self, lba: SectorAddress, buff: &[u8]) -> Result<(), CmdErr> {
         use ata::command::constructor;
 
         let id = self.get_identity().await;
@@ -679,19 +697,25 @@ impl Port {
                     | InterruptStatus::TASK_FILE_ERROR
                     | InterruptStatus::INTERFACE_NON_FATAL
                     | InterruptStatus::DMA_SETUP_FIS
-                    | InterruptStatus::OVERFLOW
-                    | InterruptStatus::PIO_SETUP_FIS,
+                    | InterruptStatus::OVERFLOW,
             );
         }
 
         let chk = InterruptStatus::TASK_FILE_ERROR;
         if is.contains(chk.clone()) {
             self.err_refresh();
-            self.int_clear(chk.clone() | InterruptStatus::DEV_TO_HOST_FIS); // its unknown which command returned err so they must all be retried
+            self.int_clear(
+                chk.clone() | InterruptStatus::DEV_TO_HOST_FIS | InterruptStatus::PIO_SETUP_FIS,
+            ); // its unknown which command returned err so they must all be retried
             return false;
         }
-        let chk = InterruptStatus::DEV_TO_HOST_FIS;
-        if is.contains(chk.clone()) {
+        let chk = InterruptStatus::DEV_TO_HOST_FIS
+            | InterruptStatus::PIO_SETUP_FIS
+            | InterruptStatus::DMA_SETUP_FIS;
+
+        self.int_clear(chk.clone());
+
+        if is.intersects(chk) {
             return true;
         }
         return false;
@@ -754,6 +778,26 @@ impl Port {
             self.refresh_exec().await
         }
     }
+
+    fn cfg_blkdev(self: &alloc::sync::Arc<Self>) {
+        let state = self.known_state.load(atomic::Ordering::Relaxed);
+        if state == PortState::Hot || state == PortState::Warm {
+            let id = hootux::system::sysfs::block::BlockDeviceId::new(
+                CRATE_NAME,
+                self.info.driver_instance,
+                Some(self.index as usize),
+            );
+            let b = alloc::boxed::Box::new(block::AhciBlockDev::new(self, id));
+
+            assert!(
+                hootux::system::sysfs::get_sysfs()
+                    .get_blk_dev()
+                    .register_dev(b)
+                    .is_none(),
+                "Block device already registered"
+            );
+        }
+    }
 }
 
 impl core::fmt::Debug for Port {
@@ -786,6 +830,7 @@ pub struct DevIdentity {
     offset: u16,
     /// Total number of LBAs on the device. Commands may never exceed this LBA. This has a maximum value of `0xFFFF_FFFF_FFFF`
     lba_count: u64,
+    support_48_bit: bool,
 }
 
 impl DevIdentity {
@@ -808,6 +853,10 @@ impl From<ata::structures::identification::DeviceIdentity> for DevIdentity {
             phys_sec_size: g.phys_sec_size(),
             offset: g.get_alignment(),
             lba_count: g.lba_count(),
+            support_48_bit: value
+                .features
+                .features_83
+                .contains(ata::structures::identification::Features83::LBA_48),
         }
     }
 }
@@ -897,19 +946,19 @@ impl CmdLock {
 struct CmdDataInner {
     cmd: ata::command::constructor::ComposedCommand,
     state: atomic::Atomic<CmdState>,
-    buff: atomic::Atomic<Option<*mut [u8]>>,
+    buff: atomic::Atomic<Option<*const [u8]>>,
     waker: futures::task::AtomicWaker,
     // contains whether this command used NQC. This is here exclusively for error checking
     nqc: atomic::Atomic<bool>,
 }
 
 impl CmdDataInner {
-    fn take_buff(&self) -> Option<*mut [u8]> {
+    fn take_buff(&self) -> Option<*const [u8]> {
         // should be non locking due to non-zero optimization
         self.buff.swap(None, atomic::Ordering::Relaxed)
     }
 
-    fn get_buff(&self) -> Option<*mut [u8]> {
+    fn get_buff(&self) -> Option<*const [u8]> {
         self.buff.load(atomic::Ordering::Relaxed)
     }
 }
@@ -967,7 +1016,7 @@ impl CmdFuture {
 }
 
 impl core::future::Future for CmdFuture {
-    type Output = Result<Option<*mut [u8]>, CmdErr>;
+    type Output = Result<Option<*const [u8]>, CmdErr>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         match self.data.state.load(atomic::Ordering::Relaxed) {
@@ -1020,15 +1069,6 @@ impl SectorCount {
             0
         } else {
             n as u16
-        }
-    }
-
-    /// Returns the raw sector count for 28 bit commands
-    fn count(&self) -> Option<u8> {
-        match self.0.get() {
-            256 => Some(0),
-            n if n > 256 => None,
-            n => Some(n as u8),
         }
     }
 }
