@@ -12,113 +12,113 @@ const _ASSERT: () = {
 #[repr(C)]
 #[derive(Debug)]
 pub struct DeviceIdentity {
-    general_cfg: GeneralCfg,
-    _ob0: u16,
-    specific_cfg: u16,
-    _ob1: [u16; 4],
-    _res_cfa: [u16; 2],
-    _re0: u16,
-    serial: [u8; 20],
-    _re1: [u16; 2],
-    _ob2: u16,
-    firmware_vers: [u8; 8],
-    model_num: [u8; 40],
-    _ob3: u16,
-    trusted_computing: TrustedComputing,
-    capabilities: Capabilities,
-    cap_50: Capabilities50,
-    _ob4: [u16; 2],
-    wd_53: u16,
-    _ob5: [u16; 5],
-    sanitize_sub_cmd: SanitizeSubcommands,
+    pub general_cfg: GeneralCfg,
+    ob0: u16,
+    pub specific_cfg: u16,
+    ob1: [u16; 4],
+    res_cfa: [u16; 2],
+    re0: u16,
+    pub serial: [u8; 20],
+    re1: [u16; 2],
+    ob2: u16,
+    pub firmware_vers: [u8; 8],
+    pub model_num: [u8; 40],
+    ob3: u16,
+    pub trusted_computing: TrustedComputing,
+    pub capabilities: Capabilities,
+    pub cap_50: Capabilities50,
+    ob4: [u16; 2],
+    pub wd_53: u16,
+    ob5: [u16; 5],
+    pub sanitize_sub_cmd: SanitizeSubcommands,
     // LBAs for 24 bit cmds
-    lba_28: u32,
-    _ob6: u16,
-    multiword_dma: MultiwordDma,
+    pub lba_28: u32,
+    ob6: u16,
+    pub multiword_dma: MultiwordDma,
     // word 64
-    wd_64_70: TransferConfig,
-    _res_for_command: [u16; 4], // reserved for IDENTIFY_PACKET_DEVICE (ACS-3)
-    queue_depth: QueueDepth,
-    sata_cap: SataCap,
-    sata_cap2: SataCap2,
-    sata_features: SataFeatures,
-    sata_features_en: SataFeaturesEnabled,
-    major_version: MajorVersion, // word 80
-    minor_version: u16, // see spec 7.13.6.39. if a driver wants to check this then that's it's fault
-    features: FeaturesSet,
-    features_copy: FeaturesSet,
-    ultra_dma: UltraDma,
-    erase_time: EraseTime,
-    enhanced_erase_time: EraseTime,
-    apm_level: AdvancedPowerManagement,
-    master_passwd_id: u16,
-    reset_results: u16, // this is a bunch of pata stuff
-    _ob7: u16,
-    streaming: Streaming,
-    logical_sectors: u64,
-    stream_transfer_pio: u16,
-    max_sectors_per_sdm: u16,
-    sector_geom: SectorGeom,
-    seek_speed_for_sound_test: u16,
-    world_wide_name: u64,
-    _re2: [u16; 4],
-    _ob8: u16,
-    logical_sector_size: LbaSize, // count in words not bytes
-    features119: Features119,
-    features119_copy: Features119,
-    _re3: [u16; 6],
-    _ob9: u16,
-    security_status: SecurityStatus,
-    _vendor_specific: [u16; 31],
-    _cfa_res: [u16; 8],
-    form_factor: FormFactor,
-    data_management: DataManagement,
-    additional_product_id: [u8; 8],
-    _re4: [u16; 2],
-    current_media_serial: [u8; 40],
-    current_media_manufacturer: [u8; 20],
-    sct_command_trans: SCTCommandTransport,
-    _re5: [u16; 2],
-    sector_alignment: SectorAlignment,
-    wrv_mode_3_count: u32,
-    wrv_mode_2_count: u32,
-    _oba: [u16; 3],
-    rpm: RotationRateField,
-    _re6: u16,
-    _ob219: u16,
-    wrv_mode: WriteReadVerifyMode,
-    _re221: u16,
-    transport_major_version: TransportMajorVersion,
-    transport_minor_version: TransportMinorVersionField,
-    _re7: [u16; 6],
-    sector_count_ext: SectorCountExt,
+    pub wd_64_70: TransferConfig,
+    res_for_command: [u16; 4], // reserved for IDENTIFY_PACKET_DEVICE (ACS-3)
+    pub queue_depth: QueueDepth,
+    pub sata_cap: SataCap,
+    pub sata_cap2: SataCap2,
+    pub sata_features: SataFeatures,
+    pub sata_features_en: SataFeaturesEnabled,
+    pub major_version: MajorVersion, // word 80
+    pub minor_version: u16, // see spec 7.13.6.39. if a driver wants to check this then that's it's fault
+    pub features: FeaturesSet,
+    pub features_copy: FeaturesSet,
+    pub ultra_dma: UltraDma,
+    pub erase_time: EraseTime,
+    pub enhanced_erase_time: EraseTime,
+    pub apm_level: AdvancedPowerManagement,
+    pub master_passwd_id: u16,
+    pub reset_results: u16, // this is a bunch of pata stuff
+    ob7: u16,
+    pub streaming: Streaming,
+    pub logical_sectors: u64,
+    pub stream_transfer_pio: u16,
+    pub max_sectors_per_sdm: u16,
+    pub sector_geom: SectorGeom,
+    pub seek_speed_for_sound_test: u16,
+    pub world_wide_name: u64,
+    re2: [u16; 4],
+    ob8: u16,
+    pub logical_sector_size: LbaSize, // count in words not bytes
+    pub features119: Features119,
+    pub features119_copy: Features119,
+    re3: [u16; 6],
+    ob9: u16,
+    pub security_status: SecurityStatus,
+    vendor_specific: [u16; 31],
+    cfa_res: [u16; 8],
+    pub form_factor: FormFactor,
+    pub data_management: DataManagement,
+    pub additional_product_id: [u8; 8],
+    re4: [u16; 2],
+    pub current_media_serial: [u8; 40],
+    pub current_media_manufacturer: [u8; 20],
+    pub sct_command_trans: SCTCommandTransport,
+    re5: [u16; 2],
+    pub sector_alignment: SectorAlignment,
+    pub wrv_mode_3_count: u32,
+    pub wrv_mode_2_count: u32,
+    oba: [u16; 3],
+    pub rpm: RotationRateField,
+    re6: u16,
+    ob219: u16,
+    pub wrv_mode: WriteReadVerifyMode,
+    re221: u16,
+    pub transport_major_version: TransportMajorVersion,
+    pub transport_minor_version: TransportMinorVersionField,
+    re7: [u16; 6],
+    pub sector_count_ext: SectorCountExt,
     /// Minimum number fo 512 byte blocks required to download microcode
-    micro_blocks_min: u16,
+    pub micro_blocks_min: u16,
     /// Maximum number of 512 byte blocks required to download microcode
-    micro_blocks_max: u16,
-    _re8: [u16; 19],
+    pub micro_blocks_max: u16,
+    re8: [u16; 19],
     checksum: Integrity,
 }
 
 #[repr(C)]
 #[derive(Debug)]
 pub struct TransferConfig {
-    pio_mode: PioMode,
+    pub pio_mode: PioMode,
     // TODO see ata spec 9.11.9.4.2
-    min_dma_time: u16,
-    recommended_min_dma_time: u16,
-    min_pio_time: u16,
-    min_pio_time_iordy: u16,
-    additonal_supported: AdditonalSupport,
+    pub min_dma_time: u16,
+    pub recommended_min_dma_time: u16,
+    pub min_pio_time: u16,
+    pub min_pio_time_iordy: u16,
+    pub additional_supported: AdditonalSupport,
     _res: u16,
 }
 
 #[repr(C)]
 #[derive(Debug)]
-struct FeaturesSet {
-    features_82: Features82,
-    features_83: Features83,
-    features_84: Features84,
+pub struct FeaturesSet {
+    pub features_82: Features82,
+    pub features_83: Features83,
+    pub features_84: Features84,
 }
 
 const DECODE_FAILED: &str = "Failed to decode ata string";
@@ -297,7 +297,7 @@ impl DeviceIdentity {
     pub fn get_device_geometry(&self) -> DeviceGeometry {
         // I'm not entirely sure if i should be using logical_sectors or sector_count_ext
         let lba = if self.get_transfer_cfg().map_or(false, |t| {
-            t.additonal_supported
+            t.additional_supported
                 .contains(AdditonalSupport::EXTENDED_SECTOR_ADDRESSES)
         }) {
             self.sector_count_ext.read()
@@ -356,7 +356,7 @@ pub struct VersionInfo {
 
 #[repr(C)]
 #[derive(Debug)]
-struct Streaming {
+pub struct Streaming {
     /// Number of sectors that provides optimum performance in streaming environments.
     /// Starting LBAs for streaming commands should be divisable by this value.
     min_req_size: u16,
@@ -373,7 +373,6 @@ struct Streaming {
 }
 
 impl Streaming {
-    #[allow(dead_code)]
     pub fn perf_granularity(&self) -> u32 {
         let t = (self.perf_granularity_high as u32) << 16;
         t | self.perf_granularity_low as u32
@@ -458,11 +457,10 @@ pub enum SpecificCfg {
 // TODO see ata spec 7.12.6.16
 #[repr(transparent)]
 #[derive(Debug)]
-struct TrustedComputing(pub u16);
+pub struct TrustedComputing(pub u16);
 
 impl TrustedComputing {
-    #[allow(dead_code)]
-    fn is_supported(&self) -> bool {
+    pub fn is_supported(&self) -> bool {
         self.0 & 1 != 0
     }
 }
@@ -473,7 +471,7 @@ bitflags::bitflags! {
     // TODO see ata spec 7.12.6.17
     #[repr(transparent)]
     #[derive(Debug)]
-    struct Capabilities: u16 {
+    pub struct Capabilities: u16 {
         /// When clear the standby timer values are vendor specific
         const STANDARD_STANDBY_TIMER = 1 << 13;
         /// When clear IORDY may be supported
@@ -487,21 +485,20 @@ bitflags::bitflags! {
     }
 
     #[derive(Debug)]
-    struct Capabilities50: u16 {
+    pub struct Capabilities50: u16 {
         const MIN_STANDBY_TIME = 1;
     }
 }
 
 impl Capabilities {
-    #[allow(dead_code)]
-    fn long_sec_err_reporting(&self) -> u8 {
+    pub fn long_sec_err_reporting(&self) -> u8 {
         (self.bits() & 3) as u8
     }
 }
 
 #[repr(transparent)]
 #[derive(Debug)]
-struct SanitizeSubcommands(pub u16);
+pub struct SanitizeSubcommands(pub u16);
 
 impl SanitizeSubcommands {
     /// Returns whether or not the sanitize subcommand is supported.
@@ -526,8 +523,7 @@ impl SanitizeSubcommands {
     }
 
     /// Sanitize commands conform to the ACS-2 standard other it conforms to the ACS-4 standard
-    #[allow(dead_code)]
-    fn is_acs2(&self) -> bool {
+    pub fn is_acs2(&self) -> bool {
         self.0 & (1 << 11) == 0
     }
 }
@@ -572,16 +568,14 @@ pub enum MultiwordDmaMode {
 /// For SATA mode 3 & 4 are supported
 #[repr(transparent)]
 #[derive(Debug)]
-struct PioMode(u16);
+pub struct PioMode(u16);
 
 impl PioMode {
-    #[allow(dead_code)]
-    fn mode_4_supported(&self) -> bool {
+    pub fn mode_4_supported(&self) -> bool {
         self.0 & (1 << 1) != 0
     }
 
-    #[allow(dead_code)]
-    fn mode_3_supported(&self) -> bool {
+    pub fn mode_3_supported(&self) -> bool {
         self.0 & (1 << 1) != 0
     }
 }
@@ -682,8 +676,8 @@ bitflags::bitflags! {
 
 impl SataCap2 {
     // spec gives wrong section it's actually 9.11.10.3.1
-    #[allow(dead_code)] // todo add to InterfaceProperties
-    fn get_sata_gen(&self) -> u8 {
+    // todo add to InterfaceProperties
+    pub fn get_sata_gen(&self) -> u8 {
         let t = (self.bits() & 7) as u8;
         assert!(t < 4, "Invalid SATA speed reported");
         t
@@ -746,7 +740,7 @@ impl Features82 {
 bitflags::bitflags! {
     #[derive(Debug)]
     #[repr(transparent)]
-    struct Features83: u16 {
+    pub struct Features83: u16 {
         const FLUSH_CACHE_EXT = 1 << 13;
         const FLUSH_CACHE = 1 << 12;
         const LBA_48 = 1 << 10;
@@ -775,7 +769,7 @@ impl Features83 {
 bitflags::bitflags! {
     #[derive(Debug)]
     #[repr(transparent)]
-    struct Features84: u16 {
+    pub struct Features84: u16 {
         const IDLE_IMMEDIATE_WITH_UNLOAD = 1 << 13;
         const WORLD_WIDE_NAME = 1 << 8;
         const WRITE_DMA_FUA_EXT = 1 << 6;
@@ -788,14 +782,13 @@ bitflags::bitflags! {
 
 #[repr(C)]
 #[derive(Debug)]
-struct UltraDma {
+pub struct UltraDma {
     selected: u8,
     supported: u8,
 }
 
 impl UltraDma {
-    #[allow(dead_code)]
-    fn current(&self) -> Option<UltraDmaMode> {
+    pub fn current(&self) -> Option<UltraDmaMode> {
         let t = self.selected;
         if t == 0 {
             return None;
@@ -813,8 +806,7 @@ impl UltraDma {
         }
     }
 
-    #[allow(dead_code)]
-    fn is_supported(&self, mode: UltraDmaMode) -> bool {
+    pub fn is_supported(&self, mode: UltraDmaMode) -> bool {
         match mode {
             UltraDmaMode::Mode0 => self.supported & 1 != 0,
             UltraDmaMode::Mode1 => self.supported & 2 != 0,
@@ -840,11 +832,10 @@ pub enum UltraDmaMode {
 
 #[repr(transparent)]
 #[derive(Debug)]
-struct EraseTime(u16);
+pub struct EraseTime(u16);
 
 impl EraseTime {
-    #[allow(dead_code)]
-    fn get_erase_time(&self) -> u16 {
+    pub fn get_erase_time(&self) -> u16 {
         if self.0 & (1 << 15) != 0 {
             self.0 & !(1 << 15)
         } else {
@@ -855,7 +846,7 @@ impl EraseTime {
 
 #[repr(C)]
 #[derive(Debug)]
-struct AdvancedPowerManagement {
+pub struct AdvancedPowerManagement {
     level: u8,
     _res: u8,
 }
@@ -886,7 +877,7 @@ impl AdvancedPowerManagement {
 bitflags::bitflags! {
     #[derive(Debug)]
     #[repr(transparent)]
-    struct SectorGeom: u16 {
+    pub struct SectorGeom: u16 {
         const MULTIPLE_LOGICAL_PER_PHYS = 1 << 13;
         const LOGICAL_GREATHER_512_BYTES = 1 << 12;
     }
@@ -902,7 +893,7 @@ impl SectorGeom {
 
 // required for misaligned read of u32
 
-struct LbaSize {
+pub struct LbaSize {
     lba_low: u16,
     lba_high: u16,
 }
@@ -925,7 +916,7 @@ impl LbaSize {
 bitflags::bitflags! {
     #[derive(Debug)]
     #[repr(transparent)]
-    struct Features119: u16 {
+    pub struct Features119: u16 {
         const DSN = 1 << 9;
         const MAX_ADDR_CFG = 1 << 8;
         const EPC = 1 << 7;
@@ -954,7 +945,7 @@ impl Features119 {
 bitflags::bitflags! {
     #[derive(Debug)]
     #[repr(transparent)]
-    struct SecurityStatus: u16 {
+    pub struct SecurityStatus: u16 {
         const MASTER_PASSWORD_CAPABILITY_MAX = 1 << 8;
         const ENHANCED_SECURE_ERASE = 1 << 5;
         const COUNT_EXPIRED = 1 << 4;
@@ -966,7 +957,7 @@ bitflags::bitflags! {
 }
 
 #[repr(transparent)]
-struct FormFactor(u16);
+pub struct FormFactor(u16);
 
 impl Debug for FormFactor {
     fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
@@ -993,8 +984,7 @@ pub enum DeviceFromFactor {
 
 impl FormFactor {
     /// None indicates device firmware error
-    #[allow(dead_code)]
-    fn form(&self) -> Option<DeviceFromFactor> {
+    pub fn form(&self) -> Option<DeviceFromFactor> {
         match self.0 & 0xf {
             0 => Some(DeviceFromFactor::NotReported),
             1 => Some(DeviceFromFactor::Size5_25),
@@ -1013,11 +1003,10 @@ impl FormFactor {
 
 #[repr(transparent)]
 #[derive(Debug)]
-struct DataManagement(u16);
+pub struct DataManagement(u16);
 
 impl DataManagement {
-    #[allow(dead_code)]
-    fn trim_support(&self) -> bool {
+    pub fn trim_support(&self) -> bool {
         self.0 & 1 != 0
     }
 }
@@ -1025,7 +1014,7 @@ impl DataManagement {
 bitflags::bitflags! {
     #[repr(transparent)]
     #[derive(Debug)]
-    struct SCTCommandTransport: u16 {
+    pub struct SCTCommandTransport: u16 {
         const BIT_7 = 1 << 7;
         const DATA_TABLES = 1 << 5;
         const SCT_FEATURE_CTL = 1 << 4;
@@ -1036,15 +1025,14 @@ bitflags::bitflags! {
 }
 
 impl SCTCommandTransport {
-    #[allow(dead_code)]
-    fn get_vendor(&self) -> u8 {
+    pub fn get_vendor(&self) -> u8 {
         ((self.bits() >> 12) & 0xf) as u8
     }
 }
 
 #[repr(transparent)]
 #[derive(Debug)]
-struct SectorAlignment(u16);
+pub struct SectorAlignment(u16);
 
 impl SectorAlignment {
     /// This value is the number of logical sectors between the beginning of physical sector 0 and LBA 0
@@ -1055,7 +1043,7 @@ impl SectorAlignment {
 
 #[repr(transparent)]
 #[derive(Debug)]
-struct RotationRateField(u16);
+pub struct RotationRateField(u16);
 
 pub enum RotationRate {
     NotReported,
@@ -1076,7 +1064,7 @@ impl RotationRateField {
 
 #[repr(transparent)]
 #[derive(Debug)]
-struct WriteReadVerifyMode(u16);
+pub struct WriteReadVerifyMode(u16);
 
 pub enum WriteReadVerify {
     /// Always write read verify regardless of command,
@@ -1092,8 +1080,7 @@ pub enum WriteReadVerify {
 }
 
 impl WriteReadVerifyMode {
-    #[allow(dead_code)]
-    fn get_mode(&self) -> Option<WriteReadVerify> {
+    pub fn get_mode(&self) -> Option<WriteReadVerify> {
         match self.0 {
             0 => Some(WriteReadVerify::Always),
             1 => Some(WriteReadVerify::Check64K),
@@ -1104,7 +1091,7 @@ impl WriteReadVerifyMode {
     }
 }
 
-struct TransportMajorVersion(u16);
+pub struct TransportMajorVersion(u16);
 
 impl Debug for TransportMajorVersion {
     fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
@@ -1189,7 +1176,7 @@ impl TransportMajorVersion {
     }
 }
 
-struct TransportMinorVersionField(u16);
+pub struct TransportMinorVersionField(u16);
 
 impl Debug for TransportMinorVersionField {
     fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
@@ -1224,7 +1211,7 @@ impl TransportMinorVersionField {
 }
 
 #[repr(C, align(4))]
-struct SectorCountExt {
+pub struct SectorCountExt {
     low: u32,
     high: u32,
 }
