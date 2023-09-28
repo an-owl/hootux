@@ -36,8 +36,7 @@ impl HostBusAdapter {
 
         let vendor = &mut *ptr.as_mut_ptr().offset(0xa0).cast();
 
-        let port_count =
-            ((ptr.len() - 0x100) / core::mem::size_of::<port_control::PortControl>()).min(32);
+        let port_count = ((ptr.len() - 0x100) / 0x80).min(32); // Each port gets 80h bytes, does not use them all
         let mut arr = alloc::vec::Vec::with_capacity(port_count);
 
         for i in 0..port_count {
