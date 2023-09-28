@@ -514,7 +514,7 @@ impl Port {
                         let dev = cmd.device.unwrap_or(0) | (1 << 6);
                         // required for WRITE_DMA_EXT
                         command.device = Some(dev);
-                        ata::command::AtaCommand::WRITE_DMA_EXT
+                        ata::command::AtaCommand::WRITE_SECTORS_EXT
                     }
                 });
 
