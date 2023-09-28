@@ -5,6 +5,8 @@
 #![no_std]
 extern crate alloc;
 
+static CRATE_NAME: &str = env!("CARGO_CRATE_NAME"); // TODO add driver profiles
+
 pub mod driver;
 pub(crate) mod hba;
 pub(crate) mod register;

@@ -1,12 +1,8 @@
 use alloc::boxed::Box;
 use core::alloc::Allocator;
-use core::any::Any;
-use core::pin::{pin, Pin};
-use core::task::{Context, Poll};
+use core::pin::Pin;
 use hootux::system::driver_if::{MatchState, ResourceId};
 use hootux::task::int_message_queue::MessageCfg;
-
-static CRATE_NAME: &str = env!("CARGO_CRATE_NAME"); // TODO add driver profiles
 
 // note: this is 1,6,1 (mass storage, sata, ahci 1.x)
 const AHCI_CLASS: u32 = 0x01060100; // revision is masked.
@@ -38,7 +34,11 @@ impl hootux::system::driver_if::DriverProfile for AhciPciProfile {
                 (MatchState::NoMatch, Some(pci_dev))
             } else {
                 if pci_dev.get_inner().lock().get_bar(AHCI_HBA_BAR).is_some() {
-                    log::trace!("Attempting to start {CRATE_NAME} for {}", pci_dev.addr());
+                    log::trace!(
+                        "Attempting to start {} for {}",
+                        crate::CRATE_NAME,
+                        pci_dev.addr()
+                    );
                     AhciDriver::start(pci_dev.get_inner()).unwrap(); // I dont get a whole lot of choice here but to panic
                                                                      // I can't return the resource as a PciResource
                     (MatchState::Success, None)
@@ -56,6 +56,8 @@ impl hootux::system::driver_if::DriverProfile for AhciPciProfile {
     }
 }
 
+#[allow(dead_code)]
+// self.pci_dev required for future implementations
 pub struct AhciDriver {
     name: &'static str,
     pci_dev: alloc::sync::Arc<spin::Mutex<hootux::system::pci::DeviceControl>>,
@@ -112,8 +114,13 @@ impl AhciDriver {
         let mut single;
         let md = if let Some(m_queue) =
             hootux::task::int_message_queue::IntMessageQueue::from_pci(&mut *lock, 32)
+        // 32 is the max number of ints that should be used, I think the max is 1028 though\
         {
-            // 32 is the max number of ints that should be used, I think the max is 1028 though
+            let mut msi =
+                hootux::system::pci::capabilities::msi::MessageSigInt::try_from(&mut *lock)
+                    .expect("AHCI did not implement MSI"); // fixme: what about legacy ints
+                                                           // SAFETY: Interrupts are handled by m_queue
+            unsafe { msi.enable(true) }
 
             if m_queue.count() == 1 {
                 single = true;
@@ -136,6 +143,7 @@ impl AhciDriver {
 
         if hba
             .general
+            .lock()
             .get_control()
             .contains(crate::hba::general_control::GlobalHbaCtl::MSI_SINGLE_MESSAGE)
         {
@@ -152,7 +160,7 @@ impl AhciDriver {
         };
 
         let s = Box::new(Self {
-            name: CRATE_NAME,
+            name: crate::CRATE_NAME,
             pci_dev,
             hba,
             wakeup: md,
@@ -171,7 +179,9 @@ impl AhciDriver {
                     | InterruptEnable::INTERFACE_NON_FATAL
                     | InterruptEnable::TASK_FILE_ERROR
                     | InterruptEnable::PORT_CONNECT_CHANGE
-                    | InterruptEnable::DEV_TO_HOST_FIS;
+                    | InterruptEnable::DEV_TO_HOST_FIS
+                    | InterruptEnable::PIO_SETUP_FIS
+                    | InterruptEnable::DMA_SETUP_FIS;
                 // SAFETY: This is safe because it only occurs if MSI was configured.
                 unsafe {
                     // retries set_int_enable until all forbidden bits are cleared (should be max 2 tries)
@@ -180,42 +190,53 @@ impl AhciDriver {
                     }
                 }
             }
+            s.hba.int_enable(true);
+        } else {
+            s.hba.int_enable(false);
         }
 
-        hootux::task::run_task(Box::pin(s));
+        hootux::task::run_task(Box::pin(Box::new(s).run()));
 
         Ok(())
     }
 
     /// Initializes block devices
     fn init_blockdev(&self) {
-        log::warn!("Block devices not configured");
+        for p in self.hba.ports.iter().flat_map(|p| p) {
+            p.cfg_blkdev();
+        }
     }
 
-    /// Called by `self.poll()`, this just makes it easier to read.
-    /// `*.await` can't be used in sync fn's
-    #[doc(hidden)]
-    async fn run(&mut self) {
-        match self.wakeup.poll().await {
-            PollDev::All => self.hba.chk_ports().await,
-            PollDev::One(n) => {
-                if self.single_int {
-                    self.hba.chk_ports().await;
-                } else {
-                    self.hba.ports[n as usize]
-                        .as_ref()
-                        .expect("Attempted to poll invalid port")
-                        .update()
-                        .await;
+    /// Actually runs the driver. Receives ints and dispatches self accordingly
+    async fn run(mut self: Box<Self>) {
+        loop {
+            match self.wakeup.poll().await {
+                PollDev::All => self.hba.chk_ports().await,
+                PollDev::One(n) => {
+                    if self.single_int {
+                        self.hba.chk_ports().await;
+                    } else {
+                        self.hba.ports[n as usize]
+                            .as_ref()
+                            .expect("Attempted to poll invalid port")
+                            .update()
+                            .await;
+                    }
                 }
             }
         }
     }
 }
 
-impl core::future::Future for AhciDriver {
-    type Output = ();
-    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        pin!(self.run()).poll(cx)
+impl Drop for AhciDriver {
+    fn drop(&mut self) {
+        self.hba.int_enable(false);
+        match &mut self.wakeup {
+            MessageDelivery::Polled => {}
+            MessageDelivery::Int(d) => {
+                // ints disabled above
+                unsafe { d.drop_irq() }
+            }
+        }
     }
 }

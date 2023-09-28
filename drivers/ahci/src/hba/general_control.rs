@@ -57,6 +57,11 @@ impl GeneralControl {
     pub(crate) fn clear_int(&self, mask: u32) {
         self.interrupt_status.clear_multiple(mask)
     }
+
+    pub(crate) fn int_enable(&mut self, state: bool) {
+        self.host_ctl
+            .update(|r| r.set(GlobalHbaCtl::INTERRUPT_ENABLE, state))
+    }
 }
 
 bitflags::bitflags! {
@@ -215,6 +220,12 @@ bitflags::bitflags! {
     }
 }
 
+unsafe impl ClearReserved for GlobalHbaCtl {
+    fn clear_reserved(&mut self) {
+        *self = Self::from_bits_truncate(self.bits())
+    }
+}
+
 unsafe impl ClearReserved for FirmwareHandoffCtl {
     fn clear_reserved(&mut self) {
         *self = Self::from_bits_truncate(self.bits())
@@ -275,15 +286,6 @@ struct DwordHighClear {
 unsafe impl Send for DwordHighClear {}
 
 impl DwordHighClear {
-    /// Clears the bit at the offset `port`
-    pub fn clear(&self, port: u8) {
-        let mask = 1 << port;
-
-        // SAFETY: See doc for Self
-        unsafe { core::ptr::write_volatile(self.inner.get(), mask) }
-        atomic::fence(atomic::Ordering::Release);
-    }
-
     /// Clears vectors where the bits in `mask` are 1
     ///
     /// ```ignore
