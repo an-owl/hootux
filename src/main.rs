@@ -350,7 +350,7 @@ impl Options {
                 let mut target = None;
                 for p in bin.ancestors() {
                     if p.ends_with("release") || p.ends_with("debug") {
-                        target = Some(p.clone())
+                        target = Some(p)
                     }
                 }
 
