@@ -124,13 +124,22 @@ impl AbstractHba {
 
     /// Refreshes execution on all ports that raised an interrupt.
     pub(crate) async fn chk_ports(&self) {
-        let t = self.general.int_status();
-        self.general.clear_int(t);
-        for i in 0..32 {
-            if t & 1 << i != 0 {
-                self.ports[i].as_ref().expect("CCC Bug?").update().await;
+        let mut t = self.general.lock().int_status();
+
+        loop {
+            let i = t.trailing_zeros();
+            t ^= 1 << i; // clear bit for next pass
+
+            if i == 32 {
+                break;
             }
+            self.ports[i as usize]
+                .as_ref()
+                .expect("CCC Bug?")
+                .update()
+                .await;
         }
+        self.general.lock().clear_int(t);
     }
 
     pub fn info(&self) -> HbaInfo {
