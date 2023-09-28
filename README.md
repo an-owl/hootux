@@ -17,7 +17,7 @@ seems stupid.
 ### Dependencies
 
  - Rust is required to build this project. Installation instructions can be found [here](https://rustup.rs/)
- - `llvm-tools-preview` and `rust-src` is required to build the bootloader and can be installed using `rustup component add llvm-tools-preview`
+ - `llvm-tools-preview` and `rust-src` is required to build the bootloader and can be installed using `rustup component add llvm-tools-preview rust-src`
  - all other dependencies will be fetched by cargo during the build process.
 
 ### Actually building
@@ -43,22 +43,11 @@ This part is mostly for my own sanity to try to manage what I want to do and to 
 achieve them.
 
  - Clean up memory module
-   - ~~Move allocator into mem~~
-     - ~~that's where it should be~~
+   - make buddy allocators use the same code
+     - use a marker for optimizing it.
  - AHCI driver
-   - ~~requires proper scheduling~~
-     - ~~requires somewhat accurate timer~~ 
-       - ~~use apic timer~~
-         - ~~figure out how fast apic timer is~~
-   - This is 90% done I just need to build a driver interface for it
-   - ~~pci-e interface~~
-     - ~~preferably backward compatible~~
- - ~~Enhance Allocator~~
-   - ~~Add High level memory pool.~~
-     - ~~Use linked list to store regions > ORDER_MAX_SIZE in buddy alloc as (start,len)~~ uses array instead
-     - ~~Use similar system to store unused phys memory. store 2Mib aligned pool and 1Gib aligned pool.~~ 
-   - ~~Add optimizations where possible~~
-   - ~~Allow allocations greater than 4Mib~~
+   - Refactor it
+     - It's currently a can of spaghetti
  - BASIC shell
    - what why? 
    - because it's my kernel
@@ -76,6 +65,7 @@ achieve them.
    - I'd like to use an ARC algorithm, but it seems a bit over my head.
  - ANSI support
    - This will require creating a font module using bitmaps not rasters
+     - Just take a font from Linux and use `bindgen`
  - VFS
    - Support FAT filesystems
    - EXT too maybe?
@@ -91,9 +81,10 @@ achieve them.
    - Also for BAR memory.
      - Make kernel alloc the memory and keep a Arc<Option<*\[u8\]>> into it share it between all things that want to access it.
  - Upgrade logger
-   - Add log buffer in memory tobe recalled later
+   - Add log buffer in memory to be recalled later
    - Print time in messages
    - Print module in messages
      - Debug and trace should have the full fn name
      - Others should just mention the module name
-       - Except in debug mode do the full path
+       - Except in debug mode, do the full path
+ - Move PCI into its own driver crate
