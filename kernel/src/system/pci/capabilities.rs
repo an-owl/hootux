@@ -102,7 +102,7 @@ impl<'a> Iterator for CapabilityIter<'a> {
         let t = unsafe { &*(&self.region[next] as *const _ as *const CapabilityHeader) };
         let ret = CapabilityPointer {
             id: CapabilityId::from(t.id),
-            offset: 0,
+            offset: next as u8,
         };
 
         if let CapabilityId::Reserved(c) = ret.id {
