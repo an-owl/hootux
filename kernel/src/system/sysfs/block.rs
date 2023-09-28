@@ -1,18 +1,27 @@
-use alloc::{boxed::Box, string::String, sync::Arc};
-use core::fmt::{Display, Formatter};
+//! A block device is a special file which allows access to hardware using a file-like interface.
+//! I/O performed on block devices must conform to particular sizes, which are specified by the
+//! block device itself.
+//!
+//! The kernel stores a list of block devices which are registered by device drivers.
+//! Implementations of [BlockDev] can be cloned to create multiple references to the same device.
+//! At any point the hardware device may become unavailable if this occurs the [BlockDev] should be
+//! dropped as the device will never return.
+
+use alloc::{boxed::Box, string::String};
+use log::warn;
 
 /// This Alias exists for a similar reason to [BlockDevCounter]. Its purpose is for handling block
 /// device geometry.
 /// At some point in the future it may be necessary to increase the size of this
-type BlockDevGeomIntegral = u64;
+pub type BlockDevGeomIntegral = u64;
 
 /// This alias is for handling "async" functions which are dynamically dispatched.
 /// Currently traits that contain `async` fn's cannot be made into a trait object
 /// however that is required by this module.
-type BoxFut<T> = Box<dyn core::future::Future<Output = T>>;
+pub type IoFut<'a, T> = futures_util::future::BoxFuture<'a, Result<T, BlockDevIoErr>>;
 
 pub struct BlockDeviceList {
-    list: spin::RwLock<alloc::collections::BTreeMap<BlockDeviceId, Arc<dyn SysFsBlockDevice>>>,
+    list: spin::RwLock<alloc::collections::BTreeMap<BlockDeviceId, Box<dyn SysFsBlockDevice>>>,
 }
 
 impl BlockDeviceList {
@@ -23,31 +32,35 @@ impl BlockDeviceList {
     }
 
     /// Registers a block device into self.
-    ///
-    /// # Panics
-    ///
-    /// This fn will panic if `device` already exists within the SysFs. It is an error for a device
-    /// to be owned twice and the internal mechanism BlockDeviceList uses checks this anyway.
-    pub fn register_dev<D: SysFsBlockDevice + 'static>(&self, device: D) {
-        let dev = Arc::new(device);
-        let id = dev.get_id();
-
-        let ret = self.list.write().insert(id, dev);
-
+    /// This fn will return `device` if the block device is already registered.
+    pub fn register_dev(
+        &self,
+        device: Box<dyn SysFsBlockDevice>,
+    ) -> Option<Box<dyn SysFsBlockDevice>> {
+        let id = device.get_id();
+        log::debug!("registered {id}");
+        let mut ret = self.list.write().insert(id, device);
         if ret.is_some() {
-            panic!("Very very big oof. BlockDevice already exists id {}", id)
+            warn!("Driver attempted to register block device {id} twice");
+            ret = self.list.write().insert(id, ret.unwrap())
         }
+
+        ret
     }
 
     /// Removes a device an all its artifacts from the SysFs
-    pub fn remove_dev(&self, id: BlockDeviceId) -> Option<Arc<dyn SysFsBlockDevice>> {
+    pub fn remove_dev(&self, id: BlockDeviceId) -> Option<Box<dyn SysFsBlockDevice>> {
         self.list.write().remove(&id)
     }
 
-    /// Returns a reference to the the requested block device. If it exists
-    pub fn fetch(&self, id: BlockDeviceId) -> Option<Arc<dyn SysFsBlockDevice>> {
-        // unwraps result derefs the box clones it and re-boxes it
+    /// Returns a copy of the requested block device, if it exists.
+    pub fn fetch(&self, id: BlockDeviceId) -> Option<Box<dyn SysFsBlockDevice>> {
         Some(self.list.read().get(&id)?.clone())
+    }
+
+    /// Returns a list of all system managed block devices.
+    pub fn list(&self) -> alloc::vec::Vec<BlockDeviceId> {
+        self.list.read().keys().map(|k| k.clone()).collect()
     }
 }
 
@@ -63,11 +76,22 @@ impl BlockDeviceList {
 /// multiple devices this may be set to `None` and it will be omitted. The identifiers have no
 /// specific purpose apart from identification and therefore are not required to follow any specific
 /// convention.
-#[derive(Copy, Clone, Ord, PartialOrd, Eq, PartialEq)]
+// todo consider changing this to a trait object
+#[derive(Copy, Clone, Ord, PartialOrd, Eq, PartialEq, Debug)]
 pub struct BlockDeviceId {
     name: &'static str,
     instance: usize,
     device: Option<usize>,
+}
+
+impl BlockDeviceId {
+    pub fn new(name: &'static str, instance: usize, device: Option<usize>) -> Self {
+        Self {
+            name,
+            instance,
+            device,
+        }
+    }
 }
 
 #[non_exhaustive]
@@ -91,13 +115,13 @@ pub enum BlockDevIoErr {
     DeviceOffline,
 }
 
-impl Display for BlockDeviceId {
-    fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
+impl core::fmt::Display for BlockDeviceId {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         // ahci,0,15 will be "ahci-0-15"
         // drv,1,None will be "drv-1"
         write!(
             f,
-            "{}-{}{}",
+            "{}-{}:{}",
             self.name,
             self.instance,
             self.device
@@ -113,41 +137,160 @@ impl Display for BlockDeviceId {
 /// Block device operations are done in blocks (hence the name) the size of these blocks can be
 /// retrieved using [Self::geom]. All operations must be aligned to the block size however operations
 /// should always use the optimal block size where possible.
+///
+/// Methods that take profiles as arguments will likely be added in the future to help optimize I/O.
+///
+/// Implementor note: If a future returns `Err(BlockDevError::DeviceOffline)` the block device will
+/// not automatically be removed from any list and the implementation should do this itself.
 pub trait BlockDev: Sync + Send {
-    /// Reads `T` from the device. Implementations may return Err(_) if the size of `T` is not
-    /// aligned to [Self::get_bs]
-    fn read(&self, seek: BlockDevGeom, size: usize) -> BoxFut<Result<Box<[u8]>, BlockDevIoErr>>;
+    /// Reads `size` blocks from from the device starting at the `seek` block. Implementations may
+    /// return `Err(BlockDevIoErr::GeomError)` if `size` is not aligned to `self.geom().block_size`
+    fn read(&self, seek: BlockDevGeomIntegral, size: usize) -> IoFut<Box<[u8]>>;
 
     /// Writes the given buffer onto the device. The buffer size should be aligned to the devices
     /// block size, this fn may return Err(_) if it is not. A reference to the buffer is returned on completion.
-    fn write(
-        &self,
-        seek: BlockDevGeom,
-        buff: &'static [u8],
-    ) -> BoxFut<Result<&'static [u8], BlockDevIoErr>>;
+    ///
+    /// implementor note: for DMA that cannot be stopped the future should be disowned and completed.
+    ///
+    /// # Implementation Safety
+    ///
+    /// If the future is dropped it should attempt to either stop the DMA or disown itself and
+    /// complete outside of the current task.
+    /// If `core::mem::forget(self.write(_).poll(_))` is called the buffer will be leaked onto memory
+    /// and the DMA will be completed.
+    fn write(&self, seek: BlockDevGeomIntegral, buff: IoBuffer) -> IoFut<IoBuffer>;
 
     /// Returns a struct containing the geometry of the device.
     /// The device geometry must include the block size of the device and the number of blocks in
     /// the device.
-    fn geom(&self) -> BlockDevGeom;
+    ///
+    /// This fn is `async` because retrieving the device geometry may require querying hardware.
+    /// Implementations should not return [core::task::Poll::Waiting] if possible to enable calling
+    /// fn's to block.
+    ///
+    /// If this fn returns `Err(_)` the hardware device can be considered failed.
+    fn geom(&self) -> IoFut<BlockDevGeom>;
 
     fn as_any(&self) -> &dyn core::any::Any;
+
+    fn b_clone(self: &Self) -> Box<dyn BlockDev>;
 }
 
+/// Wrapper for data used for DMA with block devices.
+///
+/// Certain restrictions must be placed on IO buffers to ensure memory safety.
+/// Usually this can be done by passing a static reference to the data.
+/// However limitations of block devices and implementation specific details require extra restrictions.
+/// This struct ensures that data will not be modified while DMA is working, and that data can be
+/// accessed once it has completed.
+// todo this is a stopgap solution and should be replaced with copy-on-write
+#[derive(Clone)]
+pub struct IoBuffer {
+    inner: core::ptr::NonNull<IoBufferInner>,
+}
+
+struct IoBufferInner {
+    count: core::sync::atomic::AtomicUsize,
+    data: Box<[u8]>,
+}
+
+// SAFETY: Inner data is not accessible mutably.
+// Unwrapping asserts that the caller is the sole owner of the data
+unsafe impl Send for IoBuffer {}
+unsafe impl Sync for IoBuffer {}
+
+impl IoBuffer {
+    pub fn new(data: Box<[u8]>) -> Self {
+        let t = Box::leak(Box::new(IoBufferInner {
+            count: 0.into(),
+            data,
+        }))
+        .into();
+
+        Self { inner: t }
+    }
+
+    pub fn try_extract(mut self) -> Result<Box<[u8]>, Self> {
+        // SAFETY: This is safe because it points to valid data and only accesses an atomic
+        if unsafe { self.inner.as_ref().count.load(atomic::Ordering::Relaxed) } == 1 {
+            // SAFETY: This is save because the data is not referenced anywhere else
+            unsafe {
+                let IoBufferInner { data, .. } = core::ptr::read(self.inner.as_ptr());
+
+                // SAFETY: This is safe because this needs to be dropped
+                alloc::alloc::dealloc(
+                    self.inner.cast().as_ptr(),
+                    core::alloc::Layout::new::<IoBufferInner>(),
+                );
+
+                Ok(data)
+            }
+        } else {
+            Err(self)
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        // SAFETY: This is safe because there are not mutable references to *self.inner
+        unsafe { self.inner.as_ref().data.len() }
+    }
+
+    /// Returns the address of the data referenced by `self`
+    pub fn addr(&self) -> usize {
+        // SAFETY: No mutable references exist to *self.inner
+        unsafe { self.inner.as_ref().data.as_ptr() as usize }
+    }
+
+    /// Returns a slice containing the buffer
+    pub fn buff(&self) -> &[u8] {
+        // SAFETY: No mutable references exist to *self.inner
+        unsafe { self.inner.as_ref().data.as_ref() }
+    }
+}
+
+impl Drop for IoBuffer {
+    fn drop(&mut self) {
+        unsafe {
+            // SAFETY: inner is always a valid pointer, this is only accessing a filed with interior mutability.
+            if self
+                .inner
+                .as_ref()
+                .count
+                .fetch_sub(1, atomic::Ordering::Release)
+                == 0
+            {
+                // SAFETY: *self.inner is constructed from a box anyway
+                drop(Box::from_raw(self.inner.as_ptr()))
+            }
+        }
+    }
+}
+
+#[derive(Copy, Clone, Debug)]
 pub struct BlockDevGeom {
     /// The number of blocks this device contains.
     pub blocks: BlockDevGeomIntegral,
 
     /// The size in bytes per block, all operations are aligned to this size
-    pub bs: BlockDevGeomIntegral,
+    pub block_size: BlockDevGeomIntegral,
 
     /// The optimal block size in bytes. Some devices emulate different sized blocks for compatibility,
-    /// this can slow down operations. This size should be used instead of [self.bs]  
-    pub obs: BlockDevGeomIntegral,
+    /// this can slow down operations. This size should be used instead of `self.bs`  
+    pub optimal_block_size: BlockDevGeomIntegral,
+
+    /// Optimal blocks might not be aligned to `self.optimal_block_size`. `self.blocks + self.optimal_alignment`
+    /// will be the start of the first optimal block.   
+    pub optimal_alignment: BlockDevGeomIntegral,
 
     /// The largest transfer this device is capable of in a single transfer
-    /// Software may extend this value over multiple operations, if it doesnt is must return [BlockDevIoErr::GeomError] if the size is to large
+    /// Software may extend this value over multiple operations, if it doesnt is must return
+    /// [BlockDevIoErr::GeomError] if the size is to large
     pub max_blocks_per_transfer: BlockDevGeomIntegral,
+
+    /// Data is required to be aligned to this value in order to be written to the block device.
+    ///
+    /// Drivers should not automatically re-align data unless it can be done without a `memcpy`
+    pub req_data_alignment: usize,
 }
 
 /// Trait for block devices which are stored within the in the SysFs [BlockDeviceList]. Not
@@ -160,4 +303,18 @@ pub struct BlockDevGeom {
 pub trait SysFsBlockDevice: BlockDev {
     /// Returns the unique id of the device
     fn get_id(&self) -> BlockDeviceId;
+
+    fn s_clone(self: &Self) -> Box<dyn SysFsBlockDevice>;
+}
+
+impl Clone for Box<dyn BlockDev> {
+    fn clone(&self) -> Self {
+        self.b_clone()
+    }
+}
+
+impl Clone for Box<dyn SysFsBlockDevice> {
+    fn clone(&self) -> Self {
+        self.s_clone()
+    }
 }
