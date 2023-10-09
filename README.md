@@ -42,6 +42,9 @@ recommend setting an `uefi.vars` a efivars file.
 This part is mostly for my own sanity to try to manage what I want to do and to lay out the things I need to to to
 achieve them.
 
+ - Refactor graphics (again)
+   - old sprite trait (NewSprite) does not work with bitmaps
+   - fix this and other issues
  - Clean up memory module
    - make buddy allocators use the same code
      - use a marker for optimizing it.
@@ -88,3 +91,9 @@ achieve them.
      - Others should just mention the module name
        - Except in debug mode, do the full path
  - Move PCI into its own driver crate
+ - Add kernel shell
+   - This could be quite useful for debugging
+   - Drivers can register commands into it to provide functionality that is otherwise useless un user-mode.
+     - Things like running hardware tests
+ - Add USB support
+ - Create tooling to parse and interpret QEMU `-d` and trace outputs
