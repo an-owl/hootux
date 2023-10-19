@@ -14,7 +14,6 @@ use hootux::exit_qemu;
 use hootux::graphics::basic_output::BasicTTY;
 use hootux::interrupts::apic::Apic;
 use hootux::task::keyboard;
-use hootux::task::{executor, Task};
 use hootux::time::kernel_init_timer;
 use hootux::*;
 use log::debug;

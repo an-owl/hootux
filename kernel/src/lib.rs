@@ -16,7 +16,6 @@
 #![feature(linked_list_cursors)]
 #![feature(core_intrinsics)]
 #![feature(box_into_inner)]
-#![feature(async_fn_in_trait)]
 
 extern crate alloc;
 pub use mem::allocator::alloc_interface;

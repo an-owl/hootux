@@ -1,6 +1,5 @@
-use crate::graphics::pixel::Pixel;
+use crate::graphics::pixel::{PixBgr3Byte, PixBgr4Byte, Pixel};
 use crate::mem;
-use alloc::format;
 use core::slice::from_raw_parts;
 use x86_64::structures::paging::Mapper;
 
@@ -27,68 +26,6 @@ pub fn set_default_format(format: PixelFormat) {
 /// printed to the framebuffer.
 pub fn sys_pix_format() -> PixelFormat {
     KERNEL_PIX_FORMAT.load(atomic::Ordering::Relaxed)
-}
-
-pub trait NewSprite {
-    /// Returns the width of `self` in pixels
-    fn width(&self) -> usize;
-
-    /// Returns the height of `self` in pixels
-    fn height(&self) -> usize;
-
-    /// Returns the pixel format of `self`
-    fn format(&self) -> PixelFormat;
-
-    /// Returns a slice containing the pixel data for `self` at the given scan line
-    ///
-    /// The returned slice will have a len of `self.with()` pixels. The actual value of
-    /// `self.scan().len()` will likely not be equal to `self.width()` due to the pixel format
-    fn scan(&self, scan_line: usize) -> &[u8];
-
-    fn scan_mut(&mut self, scan_line: usize) -> &mut [u8];
-
-    /// `other` will be copied into self at the given coordinates within self.
-    fn draw_into_self<T: NewSprite>(&mut self, other: &T, x: usize, y: usize) {
-        let do_width = {
-            // width in px
-            let base = self.width();
-            let chk = (x + other.width()).checked_sub(base);
-            let ret = chk.map_or(other.width(), |n| other.width().checked_sub(n).unwrap_or(0));
-            ret
-        };
-
-        let do_height = {
-            let base = self.height();
-            let chk = (y + other.height()).checked_sub(base);
-            let ret = chk.map_or(other.height(), |n| {
-                other.height().checked_sub(n).unwrap_or(0)
-            });
-            ret
-        };
-
-        for (i, line) in (y..(do_height + y)).enumerate() {
-            // This looks big and complicated but it doesnt physically do much
-            let range = ..do_width * other.format().bytes_per_pixel() as usize;
-            let scan = other.scan(i);
-            let origin_raw = &scan[range];
-
-            let self_fmt = self.format();
-
-            reformat_px_buff(
-                origin_raw,
-                &mut self.scan_mut(line)[x * self_fmt.bytes_per_pixel() as usize
-                    ..(x + do_width) * self_fmt.bytes_per_pixel() as usize],
-                //[start_byte..start_byte + do_width * self.format().bytes_per_pixel() as usize],
-                other.format(),
-                self_fmt,
-            )
-            .expect(&format!(
-                "Failed to convert between Pixel types {:?} -> {:?}",
-                other.format(),
-                self.format()
-            ));
-        }
-    }
 }
 
 /// PixelFormat describes the order of bytes and number of bytes in a pixel. This is necessary because pixel formats are not known at compile time and may chane at runtime
@@ -251,6 +188,23 @@ impl FrameBuffer {
     pub fn info(&self) -> (usize, usize, usize, PixelFormat) {
         (self.height, self.width, self.stride, self.format)
     }
+
+    pub fn format(&self) -> PixelFormat {
+        self.format
+    }
+
+    /// Returns a mutable reference the requested scan line.
+    /// Returns `None` if the requested scan line isn't present.
+    fn scan(&mut self, scan: usize) -> Option<&mut [u8]> {
+        if self.height >= scan {
+            Some(
+                &mut self.data[(self.stride * scan) * self.format.bytes_per_pixel() as usize
+                    ..((self.stride * scan) + self.width) * self.format.bytes_per_pixel() as usize],
+            )
+        } else {
+            None
+        }
+    }
 }
 
 impl From<bootloader_api::info::FrameBuffer> for FrameBuffer {
@@ -297,71 +251,181 @@ impl From<bootloader_api::info::FrameBuffer> for FrameBuffer {
     }
 }
 
-impl NewSprite for FrameBuffer {
-    #[inline]
+impl Sprite for FrameBuffer {
     fn width(&self) -> usize {
         self.width
     }
-
-    #[inline]
     fn height(&self) -> usize {
         self.height
     }
+}
 
-    #[inline]
-    fn format(&self) -> PixelFormat {
-        self.format
-    }
+/// Internal pixel conversion into supported pixel formats
+fn cvt_px<R, T, P>(raw: R) -> P
+where
+    T: DrawableSprite<R>,
+    P: Pixel + Sized,
+{
+    let rgb = T::convert_rgb(raw);
+    P::from_pix_data(pixel::GenericPixelData::Colour(rgb.0, rgb.1, rgb.2))
+}
 
-    #[inline]
-    fn scan(&self, scan_line: usize) -> &[u8] {
-        let start = scan_line * self.stride;
-        &self.data[start..(start + self.width)]
-    }
-
-    fn scan_mut(&mut self, scan_line: usize) -> &mut [u8] {
-        let start = scan_line * self.stride;
-        &mut self.data[start..(start + self.width)]
-    }
-
-    fn draw_into_self<T: NewSprite>(&mut self, other: &T, x: usize, y: usize) {
-        let do_width = {
-            // width in px
-            let base = self.width;
-            let chk = (x + other.width()).checked_sub(base);
-            let ret = chk.map_or(other.width(), |n| other.width().checked_sub(n).unwrap_or(0));
-            ret
-        };
-
-        let do_height = {
-            let base = self.height;
-            let chk = (y + other.height()).checked_sub(base);
-            let ret = chk.map_or(other.height(), |n| {
-                other.height().checked_sub(n).unwrap_or(0)
-            });
-            ret
-        };
-
-        for (i, line) in (y..(do_height + y)).enumerate() {
-            let start_byte = (self.stride * line + x) * self.format.bytes_per_pixel() as usize;
-
-            // This looks big and complicated but it doesnt physically do much
-            let range = ..do_width * other.format().bytes_per_pixel() as usize;
-            let scan = other.scan(i);
-            let origin_raw = &scan[range];
-
-            reformat_px_buff(
-                origin_raw,
-                &mut self.data
-                    [start_byte..start_byte + do_width * self.format.bytes_per_pixel() as usize],
-                other.format(),
-                self.format,
-            )
-            .expect(&format!(
-                "Failed to convert between Pixel types {:?} -> {:?}",
-                other.format(),
-                self.format
-            ));
+impl SpriteMut for FrameBuffer {
+    fn draw_into_self<R, T: DrawableSprite<R>>(&mut self, other: &T, x: usize, y: usize) {
+        for (other_scan, self_scan) in (y..y + other.height()).enumerate() {
+            let format = self.format;
+            if let Some(buff) = self.scan(self_scan) {
+                let mut buff: pixel::PixBuff = buff.into();
+                match format {
+                    PixelFormat::Bgr4Byte => other.draw_into_scan(
+                        other_scan,
+                        cvt_px::<R, T, PixBgr4Byte>,
+                        &mut buff.buff::<PixBgr4Byte>()[x..],
+                    ),
+                    PixelFormat::Bgr3Byte => other.draw_into_scan(
+                        other_scan,
+                        cvt_px::<R, T, PixBgr3Byte>,
+                        &mut buff.buff::<PixBgr3Byte>()[x..],
+                    ),
+                    _ => panic!("Unable to convert between pixel formats"),
+                }
+            } else {
+                break;
+            }
         }
     }
+}
+
+//TODO: This is a workaround to a bug in bindeps remove all of these when possible, and swap "fontgen_bugfix" for "fontgen"
+fn font_map() -> bitmap_fontgen::Font {
+    (&font::FONT_MAP).into()
+}
+
+mod font {
+    use super::Integer;
+    use crate::graphics::Sprite;
+
+    pub(super) static FONT_MAP: bitmap_fontgen::ConstFontMap = include!(env!("FONT_MAP_FILE"));
+
+    impl Sprite for bitmap_fontgen::BitMap {
+        fn width(&self) -> usize {
+            self.size().width as usize
+        }
+
+        fn height(&self) -> usize {
+            self.size().height as usize
+        }
+    }
+
+    impl super::DrawableSprite<bool> for bitmap_fontgen::BitMap {
+        fn draw_into_scan<T, F>(&self, scan: usize, f: F, buff: &mut [T])
+        where
+            F: Fn(bool) -> T,
+        {
+            self.draw_scan(scan.try_into().unwrap(), f, buff)
+        }
+
+        fn convert_rgb<T: Integer>(raw: bool) -> (T, T, T) {
+            if raw {
+                (T::MAX, T::MAX, T::MAX)
+            } else {
+                (T::MIN, T::MIN, T::MIN)
+            }
+        }
+    }
+}
+
+trait Sprite {
+    /// Returns the width of `self` in pixels
+    fn width(&self) -> usize;
+
+    /// Returns the height of `self` in pixels
+    fn height(&self) -> usize;
+}
+
+trait SpriteMut: Sprite {
+    /// `other` will be copied into self at the given coordinates within self.
+    fn draw_into_self<R, T: DrawableSprite<R>>(&mut self, other: &T, x: usize, y: usize);
+}
+
+/// Trait for drawing sprites. This trait is separate from [Sprite] and [SpriteMut] because some
+/// specific implementations may not be compatible with those traits, but may still be converted into a sprite
+trait DrawableSprite<R>: Sprite {
+    /// Iterates over each pixel in the scan line specified by `scan` calling `f` on it to perform
+    /// a conversion from `R` into `T`.
+    /// Returns when either the end of the buffer or the end of
+    /// `self`'s scan line has been reached.
+    fn draw_into_scan<T, F>(&self, scan: usize, f: F, buff: &mut [T])
+    where
+        F: Fn(R) -> T;
+
+    /// Returns a pointer to a function which can convert `R` into RGB values.
+    ///
+    /// This is intended to be used as a part of closures to perform the whole conversion,
+    /// as opposed to being used to directly perform the conversion.
+    /// See implementation of [SpriteMut::draw_into_self] for [FrameBuffer] for an example  
+    fn convert_rgb<T: Integer>(raw: R) -> (T, T, T);
+}
+
+// todo: move out of here
+pub trait Integer:
+    core::ops::Add
+    + core::ops::Sub
+    + core::ops::AddAssign
+    + core::ops::SubAssign
+    + core::ops::Mul
+    + core::ops::MulAssign
+    + Sized
+{
+    const MIN: Self;
+    const MAX: Self;
+    const BITS: u32;
+}
+
+impl Integer for u8 {
+    const MIN: Self = Self::MIN;
+    const MAX: Self = Self::MAX;
+    const BITS: u32 = Self::BITS;
+}
+
+impl Integer for u16 {
+    const MIN: Self = Self::MIN;
+    const MAX: Self = Self::MAX;
+    const BITS: u32 = Self::BITS;
+}
+
+impl Integer for u32 {
+    const MIN: Self = Self::MIN;
+    const MAX: Self = Self::MAX;
+    const BITS: u32 = Self::BITS;
+}
+
+impl Integer for u64 {
+    const MIN: Self = Self::MIN;
+    const MAX: Self = Self::MAX;
+    const BITS: u32 = Self::BITS;
+}
+
+impl Integer for i8 {
+    const MIN: Self = Self::MIN;
+    const MAX: Self = Self::MAX;
+    const BITS: u32 = Self::BITS;
+}
+
+impl Integer for i16 {
+    const MIN: Self = Self::MIN;
+    const MAX: Self = Self::MAX;
+    const BITS: u32 = Self::BITS;
+}
+
+impl Integer for i32 {
+    const MIN: Self = Self::MIN;
+    const MAX: Self = Self::MAX;
+    const BITS: u32 = Self::BITS;
+}
+
+impl Integer for i64 {
+    const MIN: Self = Self::MIN;
+    const MAX: Self = Self::MAX;
+    const BITS: u32 = Self::BITS;
 }

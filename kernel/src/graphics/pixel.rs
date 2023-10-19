@@ -1,4 +1,5 @@
 use crate::graphics::PixelFormat;
+use core::ptr::NonNull;
 
 #[repr(C)]
 #[derive(Debug, Clone)]
@@ -189,5 +190,35 @@ impl Into<PixBgr3Byte> for PixGrey1Byte {
 impl Into<PixBgr4Byte> for PixGrey1Byte {
     fn into(self) -> PixBgr4Byte {
         PixBgr4Byte::new(self.value, self.value, self.value)
+    }
+}
+
+pub struct PixBuff<'a> {
+    _phantom: core::marker::PhantomData<&'a mut u8>,
+    ptr: NonNull<u8>,
+    len: usize,
+}
+
+impl<'a> PixBuff<'a> {
+    pub(super) fn buff<T: Pixel>(&mut self) -> &mut [T] {
+        assert_eq!(
+            self.len % core::mem::size_of::<T>(),
+            0,
+            "Misaligned PixBuff len for {}",
+            core::any::type_name::<T>()
+        );
+        let p = self.ptr.cast();
+        // SAFETY: This is safe, the pointer points to valid
+        unsafe { core::slice::from_raw_parts_mut(p.as_ptr(), self.len / core::mem::size_of::<T>()) }
+    }
+}
+
+impl<'a> From<&'a mut [u8]> for PixBuff<'a> {
+    fn from(value: &'a mut [u8]) -> Self {
+        Self {
+            _phantom: Default::default(),
+            ptr: (&mut value[0]).into(),
+            len: value.len(),
+        }
     }
 }
