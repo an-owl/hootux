@@ -29,6 +29,7 @@ log = "0.4.17"
 bitflags = "1.3.2"
 kernel-interrupts-proc-macro = {path = "../kernel-interrupts-proc-macro"}
 atomic = "0.5.1"
+bitmap-fontgen = { path = "../../fontgen", default-features = false }
 
 [[test]]
 name = "should_panic"
@@ -37,3 +38,6 @@ harness = false
 [[test]]
 name = "kstack_overflow"
 harness = false
+
+[build-dependencies]
+bitmap-fontgen = { path = "../../fontgen", features = ["codegen"] }

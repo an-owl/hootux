@@ -26,6 +26,8 @@ Hootux is built and run via the root crate which acts as a runner the built bina
 
  - `cargo build`          : will build the binaries normally without running
 
+Note: There is currently a bug in the artifact dependencies feature that causes it to resolve features incorrectly.
+
 ### Running
 
 Hootux comes with a runner for running with qemu-system-x86_64 which can run bia the following commands.

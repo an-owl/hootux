@@ -3,8 +3,11 @@ use core::fmt;
 use core::fmt::Write;
 use x86_64::instructions::interrupts::without_interrupts;
 
-const FONT_SIZE: noto_sans_mono_bitmap::RasterHeight = noto_sans_mono_bitmap::RasterHeight::Size16;
-const FONT_WEIGHT: noto_sans_mono_bitmap::FontWeight = noto_sans_mono_bitmap::FontWeight::Regular;
+const FONT_SIZE: bitmap_fontgen::FontSize = bitmap_fontgen::FontSize {
+    width: 8,
+    height: 16,
+};
+const FONT_WEIGHT: bitmap_fontgen::FontWeight = bitmap_fontgen::FontWeight { inner: "Medium" };
 
 type LockedFb<'a> = crate::kernel_structures::static_protected::Ref<'a, FrameBuffer>;
 
@@ -14,6 +17,7 @@ pub static WRITER: spin::Mutex<Option<BasicTTY>> = spin::Mutex::new(None);
 //assume framebuffer is always `Some`
 pub struct BasicTTY {
     framebuffer: &'static crate::kernel_structures::KernelStatic<FrameBuffer>,
+    font_map: bitmap_fontgen::Font,
 
     cursor_x: usize,
     cursor_y: usize,
@@ -28,8 +32,8 @@ pub struct BasicTTY {
 impl BasicTTY {
     /// create new BasicTTY
     pub fn new(buff: &'static crate::kernel_structures::KernelStatic<FrameBuffer>) -> Self {
-        let char_width = noto_sans_mono_bitmap::get_raster_width(FONT_WEIGHT, FONT_SIZE);
-        let char_height = FONT_SIZE.val();
+        let char_width = FONT_SIZE.width as usize;
+        let char_height = FONT_SIZE.height as usize;
 
         let lock = buff.get();
 
@@ -38,6 +42,7 @@ impl BasicTTY {
 
         Self {
             framebuffer: buff,
+            font_map: font_map(),
             cursor_x: 0,
             cursor_y: 0,
             cursor_x_max,
@@ -61,7 +66,7 @@ impl BasicTTY {
             }
             '\r' => self.carriage_return(),
             c => {
-                if let Some(bitmap) = CharRaster::new(c) {
+                if let Some(bitmap) = self.font_map.get(FONT_WEIGHT, FONT_SIZE, c) {
                     if self.cursor_x >= self.cursor_x_max {
                         self.newline_inner(fb);
                         self.carriage_return();
@@ -116,43 +121,6 @@ impl BasicTTY {
         self.framebuffer.get().clear();
         self.cursor_x = 0;
         self.cursor_y = 0;
-    }
-}
-
-struct CharRaster {
-    inner: noto_sans_mono_bitmap::RasterizedChar,
-}
-
-impl CharRaster {
-    fn new(ch: char) -> Option<Self> {
-        let raster = noto_sans_mono_bitmap::get_raster(ch, FONT_WEIGHT, FONT_SIZE)?;
-
-        Some(Self { inner: raster })
-    }
-}
-
-impl NewSprite for CharRaster {
-    fn width(&self) -> usize {
-        noto_sans_mono_bitmap::get_raster_width(FONT_WEIGHT, FONT_SIZE)
-    }
-
-    fn height(&self) -> usize {
-        FONT_SIZE.val()
-    }
-
-    fn format(&self) -> PixelFormat {
-        PixelFormat::Grey1Byte
-    }
-
-    fn scan(&self, scan_line: usize) -> &[u8] {
-        self.inner.raster()[scan_line]
-    }
-
-    fn scan_mut(&mut self, _scan_line: usize) -> &mut [u8] {
-        panic!(
-            "Tried to read {} as mutable",
-            core::any::type_name::<Self>()
-        )
     }
 }
 
