@@ -5,7 +5,7 @@
 
 use super::*;
 use crate::mem::buddy_frame_alloc::FrameAllocRef;
-use x86_64::structures::paging::mapper::TranslateError;
+use x86_64::structures::paging::mapper::{FlagUpdateError, TranslateError};
 use x86_64::structures::paging::{Mapper, PageTableFlags};
 
 /// Flags for Normal data in L1 (4K) pages.
@@ -171,4 +171,43 @@ pub fn translate(addr: usize) -> Option<u64> {
 // ptr is never dereferenced so this will only be a single impl
 pub fn translate_ptr<T>(ptr: *const T) -> Option<u64> {
     translate(ptr as usize)
+}
+
+/// Updates the page flags of the given page
+/// Only supports 4k pages atm
+pub(crate) fn set_flags(page: usize, flags: PageTableFlags) -> Result<(), UpdateFlagsErr> {
+    let r = unsafe {
+        SYS_MAPPER.get().update_flags(
+            Page::<Size4KiB>::from_start_address(VirtAddr::new(page as u64))
+                .map_err(|_| UpdateFlagsErr::InvalidAddress)?,
+            flags,
+        )
+    };
+    r.map_err(|e| match e {
+        FlagUpdateError::PageNotMapped => UpdateFlagsErr::PageNotMapped(page),
+        FlagUpdateError::ParentEntryHugePage => UpdateFlagsErr::HugePage(page),
+    })?
+    .flush();
+    Ok(())
+}
+
+/// Iterates over `iter` updating each page.
+/// If an error is encountered this fn will immediately return the error.
+pub(crate) fn set_flags_iter<P: PageSize, T: Iterator<Item = Page<P>>>(
+    iter: T,
+    flags: PageTableFlags,
+) -> Result<(), UpdateFlagsErr> {
+    for p in iter {
+        let s = p.start_address();
+        set_flags(s.as_u64() as usize, flags)?
+    }
+    Ok(())
+}
+
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+
+pub(crate) enum UpdateFlagsErr {
+    PageNotMapped(usize),
+    HugePage(usize),
+    InvalidAddress,
 }
