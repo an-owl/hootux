@@ -23,6 +23,8 @@ pub mod mem_map;
 pub(self) mod offset_page_table;
 pub mod thread_local_storage;
 
+pub mod write_combining;
+
 pub const PAGE_SIZE: usize = 4096;
 
 //pub(crate) static SYS_FRAME_ALLOCATOR: KernelStatic<BootInfoFrameAllocator> = KernelStatic::new();

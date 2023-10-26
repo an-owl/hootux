@@ -77,12 +77,20 @@ pub fn test_runner(tests: &[&dyn Testable]) {
     exit_qemu(QemuExitCode::Success);
 }
 
+pub fn p_pat() {
+    use x86_msr::Msr;
+    log::debug!("{:?}", unsafe { x86_msr::architecture::Pat::read() })
+}
+
 pub fn init() {
+    serial_println!("Called init");
     gdt::init();
     interrupts::init_exceptions();
     //unsafe { interrupts::PICS.lock().initialize() }
     unsafe { interrupts::PICS.lock().disable() }
     x86_64::instructions::interrupts::enable();
+    mem::write_combining::init_wc();
+    serial_println!("Exited init")
 }
 
 pub fn init_logger() {
