@@ -24,7 +24,7 @@ impl<T: AllocAddressType, const BS: u32> HighOrderAlloc<T, BS> {
 
     pub(super) fn free(&mut self, region: FreeMem<T, BS>) -> Result<(), ()> {
         #[cfg(feature = "alloc-debug-serial")]
-        serial_println!(
+        crate::serial_println!(
             "HighOrderAlloc<{},{}>::free()",
             core::any::type_name::<T>(),
             BS
@@ -37,28 +37,28 @@ impl<T: AllocAddressType, const BS: u32> HighOrderAlloc<T, BS> {
         if let Some(b) = self.free_list.get_mut(i) {
             if b.merge(region).is_none() {
                 #[cfg(feature = "alloc-debug-serial")]
-                serial_println!("{:x?}", self.free_list);
+                crate::serial_println!("{:x?}", self.free_list);
                 return Ok(());
             }
         }
         if let Some(b) = self.free_list.get_mut(i - 1) {
             if b.merge(region).is_none() {
                 #[cfg(feature = "alloc-debug-serial")]
-                serial_println!("{:x?}", self.free_list);
+                crate::serial_println!("{:x?}", self.free_list);
                 return Ok(());
             }
         }
         if let Some(b) = self.free_list.get_mut(i + 1) {
             if b.merge(region).is_none() {
                 #[cfg(feature = "alloc-debug-serial")]
-                serial_println!("{:x?}", self.free_list);
+                crate::serial_println!("{:x?}", self.free_list);
                 return Ok(());
             }
         }
 
         self.free_list.insert(i, region);
         #[cfg(feature = "alloc-debug-serial")]
-        serial_println!("{:x?}", self.free_list);
+        crate::serial_println!("{:x?}", self.free_list);
         Ok(())
     }
 
@@ -68,12 +68,12 @@ impl<T: AllocAddressType, const BS: u32> HighOrderAlloc<T, BS> {
     pub(super) fn allocate(&mut self, layout: core::alloc::Layout) -> Option<FreeMem<T, BS>> {
         #[cfg(feature = "alloc-debug-serial")]
         {
-            serial_println!(
+            crate::serial_println!(
                 "HighOrderAlloc<{},{}>::allocate()",
                 core::any::type_name::<T>(),
                 BS
             );
-            serial_println!("list on entry: {:?}", self.free_list);
+            crate::serial_println!("list on entry: {:?}", self.free_list);
         }
         // always prefer clean blocks.
         let mut is_clean = false;
