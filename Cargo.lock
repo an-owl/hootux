@@ -102,7 +102,7 @@ name = "ata"
 version = "0.1.0"
 dependencies = [
  "bitflags 2.2.1",
- "num_enum",
+ "num_enum 0.6.1",
 ]
 
 [[package]]
@@ -214,8 +214,6 @@ dependencies = [
 [[package]]
 name = "bootloader"
 version = "0.11.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e092090f6e2b68cee8dc291ec60e4706f6b0c5cd90b666a5248a20f30591ccb0"
 dependencies = [
  "anyhow",
  "async-process",
@@ -233,8 +231,6 @@ dependencies = [
 [[package]]
 name = "bootloader-boot-config"
 version = "0.11.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a36c0df7b26b44254828ece99ed72aa01695cc37f007a97afe8aee29feb26e3e"
 dependencies = [
  "serde",
 ]
@@ -711,7 +707,16 @@ version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7a015b430d3c108a207fd776d2e2196aaf8b1cf8cf93253e3a097ff3085076a1"
 dependencies = [
- "num_enum_derive",
+ "num_enum_derive 0.6.1",
+]
+
+[[package]]
+name = "num_enum"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "70bf6736f74634d299d00086f02986875b3c2d924781a6a2cb6c201e73da0ceb"
+dependencies = [
+ "num_enum_derive 0.7.0",
 ]
 
 [[package]]
@@ -719,6 +724,17 @@ name = "num_enum_derive"
 version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "96667db765a921f7b295ffee8b60472b686a51d4f21c2ee4ffdb94c7013b65a6"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.18",
+]
+
+[[package]]
+name = "num_enum_derive"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "56ea360eafe1022f7cc56cd7b869ed57330fb2453d0c7831d99b74c65d2f5597"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1351,5 +1367,6 @@ version = "0.1.0"
 dependencies = [
  "bitflags 1.3.2",
  "lazy_static",
+ "num_enum 0.7.0",
  "raw-cpuid",
 ]

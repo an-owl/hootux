@@ -9,6 +9,8 @@
 use crate::MsrReadWrite::Reserved;
 use crate::*;
 use bitflags::bitflags;
+use core::ops::{Index, IndexMut};
+use num_enum::{IntoPrimitive, TryFromPrimitive};
 
 /// IA_32_TIME_STAMP_COUNTER see <https://www.intel.com/content/dam/develop/public/us/en/documents/335592-sdm-vol-4.pdf>
 /// for more info
@@ -244,6 +246,82 @@ impl Msr<BaseAddr> for KernelGsBase {
 
     fn availability() -> MsrAvailability {
         if raw_cpuid::cpuid!(80000001).edx & (1 << 29) > 0 {
+            MsrAvailability::new(MsrReadWrite::Write)
+        } else {
+            MsrAvailability::new(MsrReadWrite::Reserved)
+        }
+    }
+}
+
+pub struct Pat;
+
+#[derive(Copy, Clone, Debug)]
+pub struct PatData {
+    data: [PatType; 8],
+}
+
+impl MsrFlags for PatData {
+    fn bits(&self) -> (u32, u32) {
+        let mut raw: u64 = 0;
+        for (i, t) in self.data.iter().enumerate() {
+            let offset = i * 8;
+            let byte: u8 = (*t).try_into().unwrap();
+            raw |= (byte as u64) << offset;
+        }
+
+        let bytes: [u8; 8] = raw.to_le_bytes();
+        let high: [u8; 4] = bytes[4..].try_into().unwrap();
+        let low: [u8; 4] = bytes[..4].try_into().unwrap();
+        (u32::from_le_bytes(high), u32::from_le_bytes(low))
+    }
+
+    fn new(high: u32, low: u32) -> Self {
+        let raw = (high as u64) << 32 | (low as u64);
+        let bytes: [u8; 8] = raw.to_le_bytes();
+        let mut data = [PatType::Uncachable; 8];
+        for (i, b) in bytes.into_iter().enumerate() {
+            data[i] = b.try_into().expect("Read reserved PAT type")
+        }
+        Self { data }
+    }
+}
+
+impl Index<usize> for PatData {
+    type Output = PatType;
+    fn index(&self, index: usize) -> &Self::Output {
+        &self.data[index]
+    }
+}
+
+impl IndexMut<usize> for PatData {
+    fn index_mut(&mut self, index: usize) -> &mut Self::Output {
+        &mut self.data[index]
+    }
+}
+
+#[repr(u8)]
+#[derive(IntoPrimitive, TryFromPrimitive, Debug, Eq, PartialEq, Copy, Clone)]
+pub enum PatType {
+    /// Neither reads or writes are cached.
+    Uncachable = 0,
+    /// Uncached however writes are buffered in the CW buffer and written together.
+    WriteCombining,
+    /// Reads are cached writes are both cached and written directly to system memory.
+    WriteThrough = 4,
+    /// Im not sure what thi does.
+    WriteProtected,
+    /// Reads and writes are cached, modified cache lines are written back to system memory when evicted
+    WriteBack,
+    /// Reads and writes are not cached however may be overridden using MTRRs.
+    Uncached,
+}
+
+impl Msr<PatData> for Pat {
+    const MSR_ADDR: u32 = 0x277;
+
+    fn availability() -> MsrAvailability {
+        let good = raw_cpuid::cpuid!(1).edx & 1 << 16 != 0;
+        if good {
             MsrAvailability::new(MsrReadWrite::Write)
         } else {
             MsrAvailability::new(MsrReadWrite::Reserved)
