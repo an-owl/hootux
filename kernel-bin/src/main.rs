@@ -10,6 +10,7 @@ extern crate alloc;
 
 use alloc::boxed::Box;
 use bootloader_api::entry_point;
+use core::ptr::NonNull;
 use hootux::exit_qemu;
 use hootux::graphics::basic_output::BasicTTY;
 use hootux::interrupts::apic::Apic;
@@ -74,7 +75,8 @@ fn kernel_main(b: &'static mut bootloader_api::BootInfo) -> ! {
     if let Some(buff) =
         core::mem::replace(&mut b.framebuffer, bootloader_api::info::Optional::None).into_option()
     {
-        // take framebuffer to prevent aliasing
+        mem::write_combining::set_wc_data(&NonNull::from(buff.buffer())).unwrap(); // wont panic
+
         graphics::KERNEL_FRAMEBUFFER.init(graphics::FrameBuffer::from(buff));
         graphics::KERNEL_FRAMEBUFFER.get().clear();
         *graphics::basic_output::WRITER.lock() = Some(BasicTTY::new(&graphics::KERNEL_FRAMEBUFFER));
