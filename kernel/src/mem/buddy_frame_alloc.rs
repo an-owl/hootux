@@ -404,23 +404,21 @@ impl DmaRegion {
 
             if let None = filter.next() {
                 // still calls Box::new
-                if i != ORDERS - 1 {
-                    drop(filter);
-                } else {
-                    // I could make this locate any adjacent memory regions and free those but this is just convenient
-
-                    // gets the address of the lower buddy regardless of whether this is the higher one or not.
-                    let ba = addr as u64 & !(HIGH_ORDER_BLOCK_SIZE - 1) as u64;
-
-                    // Will never return None
-                    let f = super::high_order_alloc::FreeMem::new(ba, HIGH_ORDER_BLOCK_SIZE as u64)
-                        .unwrap();
-                    self.high_order
-                        .free(f)
-                        .expect("Failed to move memory into HighOrderAlloc");
-                }
+                drop(filter);
                 use_ord = i;
                 break;
+            } else if i == ORDERS - 1 {
+                // I could make this locate any adjacent memory regions and free those but this is just convenient
+
+                // gets the address of the lower buddy regardless of whether this is the higher one or not.
+                let ba = addr as u64 & !(HIGH_ORDER_BLOCK_SIZE - 1) as u64;
+
+                // Will never return None
+                let f = super::high_order_alloc::FreeMem::new(ba, HIGH_ORDER_BLOCK_SIZE as u64)
+                    .unwrap();
+                self.high_order
+                    .free(f)
+                    .expect("Failed to move memory into HighOrderAlloc");
             }
         }
         self.free_list[use_ord].push_front(addr)
