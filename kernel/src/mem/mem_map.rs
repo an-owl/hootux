@@ -206,7 +206,7 @@ pub(crate) fn set_flags_iter<P: PageSize, T: Iterator<Item = Page<P>>>(
 
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 
-pub(crate) enum UpdateFlagsErr {
+pub enum UpdateFlagsErr {
     PageNotMapped(usize),
     HugePage(usize),
     InvalidAddress,
