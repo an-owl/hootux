@@ -88,14 +88,14 @@ pub(crate) fn init_wc() {
 pub fn set_wc_data(
     region: &core::ptr::NonNull<[u8]>,
 ) -> Result<(), super::mem_map::UpdateFlagsErr> {
-    #[cfg(all(any(target_arch = "x86_64"), feature = "write-combining"))]
+    #[cfg(all(target_arch = "x86_64", feature = "write-combining"))]
     {
         let start = region.as_ptr().cast::<u8>() as usize;
         //fixme
         // SAFETY: Not safe. This doesnt actually read the data but the compiler might try to.
         let end = unsafe { (&*region.as_ptr()).len() + start };
 
-        let start = x86_64::structures::paging::page::Page::<x86_64::structures::paging::Size4KiB>::from_start_address(x86_64::VirtAddr::new(end as u64)).unwrap();
+        let start = x86_64::structures::paging::page::Page::<x86_64::structures::paging::Size4KiB>::from_start_address(x86_64::VirtAddr::new(start as u64)).unwrap();
         let end = x86_64::structures::paging::page::Page::<x86_64::structures::paging::Size4KiB>::from_start_address(x86_64::VirtAddr::new(end as u64)).unwrap();
         let range = x86_64::structures::paging::page::PageRange { start, end };
 
