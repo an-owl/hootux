@@ -12,7 +12,7 @@ use x86_64::structures::paging::{Mapper, PageTableFlags};
 pub const PROGRAM_DATA_FLAGS: PageTableFlags = PageTableFlags::from_bits_truncate((1 << 63) | 0b11);
 
 /// Flags for memory mapped I/O. Sets caching mode to UC uncacheable
-pub const MMIO_FLAGS: PageTableFlags = PageTableFlags::from_bits_truncate((1 << 63) | 0b11011);
+pub const MMIO_FLAGS: PageTableFlags = PageTableFlags::from_bits_truncate((1 << 63) | 0b10011);
 
 /// Maps the given pages into memory using frames given by the system frame allocator. This is the
 /// preferred method Mapping memory ranges. This fn will flush all the given pages
