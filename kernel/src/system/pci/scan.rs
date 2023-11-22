@@ -1,7 +1,7 @@
 use crate::system::pci::DeviceControl;
 use acpi::mcfg::PciConfigRegions;
 
-pub fn scan_advanced(mcfg: &PciConfigRegions) {
+pub fn scan_advanced(mcfg: &PciConfigRegions<alloc::alloc::Global>) {
     for seg in 0..u16::MAX {
         if let Some(_) = mcfg.physical_address(seg, 0, 0, 0) {
             scan_bus(mcfg, seg, 0);
@@ -12,7 +12,7 @@ pub fn scan_advanced(mcfg: &PciConfigRegions) {
     //super::PCI_META.write().sort();
 }
 
-fn scan_bus(mcfg: &PciConfigRegions, bus_group: u16, bus: u8) {
+fn scan_bus(mcfg: &PciConfigRegions<alloc::alloc::Global>, bus_group: u16, bus: u8) {
     for dev_num in 0..32 {
         let dev_addr = super::DeviceAddress::new(bus_group, bus, dev_num, 0);
         if let Some(phys_addr) = dev_addr.advanced_cfg_addr(mcfg) {
@@ -27,7 +27,7 @@ fn scan_bus(mcfg: &PciConfigRegions, bus_group: u16, bus: u8) {
     }
 }
 
-fn check_dev(mcfg: &PciConfigRegions, mut dev: DeviceControl) {
+fn check_dev(mcfg: &PciConfigRegions<alloc::alloc::Global>, mut dev: DeviceControl) {
     log::info!("Discovered PCI Device at: {}", dev.address());
     if dev.dev_type() == super::configuration::register::HeaderType::Bridge {
         let dev_addr = dev.address();
@@ -58,7 +58,7 @@ fn check_dev(mcfg: &PciConfigRegions, mut dev: DeviceControl) {
         )));
 }
 
-fn check_fns(mcfg: &PciConfigRegions, addr: super::DeviceAddress) {
+fn check_fns(mcfg: &PciConfigRegions<alloc::alloc::Global>, addr: super::DeviceAddress) {
     for i in 1..8 {
         let new_addr = addr.new_function(i);
 

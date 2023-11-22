@@ -55,7 +55,10 @@ impl DeviceAddress {
         }
     }
 
-    fn advanced_cfg_addr(&self, mcfg: &acpi::mcfg::PciConfigRegions) -> Option<u64> {
+    fn advanced_cfg_addr(
+        &self,
+        mcfg: &acpi::mcfg::PciConfigRegions<alloc::alloc::Global>,
+    ) -> Option<u64> {
         mcfg.physical_address(self.segment_group, self.bus, self.device, self.function)
     }
 
@@ -871,7 +874,7 @@ impl Ord for BarInfo {
     }
 }
 
-pub fn enumerate_devices(pci_regions: &acpi::mcfg::PciConfigRegions) {
+pub fn enumerate_devices(pci_regions: &acpi::mcfg::PciConfigRegions<alloc::alloc::Global>) {
     scan::scan_advanced(pci_regions)
 }
 
