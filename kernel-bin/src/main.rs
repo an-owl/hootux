@@ -110,6 +110,9 @@ fn kernel_main(b: &'static mut bootloader_api::BootInfo) -> ! {
     let pci_cfg = acpi::mcfg::PciConfigRegions::new(&acpi_tables).unwrap();
     system::pci::enumerate_devices(&pci_cfg);
 
+    // SAFETY: MP not initialized, race conditions are impossible.
+    unsafe { system::sysfs::get_sysfs().firmware().cfg_acpi(acpi_tables) }
+
     log::info!("Bus scan complete");
 
     #[cfg(test)]
