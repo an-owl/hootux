@@ -48,6 +48,7 @@ impl<T> Worm<T> {
         }
     }
 
+    #[allow(dead_code)]
     /// Returns whether or not [Self::write] has been called
     pub(crate) fn is_set(&self) -> bool {
         // SAFETY: see Self::read
