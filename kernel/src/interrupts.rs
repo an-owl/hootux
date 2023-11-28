@@ -9,6 +9,8 @@ use x86_64::structures::idt::{InterruptDescriptorTable, InterruptStackFrame, Pag
 pub mod apic;
 pub mod vector_tables;
 
+pub mod buff;
+
 pub const PIC_0_OFFSET: u8 = 32;
 pub const PIC_1_OFFSET: u8 = PIC_0_OFFSET + 8;
 
