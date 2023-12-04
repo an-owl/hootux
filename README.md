@@ -44,6 +44,8 @@ recommend setting an `uefi.vars` a efivars file.
 This part is mostly for my own sanity to try to manage what I want to do and to lay out the things I need to to to
 achieve them.
 
+ - Replace InterruptIndex with abstract IRQ type
+   - Replace all its uses
  - Clean up memory module
    - make buddy allocators use the same code
      - use a marker for optimizing it.
