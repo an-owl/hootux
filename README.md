@@ -46,6 +46,7 @@ achieve them.
 
  - Replace InterruptIndex with abstract IRQ type
    - Replace all its uses
+ - Unify initialization of ACPI consumers
  - Clean up memory module
    - make buddy allocators use the same code
      - use a marker for optimizing it.
