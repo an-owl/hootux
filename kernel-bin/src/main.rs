@@ -104,16 +104,22 @@ fn kernel_main(b: &'static mut bootloader_api::BootInfo) -> ! {
 
     debug!("Successfully initialized Kernel");
 
+    let madt = acpi_tables.find_table::<acpi::madt::Madt>().unwrap();
+    log::info!(
+        "{:#x?}",
+        madt.parse_interrupt_model_in(alloc::alloc::Global)
+    );
+    system::sysfs::get_sysfs().setup_ioapic(&madt);
+
     log::info!("Scanning pcie bus");
 
     // move into task
     let pci_cfg = acpi::mcfg::PciConfigRegions::new(&acpi_tables).unwrap();
     system::pci::enumerate_devices(&pci_cfg);
+    log::info!("Bus scan complete");
 
     // SAFETY: MP not initialized, race conditions are impossible.
     unsafe { system::sysfs::get_sysfs().firmware().cfg_acpi(acpi_tables) }
-
-    log::info!("Bus scan complete");
 
     #[cfg(test)]
     test_main();
@@ -136,6 +142,7 @@ fn say_hi() {
 }
 
 fn init_static_drivers() {
+    serial::init_rt_serial();
     ahci::init()
 }
 

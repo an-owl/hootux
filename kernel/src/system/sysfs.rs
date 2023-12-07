@@ -1,4 +1,5 @@
 pub mod block;
+pub(crate) mod systemctl;
 static SYSFS_ROOT: SysFsRoot = SysFsRoot::new();
 
 /// The sysfs allows the kernel and drivers to export system resources to make them available to
@@ -8,6 +9,9 @@ pub struct SysFsRoot {
     block_devices: block::BlockDeviceList,
     discovery_driver: super::driver_if::DiscoveryDriver,
     firmware: Firmware,
+    /// This is not supposed to be exported to user mode, this contains structures that the kernel uses
+    /// to access hardware devices used to configure system operation.
+    pub(crate) systemctl: systemctl::SystemctlResources,
 }
 
 impl SysFsRoot {
@@ -16,6 +20,7 @@ impl SysFsRoot {
             block_devices: block::BlockDeviceList::new(),
             discovery_driver: super::driver_if::DiscoveryDriver::new(),
             firmware: Firmware::new(),
+            systemctl: systemctl::SystemctlResources::new(),
         }
     }
 
@@ -30,6 +35,10 @@ impl SysFsRoot {
 
     pub fn firmware(&self) -> &Firmware {
         &self.firmware
+    }
+
+    pub fn setup_ioapic(&self, madt: &acpi::madt::Madt) {
+        self.systemctl.ioapic.cfg_madt(madt)
     }
 }
 
