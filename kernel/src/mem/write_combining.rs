@@ -95,8 +95,8 @@ pub fn set_wc_data(
         // SAFETY: Not safe. This doesnt actually read the data but the compiler might try to.
         let end = unsafe { (&*region.as_ptr()).len() + start };
 
-        let start = x86_64::structures::paging::page::Page::<x86_64::structures::paging::Size4KiB>::from_start_address(x86_64::VirtAddr::new(start as u64)).unwrap();
-        let end = x86_64::structures::paging::page::Page::<x86_64::structures::paging::Size4KiB>::from_start_address(x86_64::VirtAddr::new(end as u64)).unwrap();
+        let start = x86_64::structures::paging::page::Page::<x86_64::structures::paging::Size4KiB>::containing_address(x86_64::VirtAddr::new(start as u64));
+        let end = x86_64::structures::paging::page::Page::<x86_64::structures::paging::Size4KiB>::containing_address(x86_64::VirtAddr::new(end as u64));
         let range = x86_64::structures::paging::page::PageRange { start, end };
 
         // wc uses PAT[3], cache_disable & write_through selects PAT[3]
