@@ -66,3 +66,7 @@ impl<T, A: alloc::alloc::Allocator> Debug for UnsafeBox<T, A> {
         d.finish()
     }
 }
+
+// SAFETY: This is safe as long as safety rules are obeyed
+unsafe impl<T, A: alloc::alloc::Allocator> Send for UnsafeBox<T, A> where A: Send {}
+unsafe impl<T, A: alloc::alloc::Allocator> Sync for UnsafeBox<T, A> where A: Sync {}
