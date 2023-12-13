@@ -12,17 +12,18 @@ pub(crate) fn check_slp() {
     sleep::SLEEP_QUEUE.wakeup()
 }
 
-mod suspend {
+#[doc(hidden)]
+pub mod suspend {
     use core::pin::Pin;
     use core::task::{Context, Poll};
 
     #[doc(hidden)]
-    struct Suspend {
+    pub struct Suspend {
         suspend: bool,
     }
 
     impl Suspend {
-        fn new() -> Self {
+        pub fn new() -> Self {
             Self { suspend: true }
         }
     }
@@ -46,7 +47,7 @@ mod suspend {
     #[macro_export]
     macro_rules! suspend {
         () => {
-            suspend::Suspend::new().await;
+            $crate::task::util::suspend::Suspend::new().await;
         };
     }
 }
