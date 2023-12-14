@@ -1,6 +1,6 @@
 use modular_bitfield::{bitfield, specifiers::*, BitfieldSpecifier};
 
-struct IoApic {
+pub(crate) struct IoApic {
     index: *mut u32,
     data: *mut u32,
 
@@ -9,9 +9,46 @@ struct IoApic {
 }
 
 impl IoApic {
+    #[allow(unused)]
+    // Index of the Identification register
     const ID: u32 = 0;
+
+    #[allow(unused)]
+    // Index of the version register
     const VER: u32 = 1;
+
+    #[allow(unused)]
+    // Index of the arbitration register
     const ARB: u32 = 2;
+
+    /// Initializes `Self` from `ptr` this will use the the region from `ptr..ptr+0x10`
+    ///
+    /// # Panics
+    ///
+    /// This fn will panic if `gsi_base` is above `255`
+    ///
+    /// # Safety
+    ///
+    /// The caller must ensure that
+    ///
+    /// - `ptr` actually points to a memory mapped region containing a 82093 IO-APIC compatible device.
+    /// - The region is mapped
+    /// - The region is writable
+    /// - The region is mapped using a MMIO compatible memory type (UC/WC)  
+    pub(crate) unsafe fn new(ptr: *mut u8, gsi_base: u32) -> Self {
+        let mut s = Self {
+            index: ptr.cast(),
+            data: ptr.offset(0x10).cast(),
+            gsi_base: gsi_base.try_into().expect(&alloc::format!(
+                "Firmware bug? Found GSI base {} max should be 239",
+                gsi_base
+            )),
+            size: 0,
+        };
+
+        s.size = s.get_version().entries();
+        s
+    }
 
     unsafe fn write(&mut self, addr: u32, data: u32) {
         // SAFETY: This is safe because self.index is valid and aligned to 16
@@ -39,7 +76,7 @@ impl IoApic {
     ///
     /// This fn takes `self` as mutable because it must modify the index register in order to read
     /// from the correct register
-    fn get_entry(&mut self, index: u8) -> RedirectionTableEntry {
+    pub(crate) fn get_entry(&mut self, index: u8) -> RedirectionTableEntry {
         assert!(
             index < self.size,
             "Attempted to read invalid entry {}: Max {} tried to read {index}",
@@ -61,7 +98,7 @@ impl IoApic {
     /// The caller must ensure the interrupt is properly received and handled.
     #[allow(unsafe_op_in_unsafe_fn)]
     // unsafe here is to mark that it is safe
-    unsafe fn set_entry(&mut self, index: u8, entry: RedirectionTableEntry) {
+    pub(crate) unsafe fn set_entry(&mut self, index: u8, entry: RedirectionTableEntry) {
         assert!(
             index < self.size,
             "Attempted to write invalid entry {}: Max {} tried to read {index}",
@@ -91,20 +128,51 @@ impl IoApic {
         self.write(((index * 2) + 0x11) as u32, entry.seg[1]);
         self.write(((index * 2) + 0x10) as u32, entry.seg[0]);
     }
+
+    pub(crate) fn is_gsi(&self, gsi: u8) -> bool {
+        gsi > self.gsi_base && gsi < self.gsi_base + self.size
+    }
+
+    /// Returns the [RedirectionTableEntry] for the requested GSI
+    ///
+    /// # Panics
+    ///
+    /// Ths fn will panic if `self` does not own the requested GSI. [Self::is_gsi] will return
+    /// whether this fn will panic
+    pub(crate) fn get_gsi(&mut self, gsi: u8) -> RedirectionTableEntry {
+        assert!(self.is_gsi(gsi));
+        self.get_entry(gsi - self.gsi_base)
+    }
+
+    /// Sets the [RedirectionTableEntry] for the requested GSI.
+    ///
+    /// # Panics
+    ///
+    /// Ths fn will panic if `self` does not own the requested GSI. [Self::is_gsi] will return
+    /// whether this fn will panic
+    pub(crate) unsafe fn set_gsi(&mut self, gsi: u8, entry: RedirectionTableEntry) {
+        assert!(self.is_gsi(gsi));
+        self.set_entry(gsi - self.gsi_base, entry);
+    }
 }
 
-struct IoApicVersion {
+// SAFETY: This is safe to send across threads, the pointers are not accessible outside self
+unsafe impl Send for IoApic {}
+
+pub(crate) struct IoApicVersion {
     data: [u8; 4],
 }
 
+#[allow(dead_code)]
 impl IoApicVersion {
     /// Returns the IOAPIC revision
-    fn revision(&self) -> u8 {
+
+    pub fn revision(&self) -> u8 {
         self.data[0]
     }
 
     /// Returns the number of redirection entries this device contains
-    fn entries(&self) -> u8 {
+    pub fn entries(&self) -> u8 {
         self.data[2]
     }
 }
@@ -114,37 +182,37 @@ const _ASSERT: () =
 
 #[bitfield]
 #[derive(Debug, Copy, Clone)]
-struct RedirectionTableEntry {
+pub struct RedirectionTableEntry {
     ///
     /// The target vector for the interrupt.
-    vector: u8,
-    delivery_mode: DeliveryMode,
-    destination_mode: DestinationMode,
-    #[skip(getters)]
+    pub vector: u8,
+    pub delivery_mode: DeliveryMode,
+    pub destination_mode: DestinationMode,
+    #[skip(setters)]
     ///
     /// Delivery status bit. This is set to `true` when an interrupt is pending
-    pending: bool,
-    polarity: PinPolarity,
+    pub pending: bool,
+    pub polarity: PinPolarity,
     #[skip(setters)]
     ///
     /// When this interrupt uses level triggering, and the interrupt has been accepted by a LAPIC
     /// this will be set to 1 util EOI has been sent for this interrupt.
     /// When the interrupt is edge triggered the state of this bit is undefined
-    remote_irr: bool,
-    trigger_mode: TriggerMode,
-    mask: bool,
+    pub remote_irr: bool,
+    pub trigger_mode: TriggerMode,
+    pub mask: bool,
     #[skip]
     __: B39,
     ///
     /// Destination field.
     ///
     /// When the destination mode is logical this is a bitfield
-    destination: u8,
+    pub destination: u8,
 }
 
-#[derive(BitfieldSpecifier, Debug)]
+#[derive(BitfieldSpecifier, Debug, Copy, Clone)]
 #[bits = 3]
-enum DeliveryMode {
+pub enum DeliveryMode {
     /// Fixed vector, normal interrupt mode.
     Fixed = 0,
     /// In logical mode this will be accepted by the CPU with the lowest task priority.
@@ -165,32 +233,128 @@ enum DeliveryMode {
     ExtInt = 7,
 }
 
-#[derive(BitfieldSpecifier, Debug)]
+#[derive(BitfieldSpecifier, Debug, Copy, Clone)]
 #[bits = 1]
 #[repr(C)]
 /// Destination mode bit.
 ///
 /// - Physical mode selects the destination using its APIC id in bits \[56..=59\] (4bits).
 /// - Logical mode selects the destination using a bitfield in bits \[56..=63\] (8bits).
-enum DestinationMode {
+pub enum DestinationMode {
     PhysicalMode = 0,
     LogicalMode,
 }
 
-#[derive(BitfieldSpecifier, Debug)]
+#[derive(BitfieldSpecifier, Debug, Copy, Clone)]
 #[bits = 1]
 #[repr(C)]
 /// Indicated the type of signal used to assert the interrupt.
-enum TriggerMode {
+pub enum TriggerMode {
     EdgeTriggered = 0,
     LevelTriggered,
 }
 
-#[derive(BitfieldSpecifier, Debug)]
+#[derive(BitfieldSpecifier, Debug, Copy, Clone)]
 #[bits = 1]
 #[repr(C)]
 /// Interrupt pin polarity bit.
-enum PinPolarity {
+pub enum PinPolarity {
     AssertHigh = 0,
     AssertLow,
+}
+
+/// This struct represents a Global System Interrupt which is bound to an IRQ
+/// GlobalSystemInterrupt represents the configuration of its entry in an IO-APIC.
+/// When fields are modified [GlobalSystemInterrupt::set] must be called in order to update the
+/// interrupt configuration.
+///
+/// **Note:** The default mask value is true i.e. interrupts will not occur
+#[derive(Clone, Debug)]
+pub struct GlobalSystemInterrupt {
+    vector: u8,
+    gsi: u8,
+    pub target: Target,
+    pub polarity: PinPolarity,
+    pub trigger_mode: TriggerMode,
+    pub delivery_mode: DeliveryMode,
+    pub mask: bool,
+}
+
+impl GlobalSystemInterrupt {
+    pub(in crate::interrupts) const fn new(gsi: u8, vector: u8) -> Self {
+        Self {
+            vector,
+            gsi,
+            target: Target::Physical(PhysicalTarget::new(0)),
+            polarity: PinPolarity::AssertHigh,
+            trigger_mode: TriggerMode::EdgeTriggered,
+            delivery_mode: DeliveryMode::Fixed,
+            mask: true,
+        }
+    }
+
+    /// Returns a compiled GSI entry
+    fn rt_entry(&self) -> RedirectionTableEntry {
+        let mut rte = RedirectionTableEntry::new();
+        match self.target {
+            Target::Logical(t) => {
+                rte.set_destination(t);
+                rte.set_destination_mode(DestinationMode::LogicalMode);
+            }
+            Target::Physical(PhysicalTarget { id: t }) => {
+                rte.set_destination(t);
+                rte.set_destination_mode(DestinationMode::PhysicalMode);
+            }
+        };
+        rte.set_polarity(self.polarity);
+        rte.set_trigger_mode(self.trigger_mode);
+        rte.set_delivery_mode(self.delivery_mode);
+        rte.set_mask(self.mask);
+        rte.set_vector(self.vector);
+
+        rte
+    }
+
+    /// Sets the GSI configuration on the appropriate IO-APIC controller,
+    /// returning whether it completed successfully
+    ///
+    /// # Safety
+    ///
+    /// The caller must ensure the interrupt is handled properly.
+    /// This fn does not set configure the interrupt handler this should be configured before
+    /// this fn is called.  
+    pub unsafe fn set(&self) -> Result<(), ()> {
+        let apic = &crate::system::sysfs::get_sysfs().systemctl.ioapic;
+        apic.set_gsi(self.gsi, self.rt_entry())
+    }
+
+    /// Returns the [RedirectionTableEntry] for the GSI represented by `self` This can be used for
+    /// debugging purposes
+    pub fn get(&self) -> Result<RedirectionTableEntry, ()> {
+        let apic = &crate::system::sysfs::get_sysfs().systemctl.ioapic;
+        apic.get_gsi(self.gsi)
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct PhysicalTarget {
+    id: u8, // only 4 bits usable
+}
+
+impl PhysicalTarget {
+    const fn new(id: u8) -> Self {
+        assert!(id < 16);
+        Self { id }
+    }
+
+    pub fn set(&mut self, id: u8) {
+        assert!(id < 16);
+        self.id = id;
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum Target {
+    Logical(u8),
+    Physical(PhysicalTarget),
 }

@@ -7,7 +7,7 @@ use alloc::boxed::Box;
 use apic_structures::registers::ApicError;
 
 pub mod apic_structures;
-mod ioapic;
+pub(crate) mod ioapic;
 pub mod pub_apic;
 pub mod xapic;
 
