@@ -79,10 +79,15 @@ impl<T: Copy> ChonkyBuff<T> {
     pub fn pop(&self) -> Option<T> {
         let mut l = self.inner.lock();
         // fetch T
-        let ch = l.chonk.front()?;
+        let ch = l.chonk.front();
+        if ch.is_none() {
+            self.task.wake();
+        }
+        let ch = ch?;
+
         if let Some(_) = ch.get(l.chonk_offset) {
             l.chonk_offset += 1;
-            return Some(l.chonk.front()?[l.chonk_offset]);
+            return Some(l.chonk.front()?[l.chonk_offset - 1]);
         } else {
             let mut bind = l.chonk.split_off(0);
             // we want to remove the first element not the rest
