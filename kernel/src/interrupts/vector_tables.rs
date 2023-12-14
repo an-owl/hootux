@@ -269,7 +269,7 @@ impl InterruptHandle {
 }
 
 /// Indicates the current state of the IRQ and the type of handler it uses.
-pub(crate) enum InterruptHandleContainer {
+pub enum InterruptHandleContainer {
     Empty,
     /// Reserved IRQs are specially requested, These should not be modified except by the caller
     /// that reserved them
