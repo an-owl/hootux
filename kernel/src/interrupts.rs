@@ -150,6 +150,55 @@ impl InterruptIndex {
     fn as_usize(self) -> usize {
         usize::from(self.as_u8())
     }
+
+    /// Binds the GSI to the IRQ represented by self.
+    /// This will configure the interrupt using `config`.
+    /// The vector field of `config` will be replaced with the real vector allocated to this IRQ
+    pub fn get_gsi(&self, gsi: u8) -> apic::ioapic::GlobalSystemInterrupt {
+        apic::ioapic::GlobalSystemInterrupt::new(gsi, self.as_u8())
+    }
+
+    /// Returns a [apic::ioapic::GlobalSystemInterrupt] for a legacy ISA interrupt.
+    /// If a [crate::system::sysfs::systemctl::InterruptOverride] is returned then this fn will
+    /// attempt to set the `polarity` and `trigger_mode` if they are defined otherwise they must  be
+    /// configured by the caller.
+    /// It is UB to modify `polarity` and `trigger_mode` if they are defined by the override struct
+    pub fn get_isa(
+        &self,
+        isa_irq: u8,
+    ) -> (
+        apic::ioapic::GlobalSystemInterrupt,
+        Option<crate::system::sysfs::systemctl::InterruptOverride>,
+    ) {
+        if let Some(v) = crate::system::sysfs::get_sysfs()
+            .systemctl
+            .ioapic
+            .lookup_override(isa_irq)
+        {
+            let mut gsi = apic::ioapic::GlobalSystemInterrupt::new(
+                v.global_system_interrupt as u8,
+                self.as_u8(),
+            );
+            if let Some(p) = v.polarity {
+                gsi.polarity = p;
+            }
+            if let Some(m) = v.trigger_mode {
+                gsi.trigger_mode = m;
+            }
+            (gsi, Some(v))
+        } else {
+            (self.get_gsi(isa_irq), None)
+        }
+    }
+
+    /// Sets the interrupt handler in the interrupt handler registry
+    ///
+    /// The caller must ensure that hte registered handler correctly handles any interrupts raised
+    #[track_caller]
+    pub fn set(&self, handler: vector_tables::InterruptHandleContainer) {
+        assert!(handler.callable().is_some(), "Tried to set invalid handler");
+        vector_tables::IHR.set(self.as_u8(), handler).unwrap() // ?
+    }
 }
 
 gen_interrupt_stubs!(34);
