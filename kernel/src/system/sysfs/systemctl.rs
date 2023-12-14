@@ -145,8 +145,8 @@ pub struct InterruptOverride {
     pub trigger_mode: Option<TriggerMode>,
 }
 
-impl From<acpi::platform::interrupt::InterruptSourceOverride> for InterruptOverride {
-    fn from(value: acpi::platform::interrupt::InterruptSourceOverride) -> Self {
+impl From<&acpi::platform::interrupt::InterruptSourceOverride> for InterruptOverride {
+    fn from(value: &acpi::platform::interrupt::InterruptSourceOverride) -> Self {
         let trigger_mode = match value.trigger_mode {
             acpi::platform::interrupt::TriggerMode::SameAsBus => None,
             acpi::platform::interrupt::TriggerMode::Edge => Some(TriggerMode::EdgeTriggered),
