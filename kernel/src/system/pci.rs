@@ -110,7 +110,7 @@ impl core::fmt::Debug for DeviceControl {
 }
 
 pub struct LockedDevice<'a> {
-    inner: crate::kernel_structures::mutex::MutexGuard<'a, DeviceControl>,
+    inner: crate::util::mutex::MutexGuard<'a, DeviceControl>,
 }
 
 impl<'a> core::ops::Deref for LockedDevice<'a> {
@@ -880,7 +880,7 @@ pub fn enumerate_devices(pci_regions: &acpi::mcfg::PciConfigRegions<alloc::alloc
 
 // todo: Should this be in another module? if so probably system
 struct HwMap<K: Ord, V> {
-    lock: crate::kernel_structures::Mutex<()>,
+    lock: crate::util::Mutex<()>,
     map: core::cell::UnsafeCell<alloc::collections::BTreeMap<K, V>>,
 }
 
@@ -889,7 +889,7 @@ impl<K: Ord, V> HwMap<K, V> {
     // This prevents synchronisation errors. derefs are safe because the inner value is initialized
     fn new() -> Self {
         Self {
-            lock: crate::kernel_structures::Mutex::new(()),
+            lock: crate::util::Mutex::new(()),
             map: core::cell::UnsafeCell::new(alloc::collections::BTreeMap::new()),
         }
     }

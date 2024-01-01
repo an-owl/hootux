@@ -3,7 +3,7 @@ pub mod static_protected;
 mod unsafe_box;
 mod worm;
 
-pub use mutex::{Mutex, MutexGuard};
+pub use mutex::Mutex;
 pub use static_protected::{KernelStatic, UnlockedStatic};
 pub(crate) use unsafe_box::UnsafeBox;
 pub(crate) use worm::Worm;

@@ -189,6 +189,7 @@ impl<T: Into<Box<[u8]>>> futures_util::Sink<T> for SerialDispatcher {
     }
 }
 
+#[derive(Copy, Clone, Debug)]
 pub enum SinkErr {
     CannotClose,
     Closed,

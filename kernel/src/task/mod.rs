@@ -12,7 +12,7 @@ pub mod util;
 // This uses a ReentrantMutex because it needs to be able to spawn tasks while it's running.
 // In the future it can use an orphan list that is shared between other CPU's and pull tasks from it before it halts.
 lazy_static::lazy_static! {
-    static ref SYS_EXECUTOR: crate::kernel_structures::mutex::ReentrantMutex<executor::Executor> = crate::kernel_structures::mutex::ReentrantMutex::new(executor::Executor::new());
+    static ref SYS_EXECUTOR: crate::util::mutex::ReentrantMutex<executor::Executor> = crate::util::mutex::ReentrantMutex::new(executor::Executor::new());
 }
 
 /// InterruptQueue is the type to pass interrupt message to drivers. The exact type used is

@@ -28,7 +28,7 @@ pub(crate) struct GlobalIoApic {
     inner: spin::Mutex<
         alloc::vec::Vec<(
             crate::interrupts::apic::ioapic::IoApic,
-            crate::kernel_structures::UnsafeBox<[u8; 16], crate::mem::write_combining::WcMmioAlloc>,
+            crate::util::UnsafeBox<[u8; 16], crate::mem::write_combining::WcMmioAlloc>,
         )>,
     >,
     overrides: Once<alloc::boxed::Box<[InterruptOverride]>>,
@@ -81,7 +81,7 @@ impl GlobalIoApic {
                 for i in a.io_apics.iter() {
                     let addr = i.address;
                     let gsi_base = i.global_system_interrupt_base;
-                    let b = crate::kernel_structures::UnsafeBox::new(unsafe {
+                    let b = crate::util::UnsafeBox::new(unsafe {
                         crate::mem::write_combining::WcMmioAlloc::new(addr as u64)
                     });
 

@@ -1,4 +1,4 @@
-use crate::kernel_structures::KernelStatic;
+use crate::util::KernelStatic;
 use bootloader_api::info::{MemoryRegion, MemoryRegionKind};
 use x86_64::{
     structures::paging::{

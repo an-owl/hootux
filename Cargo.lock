@@ -18,7 +18,7 @@ version = "0.1.0"
 dependencies = [
  "ata",
  "atomic",
- "bitflags 2.2.1",
+ "bitflags 2.4.1",
  "futures",
  "hootux",
  "log",
@@ -100,7 +100,7 @@ checksum = "7a40729d2133846d9ed0ea60a8b9541bccddab49cd30f0715a1da672fe9a2524"
 name = "ata"
 version = "0.1.0"
 dependencies = [
- "bitflags 2.2.1",
+ "bitflags 2.4.1",
  "num_enum 0.6.1",
 ]
 
@@ -170,9 +170,9 @@ checksum = "bef38d45163c2f1dde094a7dfd33ccf595c92905c8f8f4fdc18d06fb1037718a"
 
 [[package]]
 name = "bitflags"
-version = "2.2.1"
+version = "2.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "24a6904aef64d73cf10ab17ebace7befb918b82164785cb89907993be7f83813"
+checksum = "327762f6e5a765692301e5bb513e0d9fef63be86bbc14528052b1cd3e6f03e07"
 
 [[package]]
 name = "bitmap-fontgen"
@@ -317,6 +317,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "51887d4adc7b564537b15adcfb307936f8075dfcd5f00dde9a9f1d29383682bc"
 dependencies = [
  "cfg-if",
+]
+
+[[package]]
+name = "daemonize"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ab8bfdaacb3c887a54d41bdf48d3af8873b3f5566469f8ba21b92057509f116e"
+dependencies = [
+ "libc",
 ]
 
 [[package]]
@@ -548,6 +557,7 @@ dependencies = [
  "acpi",
  "ahci",
  "bootloader_api",
+ "futures-util",
  "hootux",
  "log",
  "x86_64",
@@ -558,6 +568,7 @@ name = "hootux-loader"
 version = "0.1.0"
 dependencies = [
  "bootloader",
+ "daemonize",
  "getopts",
  "hootux",
  "hootux-bin",
@@ -614,9 +625,9 @@ dependencies = [
 
 [[package]]
 name = "libc"
-version = "0.2.140"
+version = "0.2.151"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "99227334921fae1a979cf0bfdfcc6b3e5ce376ef57e16fb6fb3ea2ed6095f80c"
+checksum = "302d7ab3130588088d277783b1e2d2e10c9e9e4a16dd9050e6ec93fb3e7048f4"
 
 [[package]]
 name = "linked_list_allocator"

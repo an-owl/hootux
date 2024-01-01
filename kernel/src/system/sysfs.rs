@@ -51,13 +51,13 @@ pub fn get_sysfs() -> &'static SysFsRoot {
 /// These are initialized before the runlevel is set to [crate::runlevel::Runlevel::Kernel],
 /// any fields which are `None` after this point were not provided by the firmware.
 pub struct Firmware {
-    acpi: crate::kernel_structures::Worm<AcpiRoot>,
+    acpi: crate::util::Worm<AcpiRoot>,
 }
 
 impl Firmware {
     const fn new() -> Self {
         Self {
-            acpi: crate::kernel_structures::Worm::new(),
+            acpi: crate::util::Worm::new(),
         }
     }
 

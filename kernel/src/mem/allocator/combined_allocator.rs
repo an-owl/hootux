@@ -34,7 +34,7 @@ impl<S: SuperiorAllocator, I: InferiorAllocator> DualHeap<S, I> {
 }
 
 unsafe impl<S: SuperiorAllocator, I: InferiorAllocator> core::alloc::GlobalAlloc
-    for crate::kernel_structures::mutex::ReentrantMutex<DualHeap<S, I>>
+    for crate::util::mutex::ReentrantMutex<DualHeap<S, I>>
 {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         use x86_64::structures::paging::{

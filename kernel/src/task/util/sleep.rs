@@ -1,5 +1,5 @@
-pub(super) static SLEEP_QUEUE: crate::kernel_structures::Mutex<SleepQueue> =
-    crate::kernel_structures::Mutex::new(SleepQueue {
+pub(super) static SLEEP_QUEUE: crate::util::Mutex<SleepQueue> =
+    crate::util::Mutex::new(SleepQueue {
         list: alloc::collections::VecDeque::new(),
         dirty: false,
     });
@@ -12,7 +12,7 @@ pub(crate) struct SleepQueue {
     dirty: bool,
 }
 
-impl crate::kernel_structures::Mutex<SleepQueue> {
+impl crate::util::Mutex<SleepQueue> {
     /// Registers a new timer into self.
     fn register(&self, timer: &Timer) {
         // Without interrupts to prevent the mutex being locked during a timer interrupt

@@ -2,7 +2,7 @@ use crate::alloc_interface::MmioAlloc;
 use crate::interrupts::apic::apic_structures::apic_types::TimerMode;
 use crate::interrupts::apic::pub_apic::SysApic;
 use crate::interrupts::apic::xapic::xApic;
-use crate::kernel_structures::KernelStatic;
+use crate::util::KernelStatic;
 use alloc::boxed::Box;
 use apic_structures::registers::ApicError;
 

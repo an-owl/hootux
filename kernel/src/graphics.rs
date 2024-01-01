@@ -7,8 +7,8 @@ pub mod basic_output;
 
 mod pixel;
 
-pub static KERNEL_FRAMEBUFFER: crate::kernel_structures::KernelStatic<FrameBuffer> =
-    crate::kernel_structures::KernelStatic::new();
+pub static KERNEL_FRAMEBUFFER: crate::util::KernelStatic<FrameBuffer> =
+    crate::util::KernelStatic::new();
 
 static KERNEL_PIX_FORMAT: atomic::Atomic<PixelFormat> = atomic::Atomic::new(PixelFormat::Bgr4Byte);
 

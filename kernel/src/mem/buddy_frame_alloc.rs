@@ -1,6 +1,6 @@
 use super::MemRegion;
 use super::PAGE_SIZE;
-use crate::kernel_structures::mutex::ReentrantMutex;
+use crate::util::mutex::ReentrantMutex;
 use bootloader_api::info::{MemoryRegion, MemoryRegions};
 use x86_64::PhysAddr;
 
@@ -12,8 +12,7 @@ const ORDER_MAX_SIZE: usize = PAGE_SIZE << (ORDERS - 1);
 const HIGH_ORDER_BLOCK_RATIO: u32 = 2;
 const HIGH_ORDER_BLOCK_SIZE: u32 = (ORDER_MAX_SIZE as u32) * HIGH_ORDER_BLOCK_RATIO;
 
-static MEM_MAP: crate::kernel_structures::KernelStatic<PreInitFrameAlloc> =
-    crate::kernel_structures::KernelStatic::new();
+static MEM_MAP: crate::util::KernelStatic<PreInitFrameAlloc> = crate::util::KernelStatic::new();
 
 pub(super) unsafe fn init_mem_map(regions: &'static mut MemoryRegions) {
     MEM_MAP.init(PreInitFrameAlloc::new(regions));

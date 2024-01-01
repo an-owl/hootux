@@ -24,7 +24,6 @@ mod device_check;
 pub mod gdt;
 pub mod graphics;
 pub mod interrupts;
-mod kernel_structures;
 mod logger;
 pub mod mem;
 pub mod runlevel;
@@ -32,9 +31,10 @@ pub mod serial;
 pub mod system;
 pub mod task;
 pub mod time;
+mod util;
 
 #[thread_local]
-static WHO_AM_I: kernel_structures::UnlockedStatic<u32> = kernel_structures::UnlockedStatic::new();
+static WHO_AM_I: util::UnlockedStatic<u32> = util::UnlockedStatic::new();
 
 /// Return the ApicId given by the APIC where available or via CPUID.
 fn who_am_i() -> u32 {
