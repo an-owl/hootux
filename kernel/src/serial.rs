@@ -263,58 +263,59 @@ impl Serial {
     /// be removed manually.
     fn int_handler(self: alloc::sync::Arc<Self>) -> Box<dyn Fn()> {
         let h = move || {
-            let id = self.int_id();
-            if id.pending() {
-                // pending bit is assert low
-                return;
-            }
-
-            match id.reason() {
-                IntReason::ModemStatus => panic!("Serial modem status change"), // This is not configured to raise an interrupt
-                IntReason::TransmitterEmpty => {
-                    while self.can_send() {
-                        // fill the fifo
-                        if let Some(b) = self.write_buff.lock().pop() {
-                            self.try_send(b).unwrap() // checks if sending is allowed beforehand
+            let mut id = self.int_id();
+            // pending bit is assert low
+            while !id.pending() {
+                match id.reason() {
+                    IntReason::ModemStatus => panic!("Serial modem status change"), // This is not configured to raise an interrupt
+                    IntReason::TransmitterEmpty => {
+                        while self.can_send() {
+                            // fill the fifo
+                            if let Some(b) = self.write_buff.lock().pop() {
+                                self.try_send(b).unwrap() // checks if sending is allowed beforehand
+                            } else {
+                                break;
+                            }
+                        }
+                    }
+                    IntReason::DataAvailable => {
+                        if let Some((ref mut i, ref mut b)) = *self.read_buff.lock() {
+                            // always drain fifo
+                            while let Some(n) = self.receive() {
+                                // only inserts if buffer is not full
+                                if *i < b.len() {
+                                    b[*i] = n;
+                                    *i += 1;
+                                }
+                            }
                         } else {
-                            break;
+                            // FIFO must be drained
+                            while let Some(_) = self.receive() {}
                         }
                     }
-                }
-                IntReason::DataAvailable => {
-                    if let Some((ref mut i, ref mut b)) = *self.read_buff.lock() {
-                        // always drain fifo
-                        while let Some(n) = self.receive() {
-                            // only inserts if buffer is not full
-                            if *i < b.len() {
-                                b[*i] = n;
-                                *i += 1;
+                    IntReason::LineStatus => panic!("Serial line status change"), // This is not configured to raise an interrupt
+                    IntReason::FifoTimeOut => {
+                        if let Some((ref mut i, ref mut b)) = *self.read_buff.lock() {
+                            // always drain fifo
+                            while let Some(n) = self.receive() {
+                                // only inserts if buffer is not full
+                                if *i < b.len() {
+                                    b[*i] = n;
+                                    *i += 1;
+                                }
                             }
+                        } else {
+                            // FIFO must be drained
+                            while let Some(_) = self.receive() {}
                         }
-                    } else {
-                        // FIFO must be drained
-                        while let Some(_) = self.receive() {}
                     }
                 }
-                IntReason::LineStatus => panic!("Serial line status change"), // This is not configured to raise an interrupt
-                IntReason::FifoTimeOut => {
-                    if let Some((ref mut i, ref mut b)) = *self.read_buff.lock() {
-                        // always drain fifo
-                        while let Some(n) = self.receive() {
-                            // only inserts if buffer is not full
-                            if *i < b.len() {
-                                b[*i] = n;
-                                *i += 1;
-                            }
-                        }
-                    } else {
-                        // FIFO must be drained
-                        while let Some(_) = self.receive() {}
-                    }
-                }
-            }
 
-            self.dispatcher.wake()
+                self.dispatcher.wake();
+                id = self.int_id();
+            }
+            // int is done and pending bit is set (not pending)
+            unsafe { crate::interrupts::apic::apic_eoi() }
         };
 
         Box::new(h)
