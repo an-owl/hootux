@@ -276,6 +276,8 @@ impl Serial {
                         // fill the fifo
                         if let Some(b) = self.write_buff.lock().pop() {
                             self.try_send(b).unwrap() // checks if sending is allowed beforehand
+                        } else {
+                            break;
                         }
                     }
                 }
