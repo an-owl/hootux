@@ -33,23 +33,23 @@ fn main() {
     let mut children = Vec::new();
 
     let mut run = || {
-        let mut qemu_child = qemu.spawn().unwrap().wait();
+        let mut qemu_child = qemu.spawn().unwrap();
         if let Some(mut c) = opts.run_debug(&toml) {
             children.push(c.spawn().unwrap());
         }
+        qemu_child
     };
 
     if opts.daemonize {
         let d = daemonize::Daemonize::new()
             .user(&*std::env::var("USER").expect("Who are you people!?: No user"))
             .working_directory(&*std::env::current_dir().unwrap());
-
         if d.execute().is_child() {
-            run()
+            run().wait();
         }
     } else {
-        run()
-    }
+        run().wait();
+    };
 }
 
 #[non_exhaustive]
