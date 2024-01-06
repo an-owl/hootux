@@ -255,3 +255,105 @@ impl<'a, T> Drop for ReentrantMutexGuard<'a, T> {
         self.master.desync()
     }
 }
+
+/// MentallyUnstableMutex is for storing data that shouldn't be shared across CPUs but requires [Send] regardless,
+/// and is intended to be used for debugging.
+/// In debug builds this struct will panic if [MentallyUnstableMutex::lock] is called while `self` is already locked.
+/// In release builds this does not act as a mutex and locks are skipped.
+struct MentallyUnstableMutex<T> {
+    #[cfg(debug_assertions)]
+    lock: atomic::AtomicBool,
+    inner: UnsafeCell<T>,
+}
+
+impl<T> MentallyUnstableMutex<T> {
+    const fn new(data: T) -> Self {
+        Self {
+            lock: atomic::AtomicBool::new(false),
+            inner: data,
+        }
+    }
+
+    #[cfg_attr(debug_assertions, track_caller)]
+    /// Locks self and returns a reference to the inner data
+    ///
+    /// # Panics
+    ///
+    /// Debug builds will panic if `self` is already locked
+    ///
+    /// # Safety
+    ///
+    /// In release mode this is not safe.
+    fn lock(&self) -> impl DerefMut<Target = T> {
+        #[cfg(debug_assertions)]
+        {
+            if let Some(_) =
+                self.lock
+                    .compare_exchange_weak(false, true, Ordering::Acquire, Ordering::Relaxed)
+            {
+                MutexGuard {
+                    lock: &self.lock,
+                    data: unsafe { &mut *self.inner.get() },
+                }
+            } else {
+                panic!(
+                    "⣿⣿⣿⣿⣿⣿⣿⣿⣿⣧⣼⣧⣴⣷⣞⠛⢷⡿⠓⠶⣿⣿⣦⣄⢀⣤⣤⣭⠉⠁⡀⣼⢿⣟⣓⢠⡀⠀⢸⣇⠀⠀⠀⢀⡀⢸⠞⠋⠀⠀⠀⠀⠀⠀⠁⠈⠀⣙⣻⣿⣿⣿⣿⣿⣿
+⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡏⢠⣶⡟⠀⣠⡀⠀⠀⠋⠻⢷⣄⠁⣈⣠⣶⠶⠛⠛⠉⠉⠉⠉⠛⠳⢦⣄⡈⠙⠂⠲⠀⠀⠀⠀⠀⠀⢰⡖⢀⣴⣿⣿⣿⣿⣿⣿⣿⣿
+⡏⠉⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣍⣹⣿⣿⣿⣆⣼⣇⠀⠀⢀⣼⠿⠋⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠈⠛⢷⣄⠀⠀⣄⠀⣀⢀⣠⣴⡟⠉⠉⢀⠈⢹⣿⣿⣿⣿⣿
+⣛⢢⣴⣾⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⠁⠀⣀⣴⠟⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠻⣆⢠⣤⣤⣽⣟⠛⠿⠿⢿⠆⠀⢤⡈⢻⣿⣿⣿⣿
+⣿⣿⡟⠻⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡿⣷⠟⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢉⣿⠟⣍⠉⠻⣿⣿⣶⣾⣿⣷⣿⣿⣦⣽⣻⣿⣿
+⣿⣯⡀⢤⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣷⠏⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢸⡟⢸⡟⣆⠀⠘⣿⣿⣿⣿⣿⡿⢿⣿⣿⣿⣿⣿
+⣿⣿⣷⣾⣼⣿⣿⣿⣿⣿⣿⣿⣿⣿⠋⢻⣿⣿⣿⠀⢙⣿⠃⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢸⡇⠸⣇⣿⠀⠀⣹⣿⣿⣿⣿⣶⣶⣾⣿⣼⣿⣿
+⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⠀⠀⠉⠛⣿⡿⠏⠀⠀⠀⠀⠀⠀⠀⠀⢀⡀⠀⠀⠀⠀⠀⠀⢀⡂⠀⠀⠀⠀⠀⠀⠰⠟⠁⢶⣬⣍⣤⣶⠿⣿⣿⡿⣿⣿⣿⢿⣿⢿⣿⣿
+⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⢿⡀⠀⣠⣞⡉⠀⠀⠀⠀⠀⠀⣀⣤⣾⣿⣿⣿⣿⣦⡀⠀⠀⠀⠀⠹⣦⡀⠀⠀⠀⠀⠀⠀⣴⡿⠋⠉⠈⠁⣀⣾⣿⡃⢉⡙⠻⡿⣿⠸⣿⣿
+⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣷⣴⣿⠟⠻⣦⠀⠀⠀⠀⢰⡿⠟⠁⠀⠀⠈⠙⠛⠻⣦⡀⠀⠀⠀⠈⣿⣷⡀⠀⠀⠀⣾⠛⠷⠀⠀⠀⠀⠉⠉⠉⠀⠈⠀⠀⢐⠀⠀⣿⣿
+⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⠟⣻⣿⣿⠀⠀⠈⢷⡀⠀⠀⢸⡗⠀⠀⠀⠀⠀⠀⠀⠀⠈⠙⠂⠀⠀⠀⣼⣿⠃⠀⠀⠀⠁⠀⠀⠀⠀⠀⠀⠘⠓⠀⠀⢀⣤⡒⣴⡖⠀⣿⣿
+⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⢿⣿⣴⣿⣿⣿⡄⠀⠀⠀⣷⡀⠀⠸⣧⠀⠸⡆⠀⠀⠀⠀⠀⠀⠀⣀⣠⡾⠛⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠾⣿⣷⡿⢠⣿⣿⣿
+⣿⣿⣿⣿⣯⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣤⣀⣀⣈⣳⠀⠀⢻⡄⣠⣷⣶⡟⢛⠛⢳⣶⣾⢻⠏⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠠⣤⣶⣿⣿⣿⣿
+⣿⣿⣿⣿⣼⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡿⡇⠀⣌⣿⠃⠀⠀⠀⠻⣿⣝⡃⠼⣾⠾⠃⣠⠟⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠈⠻⢿⣿⣿⣿
+⣇⣻⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⠃⠷⢼⣿⠏⠀⠀⠀⠀⠀⠀⠉⠉⠩⠥⠖⠛⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠙⢿⣿
+⣿⣿⣿⣿⣿⡻⢿⣽⣿⣿⣿⣿⣿⣿⣿⣿⣿⡏⠀⠀⠉⠀⠀⠀⠀⠀⠀⠀⠀⣀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠙
+⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣷⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠈⢻⣶⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣀⣴
+⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⠿⣿⡆⠀⠀⠀⠀⠀⠀⣠⣤⣤⣴⣟⢿⣷⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢠⣾⣿⣿
+⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣁⢠⣿⡄⠀⠀⢤⣠⠊⠿⣿⣿⣿⣿⠿⠛⠃⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢸⣿⣿⣿
+⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⠃⣿⠷⢟⣾⡛⣿⣆⠀⠀⠙⠳⠶⠿⠛⠋⠁⠀⠀⠀⠀⠒⢦⣄⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢠⣿⣿⣿⣿
+⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡿⠁⠀⣿⢀⣿⣿⣷⠹⣿⣧⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠈⠙⢦⣀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢠⣿⣿⣿⡿⢿
+⣿⣶⣿⣿⣿⣿⣿⣿⣿⣿⣿⠃⠀⢠⣿⢸⣿⢹⣿⡇⢻⣟⣆⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠙⢧⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⣿⡿⢿⡿⣿⣿
+⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡇⠀⠀⢸⠟⣷⣿⣪⣻⣇⢺⣿⢻⣆⠠⢄⡀⠠⠤⠤⠶⠶⠛⠛⠛⠛⠛⠛⠂⠀⠀⢿⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢼⣿⠣⢺⣿⣿⣿
+⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⠀⠀⠀⢸⣿⣿⣟⣿⠘⠻⠸⣿⣽⣿⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢠⣴⡿⠀⢠⣾⣿⡇⣸
+⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⠀⠀⠀⢸⣧⣿⢿⣷⡉⠀⠸⣿⣿⡈⣷⡀⠀⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣰⣿⢋⣤⣶⣾⣿⠉⣿⣿
+⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⠀⠀⠀⠈⣿⡿⣾⣿⣧⠀⢰⣿⣿⣿⢹⣿⡄⠀⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⣰⡿⢇⣴⣿⣿⣟⢿⣿⠿⣿
+⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡀⠀⠀⠀⠹⣇⣿⠙⣿⣥⣿⣹⣿⣿⣟⣙⣿⡄⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⡤⠀⠀⠀⠀⠀⣀⣤⡶⢋⡵⣣⣾⣿⣿⢿⣿⣿⡏⠀⣿
+⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡇⠀⠀⠀⠀⢿⡎⠻⢿⣟⢹⣿⣷⣿⣿⠟⢿⣧⠘⢦⣀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣀⡤⠚⠋⠀⠀⠀⠀⣠⡼⣿⣛⠒⢋⣴⣿⣿⣿⣿⣿⣿⣿⡄⣛⣿
+⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡀⠀⠀⠀⠘⣷⣾⣿⣿⣿⣿⣿⣿⠻⣿⣏⠙⣧⠀⠈⠳⣖⣶⣤⣤⣤⣶⣶⣟⣫⣒⡈⢠⣤⣤⣾⣟⣻⠗⠋⣀⣶⣿⣿⣿⣿⣿⣯⣿⣿⣿⣿⣿⣿
+⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣇⠀⠀⠀⠀⣿⣝⣿⣿⣿⣿⣿⣋⣷⣿⣿⣧⡌⢷⣄⠀⠈⠙⢥⣤⣍⣻⡟⡛⢻⠛⢛⢻⣿⣑⠇⠉⣉⣴⣾⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣾
+⣿⣿⣿⡿⢿⡿⣿⣿⣿⣿⣿⣿⠀⠀⠀⠀⢿⣿⣏⣿⣿⣿⣿⣿⢿⣿⣿⣿⢿⣦⡨⣷⣆⡀⠀⠀⠂⠀⠈⠓⠾⠉⠟⠛⠀⣀⣴⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⢿⣿
+⣀⠀⠀⠀⠛⠛⠛⠛⠛⠛⣻⣟⣧⠀⠀⠀⢸⣟⣿⣾⢿⣧⣿⣿⣆⣿⡿⣿⣼⣿⣿⣿⣎⣻⣦⣀⠀⠀⠀⠀⠀⠀⠀⢀⣼⣿⣿⣾⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿
+⠀⠀⠀⠀⠀⠀⠤⡤⠤⠤⠤⣤⣼⠀⠀⠀⠈⣿⣟⣿⣿⣿⡻⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣦⣄⣤⣤⣤⣶⣿⣿⣿⣿⣿⣿⡟⢻⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿"
+                )
+            }
+        }
+        #[cfg(not(debug_assertions))]
+        {
+            MentallyUnstableMutexGuard(unsafe { &mut *self.inner.get() })
+        }
+    }
+}
+
+// SAFETY: Boi this shit ain't safe at all.
+unsafe impl<T> Send for MentallyUnstableMutex<T> {}
+
+struct MentallyUnstableMutexGuard<'a, T>(&'a mut T);
+
+impl<'a, T> Deref for MentallyUnstableMutexGuard<'a, T> {
+    type Target = T;
+    fn deref(&self) -> &Self::Target {
+        self.0
+    }
+}
+
+impl<'a, T> DerefMut for MentallyUnstableMutexGuard<'a, T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.0
+    }
+}
