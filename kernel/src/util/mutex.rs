@@ -260,17 +260,18 @@ impl<'a, T> Drop for ReentrantMutexGuard<'a, T> {
 /// and is intended to be used for debugging.
 /// In debug builds this struct will panic if [MentallyUnstableMutex::lock] is called while `self` is already locked.
 /// In release builds this does not act as a mutex and locks are skipped.
-struct MentallyUnstableMutex<T> {
+pub struct MentallyUnstableMutex<T> {
     #[cfg(debug_assertions)]
     lock: atomic::AtomicBool,
     inner: UnsafeCell<T>,
 }
 
 impl<T> MentallyUnstableMutex<T> {
-    const fn new(data: T) -> Self {
+    pub const fn new(data: T) -> Self {
         Self {
+            #[cfg(debug_assertions)]
             lock: atomic::AtomicBool::new(false),
-            inner: data,
+            inner: UnsafeCell::new(data),
         }
     }
 
@@ -284,7 +285,7 @@ impl<T> MentallyUnstableMutex<T> {
     /// # Safety
     ///
     /// In release mode this is not safe.
-    fn lock(&self) -> impl DerefMut<Target = T> {
+    pub fn lock(&self) -> impl MutexGuardTrait<T> {
         #[cfg(debug_assertions)]
         {
             if let Some(_) =
@@ -333,27 +334,19 @@ impl<T> MentallyUnstableMutex<T> {
                 )
             }
         }
+
         #[cfg(not(debug_assertions))]
-        {
-            MentallyUnstableMutexGuard(unsafe { &mut *self.inner.get() })
+        unsafe {
+            &mut *self.inner.get()
         }
     }
 }
 
 // SAFETY: Boi this shit ain't safe at all.
 unsafe impl<T> Send for MentallyUnstableMutex<T> {}
+unsafe impl<T> Sync for MentallyUnstableMutex<T> {}
 
-struct MentallyUnstableMutexGuard<'a, T>(&'a mut T);
+impl<'a, T> MutexGuardTrait<'a, T> for MentallyUnstableMutexGuard<'a, T> {}
+impl<'a, T> MutexGuardTrait<'a, T> for &'a mut T {}
 
-impl<'a, T> Deref for MentallyUnstableMutexGuard<'a, T> {
-    type Target = T;
-    fn deref(&self) -> &Self::Target {
-        self.0
-    }
-}
-
-impl<'a, T> DerefMut for MentallyUnstableMutexGuard<'a, T> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        self.0
-    }
-}
+trait MutexGuardTrait<'a, T>: DerefMut<Target = T> {}
