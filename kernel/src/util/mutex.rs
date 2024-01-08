@@ -346,7 +346,7 @@ impl<T> MentallyUnstableMutex<T> {
 unsafe impl<T> Send for MentallyUnstableMutex<T> {}
 unsafe impl<T> Sync for MentallyUnstableMutex<T> {}
 
-impl<'a, T> MutexGuardTrait<'a, T> for MentallyUnstableMutexGuard<'a, T> {}
+impl<'a, T> MutexGuardTrait<'a, T> for MutexGuard<'a, T> {}
 impl<'a, T> MutexGuardTrait<'a, T> for &'a mut T {}
 
 trait MutexGuardTrait<'a, T>: DerefMut<Target = T> {}
