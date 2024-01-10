@@ -6,6 +6,7 @@ use core::{future::Future, pin::Pin};
 pub mod executor;
 pub mod int_message_queue;
 pub mod keyboard;
+pub mod mp_executor;
 pub mod simple_executor;
 pub mod util;
 
