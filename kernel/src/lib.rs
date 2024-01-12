@@ -26,6 +26,7 @@ pub mod graphics;
 pub mod interrupts;
 mod logger;
 pub mod mem;
+pub mod mp;
 pub mod runlevel;
 pub mod serial;
 pub mod system;
