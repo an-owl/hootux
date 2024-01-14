@@ -65,7 +65,7 @@ impl SerialDispatcher {
         })
     }
 
-    pub(super) async fn run(self) {
+    pub(super) async fn run(self) -> crate::task::TaskResult {
         loop {
             if let Some(r) = self.inner.real.upgrade() {
                 (&*r).await;
@@ -99,7 +99,9 @@ impl SerialDispatcher {
                 });
             } else {
                 // this allows self.parent to be dropped if this is the only reference to it.
-                return;
+                // Self.inner was dropped. This shouldn't happen normally. Maybe self was hot pluggable?
+                // todo log actual info about why this was stopped
+                return crate::task::TaskResult::StoppedExternally;
             }
         }
     }

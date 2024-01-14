@@ -10,11 +10,8 @@ pub mod mp_executor;
 pub mod simple_executor;
 pub mod util;
 
-// This uses a ReentrantMutex because it needs to be able to spawn tasks while it's running.
-// In the future it can use an orphan list that is shared between other CPU's and pull tasks from it before it halts.
-lazy_static::lazy_static! {
-    static ref SYS_EXECUTOR: crate::util::mutex::ReentrantMutex<executor::Executor> = crate::util::mutex::ReentrantMutex::new(executor::Executor::new());
-}
+static SYS_EXECUTOR: spin::RwLock<alloc::collections::BTreeMap<crate::mp::CpuIndex,mp_executor::LocalExec>> =
+    spin::RwLock::new(alloc::collections::BTreeMap::new());
 
 /// InterruptQueue is the type to pass interrupt message to drivers. The exact type used is
 /// unimportant however it is wrapped in an [alloc::sync::Arc], so it may be shared between multiple places.
@@ -54,13 +51,38 @@ impl TaskId {
     }
 }
 
-pub fn run_task(fut: Pin<Box<dyn Future<Output = ()> + Send>>) {
-    let t = Task::new(fut);
 
-    let mut e = SYS_EXECUTOR.try_lock().unwrap(); // You started an AP without reworking the executor for MP if this panics
+#[derive(Debug, Clone, Copy)]
+/// Return type returned by all top-level tasks.
+/// The variant indicates what state the task exited in and may cause the kernel to take action.
+#[repr(C)]
+pub enum TaskResult {
+    /// Task completed and exited normally or was shut down by the kernel
+    ExitedNormally,
+    /// Task stopped because it was signalled externally to do so.
+    /// This may indicate that task encountered an error, and should log log info about why the task was stopped.
+    StoppedExternally,
+    /// Task encountered an error and was unable to continue.
+    Error,
+    /// The task panicked and was able to catch the panic and guarantee that the system stability not impacted.
+    Panicked,
+    // Why is there no uncaught panic here? Because I cant return that.
+}
+
+impl From<()> for TaskResult {
+    fn from(_: ()) -> Self {
+        TaskResult::ExitedNormally
+    }
+}
+
+pub fn run_task(fut: Pin<Box<dyn Future<Output = TaskResult> + Send>>) {
+    let t = mp_executor::Task::new(fut);
+
+    let b = SYS_EXECUTOR.read();
+    let mut e = b.get(&crate::who_am_i()).unwrap(); // You started an AP without reworking the executor for MP if this panics
     e.spawn(t);
 }
 
 pub fn run_exec() -> ! {
-    SYS_EXECUTOR.try_lock().unwrap().run()
+    SYS_EXECUTOR.read().get(&crate::who_am_i()).unwrap().run()
 }

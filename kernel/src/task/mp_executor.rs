@@ -12,7 +12,7 @@ const RUN_QUEUE_SIZE: usize = 128;
 static GLOBAL_TASK_CACHE: TaskCache = TaskCache::new();
 static GLOBAL_EXECUTORS: spin::RwLock<Vec<spin::RwLock<LocalExec>>> = spin::RwLock::new(Vec::new());
 
-type TaskableFuture = Pin<Box<dyn Future<Output = TaskResult> + Send + 'static>>;
+type TaskableFuture = Pin<Box<dyn Future<Output = super::TaskResult> + Send + 'static>>;
 
 #[derive()]
 struct TaskWaker {
@@ -23,8 +23,7 @@ struct TaskWaker {
 impl alloc::task::Wake for TaskWaker {
     fn wake(self: Arc<Self>) {
         if let Some(task) = self.task.upgrade() {
-            GLOBAL_EXECUTORS.read()[task.owner.load(atomic::Ordering::Relaxed).num() as usize]
-                .read()
+            super::SYS_EXECUTOR.read().get(&task.owner.load(atomic::Ordering::Relaxed).num()).unwrap()
                 .run_queue
                 .push(self.id)
                 .expect("Run queue is full");
@@ -32,27 +31,8 @@ impl alloc::task::Wake for TaskWaker {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
-/// Return type returned by all top-level tasks.
-/// The variant indicates what state the task exited in and may cause the kernel to take action.
-#[repr(C)]
-enum TaskResult {
-    /// Task completed and exited normally or was shut down by the kernel
-    ExitedNormally,
-    /// Task encountered an error and was unable to continue.
-    Error,
-    /// The task panicked and was able to catch the panic and guarantee that the system stability not impacted.
-    Panicked,
-    // Why is there no uncaught panic here? Because I cant return that.
-}
 
-impl From<()> for TaskResult {
-    fn from(_: ()) -> Self {
-        TaskResult::ExitedNormally
-    }
-}
-
-struct Task {
+pub struct Task {
     id: super::TaskId,
     inner: crate::util::mutex::MentallyUnstableMutex<TaskableFuture>, // should not be accessed multiple times
     owner: atomic::Atomic<TaskOwner>,
@@ -75,7 +55,7 @@ impl TaskOwner {
 }
 
 impl Task {
-    fn new(fut: impl Future<Output = TaskResult> + Send + 'static) -> Self {
+    pub fn new(fut: impl Future<Output = super::TaskResult> + Send + 'static) -> Self {
         Self {
             id: super::TaskId::new(),
             inner: crate::util::mutex::MentallyUnstableMutex::new(Box::pin(fut)),
@@ -99,13 +79,13 @@ impl Task {
     }
 
     /// Convenience function for polling the future within `self`.
-    fn poll(&self, cx: &mut core::task::Context) -> Poll<TaskResult> {
+    fn poll(&self, cx: &mut core::task::Context) -> Poll<super::TaskResult> {
         let ref mut t = *self.inner.lock();
         t.as_mut().poll(cx)
     }
 }
 
-struct TaskCache {
+pub(super)struct TaskCache {
     cache: spin::RwLock<alloc::collections::BTreeMap<super::TaskId, Arc<Task>>>,
 }
 
@@ -134,38 +114,39 @@ impl TaskCache {
     }
 }
 
-struct LocalExec {
-    /// How long this executor has spent running.
-    /// This will be compared with all other local executors to determine if work needs to be moved to other CPUs.  
-    load_time: core::sync::atomic::AtomicU64,
-    start_time: core::sync::atomic::AtomicU64,
-    stop_time: core::sync::atomic::AtomicU64,
-    active: spin::Mutex<Option<super::TaskId>>,
-
+pub(super) struct LocalExec {
     i: u32,
-    local_cache: alloc::collections::BTreeMap<super::TaskId, Arc<Task>>,
+    invalidate: core::sync::atomic::AtomicBool,
     run_queue: crossbeam_queue::ArrayQueue<super::TaskId>, // todo swap with a linked list, each node should point to a waker and never directly allocate/free memory
+    cache: crate::util::mutex::ReentrantMutex<LocalExecCache>
+}
+
+struct LocalExecCache {
     waker_cache: alloc::collections::BTreeMap<super::TaskId, Waker>,
+    local_cache: alloc::collections::BTreeMap<super::TaskId, Arc<Task>>,
 }
 
 impl LocalExec {
     fn new() -> Self {
         Self {
-            load_time: core::sync::atomic::AtomicU64::new(0),
-            start_time: core::sync::atomic::AtomicU64::new(0),
-            stop_time: core::sync::atomic::AtomicU64::new(0),
-
             i: crate::who_am_i(),
-            active: spin::Mutex::new(None),
-            local_cache: alloc::collections::BTreeMap::new(),
+            invalidate: false.into(),
             run_queue: crossbeam_queue::ArrayQueue::new(RUN_QUEUE_SIZE),
-            waker_cache: alloc::collections::BTreeMap::new(),
+            cache: crate::util::mutex::ReentrantMutex::new(LocalExecCache {
+                waker_cache: alloc::collections::BTreeMap::new(),
+                local_cache: alloc::collections::BTreeMap::new(),
+            })
         }
     }
 
-    fn run_ready(&mut self) {
-        let start = crate::time::get_sys_time();
-        self.start_time.store(start, atomic::Ordering::SeqCst);
+    fn run_ready(&self) {
+
+        // when another CPU steals a task the cache should be invalidated
+        if let Ok(_) = self.invalidate.compare_exchange_weak(true,false,atomic::Ordering::Relaxed,atomic::Ordering::Relaxed) {
+            let mut l = self.cache.lock();
+            l.local_cache.clear();
+            l.waker_cache.clear();
+        }
 
         while let Some(id) = self.run_queue.pop() {
             let task = self.fetch_task(id).expect(&alloc::format!(
@@ -181,36 +162,32 @@ impl LocalExec {
             }
 
             let waker = self
+                .cache
+                .try_lock().unwrap() // shouldn't panic
                 .waker_cache
                 .entry(id)
                 .or_insert_with(|| task.waker())
                 .clone();
-            *self.active.lock() = Some(id);
 
             match task.poll(&mut core::task::Context::from_waker(&waker)) {
                 // todo impl Display for task and display more info here
-                Poll::Ready(TaskResult::Error) => log::error!("{id:?} Exited with error"), // task should log error info
-                Poll::Ready(TaskResult::Panicked) => {
+                Poll::Ready(super::TaskResult::Error) => log::error!("{id:?} Exited with error"), // task should log error info
+                Poll::Ready(super::TaskResult::Panicked) => {
                     log::error!("{id:?} Panicked and was caught successfully") // todo implement Display for Task
                 }
                 _ => {} // ops normal
             }
 
-            *self.active.lock() = None;
             GLOBAL_TASK_CACHE.drop(id);
         }
-
-        let stop = crate::time::get_sys_time();
-        self.stop_time.store(stop, atomic::Ordering::Release);
-        self.load_time
-            .fetch_add(stop - start, atomic::Ordering::Release);
     }
 
-    fn fetch_task(&mut self, id: super::TaskId) -> Option<Arc<Task>> {
-        if let Some(w) = self.local_cache.get(&id) {
+    fn fetch_task(&self, id: super::TaskId) -> Option<Arc<Task>> {
+        let mut l = self.cache.lock();
+        if let Some(w) = l.local_cache.get(&id) {
             return Some(w.clone());
         } else if let Some(w) = GLOBAL_TASK_CACHE.fetch(id) {
-            self.local_cache.insert(id, w.clone());
+            l.local_cache.insert(id, w.clone());
             return Some(w);
         }
         None
@@ -218,26 +195,29 @@ impl LocalExec {
 
     /// Steals a Task from another CPU dropping it from that Executors caches and returning a [super::TaskID]
     fn steal() -> Option<super::TaskId> {
-        // fixme 0..num_cpus()
         // iterates over all CPUs except for self
-        for _ in 0..todo!() {
-            static ARBITRATION: core::sync::atomic::AtomicU32 = const { 0.into() };
-            let target_id = ARBITRATION.fetch_add(1, atomic::Ordering::Relaxed) as usize; // mod num_cpus
+        for _ in 0u32..crate::mp::num_cpus().into() {
+            static ARBITRATION: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
+            let target_id = ARBITRATION.fetch_add(1, atomic::Ordering::Relaxed) % crate::mp::num_cpus(); // mod num_cpus
+            // dont steal from self
             if target_id == crate::who_am_i() {
                 continue;
             }
-            let target = GLOBAL_EXECUTORS.read()[target_id].upgradeable_read();
-            if let Some(id) = target.run_queue.pop() {
-                let target = target.upgrade();
-                GLOBAL_TASK_CACHE
-                    .fetch(id)
-                    .unwrap()
-                    .owner
-                    .store(TaskOwner::Cpu(crate::who_am_i()), atomic::Ordering::Relaxed);
-                target.local_cache.remove(&id);
-                target.waker_cache.remove(&id);
-                return Some(id);
+
+            let b = super::SYS_EXECUTOR.read();
+            if let Some(target) = b.get(&target_id) {
+                if let Some(id) = target.run_queue.pop() {
+
+                    target.invalidate.store(true,atomic::Ordering::Relaxed);
+                    GLOBAL_TASK_CACHE
+                        .fetch(id)
+                        .unwrap()
+                        .owner
+                        .store(TaskOwner::Cpu(crate::who_am_i()), atomic::Ordering::Relaxed);
+                    return Some(id);
+                }
             }
+
         }
         None
     }
@@ -251,5 +231,20 @@ impl LocalExec {
         } else {
             interrupts::enable();
         }
+    }
+
+    pub(super) fn run(&self) -> ! {
+        loop {
+            self.run_ready();
+            self.idle()
+        }
+    }
+
+    pub fn spawn(&self, task: Task) {
+        let task = Arc::new(task);
+        let id = task.id;
+        GLOBAL_TASK_CACHE.cache.write().insert(id,task.clone());
+        self.cache.lock().local_cache.insert(id,task);
+        self.run_queue.push(id).expect("Run queue is full");
     }
 }

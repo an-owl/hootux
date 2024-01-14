@@ -62,7 +62,7 @@ impl Stream for ScanCodeStream {
     }
 }
 
-pub async fn print_key() {
+pub async fn print_key() -> crate::task::TaskResult {
     let mut scancodes = ScanCodeStream::new();
     let mut kb = Keyboard::new(layouts::Us104Key, ScancodeSet1, HandleControl::Ignore);
 
@@ -76,4 +76,6 @@ pub async fn print_key() {
             }
         }
     }
+
+    panic!("You're not supposed to get here")
 }
