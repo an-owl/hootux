@@ -8,13 +8,13 @@ use x86_msr::Msr;
 
 const TLS_ALIGN: usize = 8;
 
-/// Creates a region of `mem_size` which contains contains thread local data. This function will
+/// Creates a region of `mem_size` which contains contains thread local data. This function will allocate
 /// `mem_size` bytes onto the heap. The returned pointer points to the uninitialized Thread Control
 /// Block.
 ///
-/// #Saftey
+/// # Saftey
 ///
-/// This function is unsafe because the programmer must ensure that all args correctly describe the
+/// This function is unsafe because the caller must ensure that all args correctly describe the
 /// thread local template.
 unsafe fn create_tls(t_data: *const u8, file_size: usize, mem_size: usize) -> *const u8 {
     let layout = core::alloc::Layout::from_size_align(mem_size, TLS_ALIGN).unwrap();
@@ -37,9 +37,9 @@ unsafe fn create_tls(t_data: *const u8, file_size: usize, mem_size: usize) -> *c
 ///
 /// This function will leak `mem_size` bytes onto the heap
 ///
-/// #Saftey
+/// # Saftey
 ///
-/// This function is unsafe because the programmer must ensure that the given args properly describe
+/// This function is unsafe because the caller must ensure that the given args properly describe
 /// the thread local template.
 pub unsafe fn init_tls(t_data: *const u8, file_size: usize, mem_size: usize) {
     let thread_pointer = Box::new(create_tls(t_data, file_size, mem_size));
