@@ -1,6 +1,6 @@
-use super::LOCAL_APIC;
+use super::{InterruptType, IpiError, IpiTarget, LOCAL_APIC};
 use crate::interrupts::apic::apic_structures::registers::ApicError;
-use crate::time::{Timer, TimerError, TimerMode, TimerResult};
+use crate::time::{Duration, Timer, TimerError, TimerMode, TimerResult};
 
 /// This struct is for used to provide a public interface for the local apic~
 pub struct SysApic {
@@ -72,5 +72,13 @@ impl super::Apic for SysApic {
     /// Allowed but not recommended, use [crate::who_am_i] instead.
     fn get_id(&self) -> u32 {
         LOCAL_APIC.get().get_id()
+    }
+
+    unsafe fn send_ipi(&mut self, target: IpiTarget, int_type: InterruptType, vector: u8) -> Result<(), IpiError> {
+        LOCAL_APIC.get().send_ipi(target,int_type,vector)
+    }
+
+    fn block_ipi_delivered(&self, timeout: Duration) -> bool {
+        LOCAL_APIC.get().block_ipi_delivered(timeout)
     }
 }

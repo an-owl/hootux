@@ -1,10 +1,10 @@
 use super::apic_structures::{apic_types::*, registers::*};
-use super::Apic;
+use super::{Apic, InterruptType, IpiTarget};
 use crate::device_check::{DeviceCheck, MaybeExists};
 use crate::interrupts::apic::apic_structures::registers::{
     ApicErrorInt, InternalInt, LocalInt, TimerIntVector,
 };
-use crate::time::{Timer, TimerError, TimerResult};
+use crate::time::{Duration, Timer, TimerError, TimerResult};
 use core::fmt::{Debug, Formatter};
 use core::mem::MaybeUninit;
 use core::ops::{Deref, DerefMut};
@@ -48,7 +48,7 @@ pub struct xApic {
 
     cmc_vector: AlignedRegister<InternalInt>,
 
-    interrupt_command_register: [AlignedRegister<WrappedDword>; 2],
+    interrupt_command_register: (InterruptCommandRegisterLow,InterruptCommandRegisterHigh),
 
     timer_vector: AlignedRegister<TimerIntVector>,
     thermal_sensor_vector: MaybeExists<AlignedRegister<InternalInt>, ThermalVectorCheck>, // not available on all processors
@@ -120,7 +120,7 @@ impl Apic for xApic {
         // compiler wont like this. Optimizations might cause bugs
         // this needs to be done twice because the first clock is always very slow
         loop {
-            if let Some(_) = unsafe { &super::CALI } {
+            if let Some(_) = unsafe { super::CALI } {
                 initial_time = crate::time::get_sys_time();
                 unsafe {
                     super::CALI = None;
@@ -160,6 +160,43 @@ impl Apic for xApic {
         id >>= 24;
         id &= !255; // clear reserved bits
         id
+    }
+
+    unsafe fn send_ipi(&mut self, target: IpiTarget, int_type: InterruptType, vector: u8) -> Result<(), super::IpiError> {
+        let (dst, short) = match target {
+            IpiTarget::Other(v) => (v,super::DestinationShorthand::NoShorthand),
+            IpiTarget::ThisCpu => (0,super::DestinationShorthand::ThisCpu),
+            IpiTarget::All => (0,super::DestinationShorthand::All),
+            IpiTarget::AllNotThisCpu => (0,super::DestinationShorthand::AllNotSelf),
+        };
+
+        if ((int_type != InterruptType::Fixed) && (int_type != InterruptType::SIPI)) && vector != 0 {
+            return Err(super::IpiError::BadMode)
+        }
+
+        let mut icrl = InterruptCommandRegisterLow::new();
+        icrl.set_vector(vector);
+        icrl.set_delivery_mode(int_type);
+        icrl.set_polarity(true);
+        icrl.set_dest_shorthand(short);
+
+        let mut icrh = InterruptCommandRegisterHigh::new();
+        icrh.set_destination(dst.try_into().map_err(|_| super::IpiError::BadTarget)?);
+
+        self.interrupt_command_register.1 = icrh;
+        self.interrupt_command_register.0 = icrl;
+        Ok(())
+    }
+
+    fn block_ipi_delivered(&self, timeout: Duration) -> bool {
+        let wakeup_time: crate::time::AbsoluteTime = timeout.into();
+        while !wakeup_time.is_future() {
+            if !self.interrupt_command_register.0.delivery_status() {
+                return true
+            }
+            core::hint::spin_loop(); // emits `pause` instruction
+        }
+        false
     }
 }
 
@@ -262,10 +299,7 @@ impl Debug for xApic {
         builder.field("interrupt_request", &self.interrupt_request);
         builder.field("error_status", &self.error_status.data.clone());
         builder.field("cmc_vector", &self.cmc_vector.data.get_reg());
-        builder.field(
-            "interrupt_command_register",
-            &self.interrupt_command_register,
-        );
+
         builder.field("timer_vector", &self.timer_vector);
         builder.field("thermal_sensor_vector", &self.thermal_sensor_vector);
         builder.field("perf_mon_counter_vector", &self.perf_mon_counter_vector);
@@ -351,4 +385,47 @@ impl DeviceCheck for NonExistentIGuess {
 /// _space is MaybeUninit to discourage compiler meddling
 struct ApicReservedRegister {
     _space: MaybeUninit<u128>,
+}
+
+
+// these are defined here because x2apic uses a slightly different definition than the xapic
+#[modular_bitfield::bitfield(bits = 32)]
+#[derive(Debug)]
+#[repr(align(16))]
+#[doc(hidden)]
+/// Don't use this outside of this module. This struct if pub because otherwise it emits a warning
+pub struct InterruptCommandRegisterHigh {
+    #[skip]
+    _reserved: modular_bitfield::specifiers::B24,
+    #[skip(getters)]
+    destination: u8,
+}
+
+
+#[modular_bitfield::bitfield]
+#[derive(Debug)]
+#[repr(align(16))]
+#[doc(hidden)]
+/// Don't use this outside of this module. This struct if pub because otherwise it emits a warning
+pub struct InterruptCommandRegisterLow {
+    #[skip(getters)]
+    vector: u8,
+    #[skip(getters)]
+    delivery_mode: InterruptType,
+    #[skip(getters)]
+    logical_address: bool,
+    #[skip(setters)]
+    delivery_status: bool,
+    #[skip]
+    _res0: modular_bitfield::specifiers::B1,
+    #[skip(getters)]
+    polarity: bool,
+    #[skip(getters)]
+    level_trigger: bool,
+    #[skip]
+    _res1: modular_bitfield::specifiers::B2,
+    #[skip(getters)]
+    dest_shorthand: super::DestinationShorthand,
+    #[skip]
+    _res2: modular_bitfield::specifiers::B12
 }
