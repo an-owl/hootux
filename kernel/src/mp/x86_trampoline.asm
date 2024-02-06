@@ -10,8 +10,7 @@
 segment .hootux_ap_trampoline
 
 global _trampoline
-global _bsp_xfer_sem
-global _initial_gdt
+global _trampoline_data
     bits 16
     align 4096
 _trampoline:
