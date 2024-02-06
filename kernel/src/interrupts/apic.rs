@@ -4,6 +4,7 @@ use crate::interrupts::apic::pub_apic::SysApic;
 use crate::interrupts::apic::xapic::xApic;
 use crate::util::KernelStatic;
 use alloc::boxed::Box;
+use modular_bitfield::BitfieldSpecifier;
 use apic_structures::registers::ApicError;
 
 pub mod apic_structures;
@@ -51,6 +52,70 @@ pub trait Apic: crate::time::Timer {
     fn begin_calibration(&mut self, test_time: u32, vec: u8);
 
     fn get_id(&self) -> u32;
+
+    /// Sends an IPI
+    ///
+    /// See ISDM v4 10.6 for info.
+    ///
+    /// # Safety
+    ///
+    /// This is unsafe because it causes teh target(s) to take actions which may cause UB.
+    unsafe fn send_ipi(&mut self, target: IpiTarget, int_type: InterruptType, vector: u8) -> Result<(),IpiError>;
+
+    /// Waits until `timeout` for IPI to be received.
+    /// Returns `false` if timeout is exceeded.
+    fn block_ipi_delivered(&self, timeout: crate::task::util::Duration) -> bool;
+}
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub enum IpiError {
+    /// The LAPIC cannot target this APIC-ID.
+    /// This occurs on xAPIC devices when a target greater than `255` is used.
+    BadTarget,
+    /// A non-zero vector was used and the delivery mode was not fixed.
+    ///
+    /// All non-Fixed modes must use vector 0 for forward compatibility.
+    BadMode,
+}
+
+pub enum IpiTarget {
+    /// 00: Targets the CPU  given in the tuple field.
+    Other(crate::mp::CpuIndex),
+    /// 01: Interrupts this CPU.
+    ThisCpu,
+    /// 10: Interrupts all CPUs,
+    All,
+    /// 11: Interrupts all CPUs but not the issuer.
+    AllNotThisCpu
+}
+
+#[derive(BitfieldSpecifier,Copy,Clone,Eq,PartialEq)]
+#[bits = 3]
+pub enum InterruptType {
+    /// Raises an interrupt for the vector given in the vector field.
+    Fixed = 0,
+    /// Delivers the interrupt to the CPU with the lowest priority among the processors specified.
+    /// This a broadcast target or a logical addressing mode.
+    /// This priority is determined by the TPR register
+    ///
+    /// This is model specific, I can't find how to determine if this is supported
+    LowestPriority,
+    /// Raises a System Management Interrupt. This causes the CPU to switch to SMM and do things.
+    /// SMM may do nothing, it may do something, whatever it does will be transparent to the OS.
+    Smi,
+    /// Raises an NMI, this is pretty self explanatory.
+    NMI = 4,
+    /// Signals INIT to the target.
+    /// This should **never** be used with a broadcast or logical target, while it is *technically* allowed it can cause problems.
+    ///
+    /// This resets the target and places it into wait for SIPI mode.
+    Init,
+    /// Startup IPI.
+    /// Causes the target to start executing code at the page address given in the vector field i.e 0xVV0_0000.
+    /// If the target is not in a wait-for-SIPI state then this interrupt is ignored by the target
+    ///
+    /// See [InterruptType::Init] for info about using this with broadcast targets
+    SIPI,
 }
 
 const TARGET_FREQ: u32 = 300;
@@ -126,4 +191,13 @@ pub(crate) unsafe fn apic_eoi() {
 /// Returns an interface for the apic
 pub fn get_apic() -> SysApic {
     SysApic::new()
+}
+
+#[derive(modular_bitfield::BitfieldSpecifier)]
+#[bits = 2]
+enum DestinationShorthand {
+    NoShorthand,
+    ThisCpu,
+    All,
+    AllNotSelf,
 }
