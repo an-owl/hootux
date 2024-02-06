@@ -32,6 +32,17 @@ unsafe fn create_tls(t_data: *const u8, file_size: usize, mem_size: usize) -> *c
     tcb_aligned
 }
 
+/// Creates a new TLS and returns a pointer to it. The pointer should be stored in the `IA32_GSBASE` MSR of the CPU it will be used on.
+///
+/// # Safety
+///
+/// This fn us unsafe because the caller must ensure that the arguments correctly describe the thread local template.
+/// The arguments given at runtime should never change.
+pub unsafe fn new_tls(t_data: *const u8, file_size: usize, mem_size: usize) -> *const *const u8 {
+    let tp = create_tls(t_data,file_size,mem_size);
+    Box::leak(Box::new(tp)) as *const *const u8
+}
+
 /// Creates and initializes a thread local template for this CPU.
 /// This will set the systems RunLevel to Init
 ///
@@ -42,9 +53,7 @@ unsafe fn create_tls(t_data: *const u8, file_size: usize, mem_size: usize) -> *c
 /// This function is unsafe because the caller must ensure that the given args properly describe
 /// the thread local template.
 pub unsafe fn init_tls(t_data: *const u8, file_size: usize, mem_size: usize) {
-    let thread_pointer = Box::new(create_tls(t_data, file_size, mem_size));
-
-    let tp = Box::leak(thread_pointer) as *const *const u8;
+    let tp = new_tls(t_data,file_size,mem_size);
 
     x86_msr::architecture::FsBase::write(tp.into());
     crate::runlevel::update_runlevel(crate::runlevel::Runlevel::Init)
