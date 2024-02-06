@@ -37,6 +37,10 @@ impl OffsetPageTable {
         }
     }
 
+    pub(crate) fn get_l4_table(&self) -> &PageTable {
+        self.l4_table
+    }
+
     /// Returns all mapped pages and their frames from `start` to `end`
     pub(super) fn get_allocated_frames_within(
         &self,
