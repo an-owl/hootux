@@ -127,7 +127,7 @@ struct LocalExecCache {
 }
 
 impl LocalExec {
-    fn new() -> Self {
+    pub(super) fn new() -> Self {
         Self {
             i: crate::who_am_i(),
             invalidate: false.into(),

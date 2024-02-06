@@ -78,11 +78,23 @@ impl From<()> for TaskResult {
 pub fn run_task(fut: Pin<Box<dyn Future<Output = TaskResult> + Send>>) {
     let t = mp_executor::Task::new(fut);
 
-    let b = SYS_EXECUTOR.read();
-    let mut e = b.get(&crate::who_am_i()).unwrap(); // You started an AP without reworking the executor for MP if this panics
-    e.spawn(t);
+    let b = SYS_EXECUTOR.upgradeable_read();
+    if let Some(mut e) = b.get(&crate::who_am_i()) { // You started an AP without reworking the executor for MP if this panics
+        e.spawn(t);
+    } else {
+        b.upgrade().insert(crate::who_am_i(),mp_executor::LocalExec::new());
+    }
 }
 
 pub fn run_exec() -> ! {
     SYS_EXECUTOR.read().get(&crate::who_am_i()).unwrap().run()
+}
+
+/// This fn will set up the executor for the current CPU.
+///
+/// This fn should never be called outside `main.rs` or the last stage of AP startup
+///
+/// # Panics
+fn setup_exec() {
+
 }
