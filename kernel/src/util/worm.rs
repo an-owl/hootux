@@ -25,7 +25,7 @@ impl<T> Worm<T> {
     pub(crate) unsafe fn write(&self, v: T) {
         let t = unsafe { &mut *self.inner.get() };
         if t.is_none() {
-            Some(v)
+            *t = Some(v)
         } else {
             panic!("Worm already initialized");
         };
