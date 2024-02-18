@@ -5,12 +5,13 @@ use x86_64::structures::tss::TaskStateSegment;
 use x86_64::VirtAddr;
 
 pub const DOUBLE_FAULT_IST_INDEX: u16 = 0;
+const STACK_SIZE: usize = 4096 * 5;
+
 
 lazy_static! {
     static ref TSS: TaskStateSegment = {
         let mut tss = TaskStateSegment::new();
         tss.interrupt_stack_table[DOUBLE_FAULT_IST_INDEX as usize] = {
-            const STACK_SIZE: usize = 4096 * 5;
             static mut STACK: [u8; STACK_SIZE] = [0; STACK_SIZE];
 
             let stack_start = VirtAddr::from_ptr(unsafe { &STACK });
@@ -40,6 +41,15 @@ lazy_static! {
             },
         )
     };
+}
+
+pub(crate) fn new_tss() -> TaskStateSegment {
+    let mut tss = TaskStateSegment::new();
+    tss.interrupt_stack_table[DOUBLE_FAULT_IST_INDEX as usize] = {
+        let b = alloc::boxed::Box::new([0u8;STACK_SIZE]);
+        VirtAddr::from_ptr(b.as_ref()) + STACK_SIZE
+    };
+    tss
 }
 
 struct Selectors {
