@@ -79,7 +79,7 @@ pub fn run_task(fut: Pin<Box<dyn Future<Output = TaskResult> + Send>>) {
     let t = mp_executor::Task::new(fut);
 
     let b = SYS_EXECUTOR.upgradeable_read();
-    if let Some(mut e) = b.get(&crate::who_am_i()) { // You started an AP without reworking the executor for MP if this panics
+    if let Some(e) = b.get(&crate::who_am_i()) { // You started an AP without reworking the executor for MP if this panics
         e.spawn(t);
     } else {
         b.upgrade().insert(crate::who_am_i(),mp_executor::LocalExec::new());
@@ -97,7 +97,7 @@ pub fn run_exec() -> ! {
 /// This fn will panic if it has already been called on this CPU.
 #[track_caller]
 pub(crate) fn ap_setup_exec() {
-    let rc = SYS_EXECUTOR.write().insert(crate::who_am_i(),mp_executor::LocalExec);
+    let rc = SYS_EXECUTOR.write().insert(crate::who_am_i(),mp_executor::LocalExec::new());
     if let Some(_) = rc {
         panic!("Attempted to initialize CPU executor when it is already initialized")
     }
