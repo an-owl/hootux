@@ -276,3 +276,7 @@ pub(crate) fn reg_waker(irq: InterruptIndex, waker: &core::task::Waker) -> Resul
         Err(())
     }
 }
+
+pub fn load_idt() {
+    IDT.load();
+}
