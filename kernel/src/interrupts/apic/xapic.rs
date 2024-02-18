@@ -48,7 +48,7 @@ pub struct xApic {
 
     cmc_vector: AlignedRegister<InternalInt>,
 
-    interrupt_command_register: (InterruptCommandRegisterLow,InterruptCommandRegisterHigh),
+    interrupt_command_register: (AlignedRegister<u32>,AlignedRegister<u32>),
 
     timer_vector: AlignedRegister<TimerIntVector>,
     thermal_sensor_vector: MaybeExists<AlignedRegister<InternalInt>, ThermalVectorCheck>, // not available on all processors
@@ -183,20 +183,24 @@ impl Apic for xApic {
         let mut icrh = InterruptCommandRegisterHigh::new();
         icrh.set_destination(dst.try_into().map_err(|_| super::IpiError::BadTarget)?);
 
-        self.interrupt_command_register.1 = icrh;
-        self.interrupt_command_register.0 = icrl;
+        core::hint::black_box(&self.interrupt_command_register);
+        self.interrupt_command_register.1.data = icrh.into();
+        core::hint::black_box(&self.interrupt_command_register);
+        core::sync::atomic::compiler_fence(atomic::Ordering::Acquire);
+        self.interrupt_command_register.0.data = icrl.into();
+        core::hint::black_box(&self.interrupt_command_register);
         Ok(())
     }
 
     fn block_ipi_delivered(&self, timeout: Duration) -> bool {
         let wakeup_time: crate::time::AbsoluteTime = timeout.into();
         while !wakeup_time.is_future() {
-            if !self.interrupt_command_register.0.delivery_status() {
+            if !InterruptCommandRegisterLow::from(self.interrupt_command_register.0.data).delivery_status() {
                 return true
             }
             core::hint::spin_loop(); // emits `pause` instruction
         }
-        false
+        !InterruptCommandRegisterLow::from(self.interrupt_command_register.0.data).delivery_status()
     }
 }
 
@@ -389,9 +393,9 @@ struct ApicReservedRegister {
 
 
 // these are defined here because x2apic uses a slightly different definition than the xapic
-#[modular_bitfield::bitfield(bits = 32)]
+#[modular_bitfield::bitfield]
 #[derive(Debug)]
-#[repr(align(16))]
+#[repr(u32)]
 #[doc(hidden)]
 /// Don't use this outside of this module. This struct if pub because otherwise it emits a warning
 pub struct InterruptCommandRegisterHigh {
@@ -404,7 +408,7 @@ pub struct InterruptCommandRegisterHigh {
 
 #[modular_bitfield::bitfield]
 #[derive(Debug)]
-#[repr(align(16))]
+#[repr(u32)]
 #[doc(hidden)]
 /// Don't use this outside of this module. This struct if pub because otherwise it emits a warning
 pub struct InterruptCommandRegisterLow {
