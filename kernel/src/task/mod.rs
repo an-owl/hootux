@@ -90,6 +90,19 @@ pub fn run_exec() -> ! {
     SYS_EXECUTOR.read().get(&crate::who_am_i()).unwrap().run()
 }
 
+/// Initializes the executor for the current CPU.
+///
+/// # Panics
+///
+/// This fn will panic if it has already been called on this CPU.
+#[track_caller]
+pub(crate) fn ap_setup_exec() {
+    let rc = SYS_EXECUTOR.write().insert(crate::who_am_i(),mp_executor::LocalExec);
+    if let Some(_) = rc {
+        panic!("Attempted to initialize CPU executor when it is already initialized")
+    }
+}
+
 /// This fn will set up the executor for the current CPU.
 ///
 /// This fn should never be called outside `main.rs` or the last stage of AP startup
