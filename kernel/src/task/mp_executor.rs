@@ -66,14 +66,15 @@ impl Task {
 
     /// Returns a waker for `self`. If a Waker does not already exist one will be constructed.
     fn waker(self: &Arc<Self>) -> Waker {
-        if let Some(waker) = self.waker.lock().upgrade() {
+        let mut l = self.waker.lock();
+        if let Some(waker) = l.upgrade() {
             Waker::from(waker)
         } else {
             let b = Arc::new(TaskWaker {
                 task: Arc::downgrade(self),
                 id: self.id,
             });
-            *self.waker.lock() = Arc::downgrade(&b);
+            *l = Arc::downgrade(&b);
             Waker::from(b)
         }
     }
