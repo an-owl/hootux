@@ -107,8 +107,9 @@ impl<'a, T> Drop for MutexGuard<'a, T> {
 pub struct ReentrantMutex<T> {
     data: UnsafeCell<T>,
     control: atomic::AtomicBool,
-    owner: Cell<Option<u32>>,
-    lock_count: Cell<usize>,
+    // at the time of writing CpuIndex is 32bit so this is non-locking
+    owner: ::atomic::Atomic<Option<crate::mp::CpuIndex>>,
+    lock_count: atomic::AtomicUsize,
 }
 
 unsafe impl<T: Send> Send for ReentrantMutex<T> {}
@@ -124,77 +125,59 @@ impl<'a, T> ReentrantMutex<T> {
     pub const fn new(data: T) -> Self {
         Self {
             data: UnsafeCell::new(data),
-            lock_count: Cell::new(0),
-            owner: Cell::new(None),
+            lock_count: atomic::AtomicUsize::new(0),
+            owner: ::atomic::Atomic::new(None),
             control: atomic::AtomicBool::new(false),
         }
-    }
-
-    /// Spins until control lock bit can be acquired
-    ///
-    /// #Safety
-    ///
-    /// [Self::desync] must be called afterward. Failure to do so is not UB will almost definitely
-    /// deadlock. `desync` must also be called only after all modifications are made making making
-    /// changes without sync is UB.
-    unsafe fn sync(&self) {
-        while let Err(_) =
-            self.control
-                .compare_exchange_weak(false, true, Ordering::Acquire, Ordering::Relaxed)
-        {
-            core::hint::spin_loop();
-        }
-    }
-
-    /// Safely unlocks control of self. [Self::sync] should've been called before this
-    fn desync(&self) {
-        self.control.store(false, Ordering::Release);
     }
 
     /// Attempts to lock control bit returns None if control bit is locked.
     #[inline]
     pub fn try_lock_inner(&self) -> Option<ReentrantMutexGuard<T>> {
-        if let Ok(_) =
-            self.control
-                .compare_exchange_weak(false, true, Ordering::Acquire, Ordering::Relaxed)
+        self.try_control(||
         {
-            match self.owner.get() {
+            match self.owner.load(Ordering::Relaxed) {
                 None => {
+                    self.owner.store(Some(crate::who_am_i()),Ordering::Acquire);
+                    self.lock_count.fetch_add(1,Ordering::Acquire);
+
                     let r = ReentrantMutexGuard {
                         master: &self,
                         _marker: core::marker::PhantomData,
                         _unsend: super::PhantomUnsend::default(),
                     };
-
-                    self.owner.set(Some(crate::who_am_i()));
-
-                    self.lock_count.set(1);
-                    self.control.store(false, Ordering::Release);
-                    return Some(r);
+                    Some(r)
                 }
 
-                Some(owner) if owner == crate::who_am_i() => {
+                Some(owner) if owner == crate::mp::who_am_i() => {
+                    self.lock_count.fetch_add(1,Ordering::Acquire);
                     let r = ReentrantMutexGuard {
                         master: &self,
                         _marker: core::marker::PhantomData,
                         _unsend: super::PhantomUnsend::default(),
                     };
-
-                    let nc = self
-                        .lock_count
-                        .get()
-                        .checked_add(1)
-                        .expect("ReentrantMutex lock overflow");
-                    self.lock_count.set(nc);
-
-                    self.control.store(false, Ordering::Release);
-                    return Some(r);
+                    Some(r)
                 }
 
-                _ => {}
+                _ => {
+                    None
+                }
             }
+        }).ok()?
+    }
+
+    /// Frees the current lock, decrementing the count by one
+    /// and setting `self.owner` to `None` if the new count is 0
+    fn unlock(&self) {
+        // This does not require acquiring `control`, all other CPUs attempting to lock self will
+        // fail until the owner is updated.
+        // Only the current owner can change `lock_count` so self cannot be locked by another CPU until `owner` is cleared
+        let nc = self.lock_count.fetch_sub(1,Ordering::Release);
+
+        // fetch sub fetches the value **before** sub, if nc is 1 then lock_count is 0
+        if nc == 1 {
+            self.owner.store(None,Ordering::Release)
         }
-        None
     }
 
     /// Attempts to lock the inner data returns `None` if data is already locked.
@@ -221,6 +204,19 @@ impl<'a, T> ReentrantMutex<T> {
             }
         }
     }
+
+    /// Attempts to fetch the control bit, if successful calls `f()` and returns whether it succeeded
+    fn try_control<F,R>(&self, f: F) -> Result<R,()>
+        where F: FnOnce() -> R
+    {
+        if let Ok(_) = self.control.compare_exchange_weak(false,true,Ordering::Acquire,Ordering::Relaxed) {
+            let r = Ok(f());
+            self.control.store(false,Ordering::Release);
+            r
+        } else {
+            Err(())
+        }
+    }
 }
 
 impl<'a, T> Deref for ReentrantMutexGuard<'a, T> {
@@ -241,18 +237,7 @@ impl<'a, T> DerefMut for ReentrantMutexGuard<'a, T> {
 
 impl<'a, T> Drop for ReentrantMutexGuard<'a, T> {
     fn drop(&mut self) {
-        // could possibly store original count for error checking
-        // SAFETY: this is safe because desync is called
-        unsafe { self.master.sync() };
-
-        let nc = self.master.lock_count.get() - 1;
-        self.master.lock_count.set(nc);
-
-        if nc == 0 {
-            self.master.owner.set(None);
-        }
-
-        self.master.desync()
+        self.master.unlock();
     }
 }
 
