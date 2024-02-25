@@ -44,6 +44,7 @@ recommend setting an `uefi.vars` a efivars file.
 This part is mostly for my own sanity to try to manage what I want to do and to lay out the things I need to to to
 achieve them.
 
+ - Remove combinedAllocator in favour of a solution that doesn't suck.
  - Replace InterruptIndex with abstract IRQ type
    - Replace all its uses
  - Unify initialization of ACPI consumers
@@ -69,7 +70,7 @@ achieve them.
    - I need to figure out the best way to do this too.
    - I'd like to use an ARC algorithm, but it seems a bit over my head.
  - ANSI support
-   - This will require creating a font module using bitmaps not rasters
+   - ~~This will require creating a font module using bitmaps not rasters~~
      - Just take a font from Linux and use `bindgen`
  - VFS
    - Support FAT filesystems
