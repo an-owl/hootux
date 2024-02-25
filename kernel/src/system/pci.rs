@@ -155,24 +155,28 @@ impl DeviceControl {
                 .unwrap()
         };
 
+        // IDE tells me what this type is, so I don't accidentally cast the Box<_>
+        let mut reg_ref = &mut *cfg_region;
+
         let header_region =
-            unsafe { &mut *(&mut cfg_region[0] as *mut _ as *mut configuration::CommonHeader) };
+            unsafe { &mut *(&mut reg_ref as *mut _ as *mut configuration::CommonHeader) };
 
         if header_region.vendor() == u16::MAX {
             return None;
         }
         let header_type = header_region.header_type();
 
+
         // Drop to prevent aliasing
         let header: &mut dyn PciHeader = match header_type {
             HeaderType::Generic => unsafe {
-                &mut *(&mut cfg_region[0] as *mut _ as *mut configuration::GenericHeader)
+                &mut *(&mut reg_ref as *mut _ as *mut configuration::GenericHeader)
             },
             HeaderType::Bridge => unsafe {
-                &mut *(&mut cfg_region[0] as *mut _ as *mut configuration::BridgeHeader)
+                &mut *(&mut reg_ref as *mut _ as *mut configuration::BridgeHeader)
             },
             HeaderType::CardBusBridge => unsafe {
-                &mut *(&mut cfg_region[0] as *mut _ as *mut configuration::CardBusBridge)
+                &mut *(&mut reg_ref as *mut _ as *mut configuration::CardBusBridge)
             },
         };
 
