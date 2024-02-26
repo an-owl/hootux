@@ -182,7 +182,7 @@ impl MsrFlags for BaseAddr {
 
     fn new(high: u32, low: u32) -> Self {
         let mut n = (high as u64) << 32;
-        n &= low as u64;
+        n |= low as u64;
         Self(n)
     }
 }
