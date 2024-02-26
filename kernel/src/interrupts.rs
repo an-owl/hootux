@@ -8,7 +8,6 @@ use x86_64::structures::idt::{InterruptDescriptorTable, InterruptStackFrame, Pag
 
 pub mod apic;
 pub mod vector_tables;
-
 pub mod buff;
 
 pub const PIC_0_OFFSET: u8 = 32;
@@ -34,11 +33,11 @@ lazy_static! {
                 .set_stack_index(gdt::DOUBLE_FAULT_IST_INDEX);
         }
 
-        idt[InterruptIndex::Timer.as_usize()].set_handler_fn(timer_interrupt_handler);
         idt[InterruptIndex::Keyboard.as_usize()].set_handler_fn(keyboard_interrupt_handler);
         idt.general_protection_fault.set_handler_fn(except_general_protection);
+        idt.segment_not_present.set_handler_fn(except_seg_not_present);
         idt[33].set_handler_fn(apic_error);
-        set_idt_entries!(34);
+        set_idt_entries!(32);
         idt[255].set_handler_fn(spurious);
         idt
     };
@@ -116,6 +115,10 @@ extern "x86-interrupt" fn spurious(sf: InterruptStackFrame) {
     println!("{sf:#?}");
 }
 
+extern "x86-interrupt" fn except_seg_not_present(sf: InterruptStackFrame, e: u64) {
+    panic!("**SEGMENT NOT PRESENT**\n{sf:#?}\n{e:#x}")
+}
+
 #[test_case]
 fn test_breakpoint() {
     init_exceptions();
@@ -126,7 +129,6 @@ fn test_breakpoint() {
 #[derive(Clone, Copy, Debug)]
 #[repr(u8)]
 pub enum InterruptIndex {
-    Timer = PIC_0_OFFSET,
     Keyboard,
     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
     Generic(u8),
@@ -141,7 +143,6 @@ impl From<u8> for InterruptIndex {
 impl InterruptIndex {
     fn as_u8(self) -> u8 {
         match self {
-            InterruptIndex::Timer => PIC_0_OFFSET,
             InterruptIndex::Keyboard => PIC_0_OFFSET + 1,
             InterruptIndex::Generic(n) => n,
         }
@@ -201,7 +202,7 @@ impl InterruptIndex {
     }
 }
 
-gen_interrupt_stubs!(34);
+gen_interrupt_stubs!(32);
 
 /// Attempts to reserve `count` contiguous interrupts. Starting at `req_priority`.
 /// If `count` contiguous interrupts cannot be located this fn will return the next highest number
