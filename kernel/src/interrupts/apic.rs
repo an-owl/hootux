@@ -175,7 +175,6 @@ pub fn load_apic() {
     }
 
     LOCAL_APIC.init(apic);
-    crate::WHO_AM_I.init(LOCAL_APIC.get().get_id());
 }
 
 /// Declares End Of Interrupt on apic devices, without potentially causing a deadlock.
