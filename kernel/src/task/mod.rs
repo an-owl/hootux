@@ -82,7 +82,9 @@ pub fn run_task(fut: Pin<Box<dyn Future<Output = TaskResult> + Send>>) {
     if let Some(e) = b.get(&crate::who_am_i()) { // You started an AP without reworking the executor for MP if this panics
         e.spawn(t);
     } else {
-        b.upgrade().insert(crate::who_am_i(),mp_executor::LocalExec::new());
+        let mut w = b.upgrade();
+        w.insert(crate::who_am_i(),mp_executor::LocalExec::new());
+        w.get(&crate::who_am_i()).unwrap().spawn(t);
     }
 }
 
@@ -101,13 +103,4 @@ pub(crate) fn ap_setup_exec() {
     if let Some(_) = rc {
         panic!("Attempted to initialize CPU executor when it is already initialized")
     }
-}
-
-/// This fn will set up the executor for the current CPU.
-///
-/// This fn should never be called outside `main.rs` or the last stage of AP startup
-///
-/// # Panics
-fn setup_exec() {
-
 }
