@@ -120,8 +120,9 @@ pub enum InterruptType {
     SIPI,
 }
 
+// todo make this configurable at build time
 const TARGET_FREQ: u32 = 300;
-const TARGET_PERIOD: u64 = (1000000000f64 * (1 as f64 / TARGET_FREQ as f64)) as u64; // no touch
+const TARGET_PERIOD: u64 = (1000000000f64 * (1f64 / TARGET_FREQ as f64)) as u64; // no touch
 
 //#[thread_local]
 static mut CALI: Option<u64> = None;
@@ -155,6 +156,21 @@ pub fn cal_and_run(time: u32) {
         super::vector_tables::alloc_irq_special(TIMER_IRQ.as_u8(), timer_handler).expect("???");
         LOCAL_APIC.get().init_timer(TIMER_IRQ.as_u8(), false);
     };
+}
+
+/// Attempts to start the timer on the Local APIC using the current timer IRQ and tick rate.
+/// This fn will fail if a timer has not already been configured.
+///
+/// # Safety
+///
+/// This fn **is** safe because it required a pre-existing configuration.
+pub(crate) fn try_start_timer_residual() -> Result<(),()> {
+    unsafe {
+        LOCAL_APIC.get().init_timer(TIMER_IRQ.as_u8(),false);
+        LOCAL_APIC.get().set_timer(TimerMode::Periodic,
+        CALI.ok_or(())? as u32)
+    }
+    Ok(())
 }
 
 /// Determines type of apic and loads it into `LOCAL_APIC`
