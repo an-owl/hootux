@@ -198,7 +198,7 @@ pub fn drain_map() {
     //let f_alloc = super::SYS_FRAME_ALLOCATOR.alloc.lock();
     //for i in f_alloc.mem_16.free_list {}
 
-    assert!(super::SYS_FRAME_ALLOCATOR
+    assert!(super::allocator::COMBINED_ALLOCATOR.lock().phys_alloc()
         .alloc
         .lock()
         .is_fully_init
@@ -206,11 +206,11 @@ pub fn drain_map() {
 
     // Must be in smallest -> largest order or alloc will try to return the wrong region
     drain_map_inner(MemRegion::Mem16);
-    super::SYS_FRAME_ALLOCATOR.alloc.lock().is_fully_init = Some(MemRegion::Mem16);
+    super::allocator::COMBINED_ALLOCATOR.lock().phys_alloc().alloc.lock().is_fully_init = Some(MemRegion::Mem16);
     drain_map_inner(MemRegion::Mem32);
-    super::SYS_FRAME_ALLOCATOR.alloc.lock().is_fully_init = Some(MemRegion::Mem32);
+    super::allocator::COMBINED_ALLOCATOR.lock().phys_alloc().alloc.lock().is_fully_init = Some(MemRegion::Mem32);
     drain_map_inner(MemRegion::Mem64);
-    super::SYS_FRAME_ALLOCATOR.alloc.lock().is_fully_init = Some(MemRegion::Mem64);
+    super::allocator::COMBINED_ALLOCATOR.lock().phys_alloc().alloc.lock().is_fully_init = Some(MemRegion::Mem64);
 }
 
 /// Inner fn for `drain_map()` drains all of `MEM_MAP`'s region into `super::SYS_FRAME_ALLOC`
@@ -249,7 +249,8 @@ fn drain_map_inner(region: MemRegion) {
         );
 
         #[cfg(not(feature = "alloc-debug-serial"))]
-        let f_alloc = super::SYS_FRAME_ALLOCATOR.get().frame_alloc.alloc.lock();
+        let b = super::allocator::COMBINED_ALLOCATOR.lock();
+        let f_alloc = b.phys_alloc().get().frame_alloc.alloc.lock();
 
         #[cfg(feature = "alloc-debug-serial")]
         let mut f_alloc = super::SYS_FRAME_ALLOCATOR.get().frame_alloc.alloc.lock();
@@ -266,7 +267,7 @@ fn drain_map_inner(region: MemRegion) {
         drop(f_alloc);
 
         // SAFETY: region is given by frame allocator and is unused
-        unsafe { super::SYS_FRAME_ALLOCATOR.dealloc(base, len) }
+        unsafe { super::allocator::COMBINED_ALLOCATOR.lock().phys_alloc().dealloc(base, len) }
 
         #[cfg(feature = "alloc-debug-serial")]
         {

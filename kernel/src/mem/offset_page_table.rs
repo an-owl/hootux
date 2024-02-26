@@ -330,7 +330,7 @@ impl OffsetPageTable {
 
     /// Allocates a new table into memory without mapping it
     fn new_table(&self) -> *mut PageTable {
-        let frame: PhysFrame<Size4KiB> = super::SYS_FRAME_ALLOCATOR
+        let frame: PhysFrame<Size4KiB> = super::allocator::COMBINED_ALLOCATOR.lock().phys_alloc()
             .get()
             .allocate_frame()
             .expect("System ran out of memory");

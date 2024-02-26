@@ -205,7 +205,7 @@ unsafe impl Allocator for DmaAlloc {
             };
 
             // mem::mem_map cannot be used because DMA areas must be contiguous
-            let phys_addr = mem::SYS_FRAME_ALLOCATOR
+            let phys_addr = mem::allocator::COMBINED_ALLOCATOR.lock().phys_alloc()
                 .allocate(
                     Layout::from_size_align(layout.size(), self.phys_align).unwrap(),
                     self.region,
@@ -253,7 +253,7 @@ unsafe impl Allocator for DmaAlloc {
         };
         mem::mem_map::unmap_range(range);
 
-        mem::SYS_FRAME_ALLOCATOR
+        mem::allocator::COMBINED_ALLOCATOR.lock().phys_alloc()
             .dealloc(phys_addr.start_address().as_u64() as usize, layout.size());
         super::COMBINED_ALLOCATOR
             .lock()

@@ -27,18 +27,11 @@ pub mod write_combining;
 
 pub const PAGE_SIZE: usize = 4096;
 
-//pub(crate) static SYS_FRAME_ALLOCATOR: KernelStatic<BootInfoFrameAllocator> = KernelStatic::new();
-pub(crate) static SYS_FRAME_ALLOCATOR: buddy_frame_alloc::BuddyFrameAlloc =
-    buddy_frame_alloc::BuddyFrameAlloc::new();
 
 /// Run PreInitialization for SYS_FRAME_ALLOC
 pub unsafe fn set_sys_frame_alloc(mem_map: &'static mut bootloader_api::info::MemoryRegions) {
     buddy_frame_alloc::init_mem_map(mem_map)
 }
-pub fn get_sys_frame_alloc() -> buddy_frame_alloc::FrameAllocRef<'static> {
-    SYS_FRAME_ALLOCATOR.get()
-}
-
 /// This is the page table tree for the higher half kernel is shared by all CPU's. It should be used
 /// in the higher half of all user mode programs too.
 pub(crate) static SYS_MAPPER: KernelStatic<offset_page_table::OffsetPageTable> =
@@ -94,7 +87,7 @@ pub struct DummyFrameAlloc;
 
 unsafe impl FrameAllocator<Size4KiB> for DummyFrameAlloc {
     fn allocate_frame(&mut self) -> Option<PhysFrame<Size4KiB>> {
-        SYS_FRAME_ALLOCATOR.get().allocate_frame()
+        allocator::COMBINED_ALLOCATOR.lock().phys_alloc().get().allocate_frame()
     }
 }
 unsafe impl FrameAllocator<Size2MiB> for DummyFrameAlloc {

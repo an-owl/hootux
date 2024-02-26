@@ -6,7 +6,6 @@
 use super::*;
 use crate::mem::buddy_frame_alloc::FrameAllocRef;
 use x86_64::structures::paging::mapper::{FlagUpdateError, TranslateError};
-use x86_64::structures::paging::{Mapper, PageTableFlags};
 
 /// Flags for Normal data in L1 (4K) pages.
 pub const PROGRAM_DATA_FLAGS: PageTableFlags = PageTableFlags::from_bits_truncate((1 << 63) | 0b11);
@@ -32,9 +31,12 @@ pub unsafe fn map_range<'a, S: PageSize + core::fmt::Debug, I: Iterator<Item = P
     FrameAllocRef<'a>: FrameAllocator<S>,
     offset_page_table::OffsetPageTable: Mapper<S>,
 {
+    let b = allocator::COMBINED_ALLOCATOR.lock();
+
     for page in pages {
-        let frame = FrameAllocator::<S>::allocate_frame(&mut SYS_FRAME_ALLOCATOR.get())
+        let frame_addr = b.phys_alloc().allocate(alloc::alloc::Layout::from_size_align(S::SIZE as usize, S::SIZE as usize).unwrap(),MemRegion::Mem64)
             .expect("System ran out of memory");
+        let frame = PhysFrame::from_start_address(PhysAddr::new(frame_addr as u64)).unwrap();
 
         match SYS_MAPPER
             .get()
@@ -92,8 +94,11 @@ where
     FrameAllocRef<'a>: FrameAllocator<S>,
     offset_page_table::OffsetPageTable: Mapper<S>,
 {
-    let frame = FrameAllocator::<S>::allocate_frame(&mut SYS_FRAME_ALLOCATOR.get())
+    let b = allocator::COMBINED_ALLOCATOR.lock();
+
+    let frame_addr = b.phys_alloc().allocate(alloc::alloc::Layout::from_size_align(S::SIZE as usize, S::SIZE as usize).unwrap(),MemRegion::Mem64)
         .expect("System ran out of memory");
+    let frame = PhysFrame::from_start_address(PhysAddr::new(frame_addr as u64)).unwrap();
 
     match SYS_MAPPER
         .get()

@@ -263,8 +263,9 @@ impl PageTableAllocator {
         // map new memory
 
         unsafe {
+            let b = mem::allocator::COMBINED_ALLOCATOR.lock();
             for page in range {
-                let frame = mem::SYS_FRAME_ALLOCATOR.get().allocate_frame().unwrap();
+                let frame = b.phys_alloc().get().allocate_frame().unwrap();
                 mem::SYS_MAPPER
                     .get()
                     .map_to(page, frame, flags, &mut DummyFrameAlloc)
