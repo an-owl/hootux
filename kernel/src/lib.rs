@@ -46,13 +46,18 @@ fn who_am_i() -> u32 {
     }
 
     let cpuid = raw_cpuid::CpuId::new();
-    if let Some(_) = cpuid.get_extended_topology_info_v2() {
+    let id = if let Some(_) = cpuid.get_extended_topology_info_v2() {
         raw_cpuid::cpuid!(0x1f).edx
     } else if let Some(_) = cpuid.get_extended_topology_info() {
         raw_cpuid::cpuid!(0xb).edx
     } else {
         return cpuid.get_feature_info().unwrap().initial_local_apic_id() as u32;
+    };
+    if runlevel::runlevel() != runlevel::Runlevel::PreInit {
+        WHO_AM_I.init(id);
+        x86_64::instructions::nop();
     }
+    id
 }
 
 pub trait Testable {
