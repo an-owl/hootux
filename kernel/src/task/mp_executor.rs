@@ -1,4 +1,3 @@
-use alloc::vec::Vec;
 use alloc::{
     boxed::Box,
     sync::{Arc, Weak},
@@ -10,8 +9,6 @@ use core::task::{Poll, Waker};
 const RUN_QUEUE_SIZE: usize = 128;
 
 static GLOBAL_TASK_CACHE: TaskCache = TaskCache::new();
-static GLOBAL_EXECUTORS: spin::RwLock<Vec<spin::RwLock<LocalExec>>> = spin::RwLock::new(Vec::new());
-
 type TaskableFuture = Pin<Box<dyn Future<Output = super::TaskResult> + Send + 'static>>;
 
 #[derive()]
@@ -41,14 +38,12 @@ pub struct Task {
 
 #[derive(Copy, Clone, Debug)]
 enum TaskOwner {
-    Orphan,
     Cpu(u32),
 }
 
 impl TaskOwner {
     fn num(&self) -> u32 {
         match self {
-            TaskOwner::Orphan => 0,
             TaskOwner::Cpu(n) => *n,
         }
     }
@@ -59,7 +54,7 @@ impl Task {
         Self {
             id: super::TaskId::new(),
             inner: crate::util::mutex::MentallyUnstableMutex::new(Box::pin(fut)),
-            owner: atomic::Atomic::new(TaskOwner::Orphan),
+            owner: atomic::Atomic::new(TaskOwner::Cpu(crate::who_am_i())),
             waker: spin::Mutex::new(Weak::new()),
         }
     }
@@ -117,6 +112,8 @@ impl TaskCache {
 
 pub(super) struct LocalExec {
     i: u32,
+    /// This is just a semaphore that other CPUs can set to indicate
+    /// this CPU should invalidate its task cache.
     invalidate: core::sync::atomic::AtomicBool,
     run_queue: crossbeam_queue::ArrayQueue<super::TaskId>, // todo swap with a linked list, each node should point to a waker and never directly allocate/free memory
     cache: crate::util::mutex::ReentrantMutex<LocalExecCache>
@@ -149,11 +146,12 @@ impl LocalExec {
             l.waker_cache.clear();
         }
 
-        while let Some(id) = self.run_queue.pop() {
-            let task = self.fetch_task(id).expect(&alloc::format!(
-                "{:?} Was woken but has no associated task",
-                id
-            ));
+        while let Some(id) = self.fetch_ready() {
+            let task = if let Some(task) = self.fetch_task(id) {
+                task
+            } else {
+                continue
+            };
 
             if task.owner.load(atomic::Ordering::Relaxed).num() != self.i {
                 // Some tasks may need to be woken a certain number of times
@@ -194,13 +192,22 @@ impl LocalExec {
         None
     }
 
+    /// Fetches a [super::TaskId] from the local executors run queue,
+    /// if nothing is ready then a task will be stolen
+    fn fetch_ready(&self) -> Option<super::TaskId> {
+        match self.run_queue.pop() {
+            None => Self::steal(),
+            Some(id) => return Some(id),
+        }
+    }
+
     /// Steals a Task from another CPU dropping it from that Executors caches and returning a [super::TaskID]
     fn steal() -> Option<super::TaskId> {
         // iterates over all CPUs except for self
         for _ in 0u32..crate::mp::num_cpus().into() {
             static ARBITRATION: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
-            let target_id = ARBITRATION.fetch_add(1, atomic::Ordering::Relaxed) % crate::mp::num_cpus(); // mod num_cpus
-            // dont steal from self
+            let target_id = ARBITRATION.fetch_add(1, atomic::Ordering::Relaxed) % crate::mp::num_cpus();
+            // don't steal from self
             if target_id == crate::who_am_i() {
                 continue;
             }
@@ -244,7 +251,7 @@ impl LocalExec {
     pub fn spawn(&self, task: Task) {
         let task = Arc::new(task);
         let id = task.id;
-        GLOBAL_TASK_CACHE.cache.write().insert(id,task.clone());
+        GLOBAL_TASK_CACHE.insert(task.clone());
         self.cache.lock().local_cache.insert(id,task);
         self.run_queue.push(id).expect("Run queue is full");
     }
