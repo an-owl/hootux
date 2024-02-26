@@ -17,6 +17,8 @@ pub mod xapic;
 pub(crate) static LOCAL_APIC: KernelStatic<Box<dyn Apic, crate::mem::allocator::GenericAlloc>> =
     KernelStatic::new();
 
+static TIMER_IRQ: crate::util::Worm<super::InterruptIndex> = crate::util::Worm::new();
+
 /// Trait for control over the Local Advanced Programmable Interrupt Controller
 ///
 /// #LVT Entry
@@ -141,12 +143,17 @@ fn timer_handler() {
 
 /// Calibrates local APIC and sets interrupt handler.
 /// This is temporary and required because of the privacy of [crate::kernel_statics]
-pub fn cal_and_run(time: u32, vec: u8) {
-    LOCAL_APIC.get().begin_calibration(time, vec);
+pub fn cal_and_run(time: u32) {
+    if !TIMER_IRQ.is_set() {
+        // SAFETY: MP not initialized, this cannot cause race conditions
+        unsafe { TIMER_IRQ.write(super::InterruptIndex::Generic(super::reserve_single(0).unwrap())); }
+    }
+
+    LOCAL_APIC.get().begin_calibration(time, TIMER_IRQ.read().as_u8());
 
     unsafe {
-        super::vector_tables::alloc_irq_special(vec, timer_handler).expect("???");
-        LOCAL_APIC.get().init_timer(vec, false);
+        super::vector_tables::alloc_irq_special(TIMER_IRQ.as_u8(), timer_handler).expect("???");
+        LOCAL_APIC.get().init_timer(TIMER_IRQ.as_u8(), false);
     };
 }
 

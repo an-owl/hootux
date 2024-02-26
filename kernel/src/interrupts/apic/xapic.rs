@@ -1,9 +1,6 @@
 use super::apic_structures::{apic_types::*, registers::*};
 use super::{Apic, InterruptType, IpiTarget};
 use crate::device_check::{DeviceCheck, MaybeExists};
-use crate::interrupts::apic::apic_structures::registers::{
-    ApicErrorInt, InternalInt, LocalInt, TimerIntVector,
-};
 use crate::time::{Duration, Timer, TimerError, TimerResult};
 use core::fmt::{Debug, Formatter};
 use core::mem::MaybeUninit;
@@ -110,7 +107,7 @@ impl Apic for xApic {
             super::super::vector_tables::alloc_irq_special(vec, super::handle_timer_and_calibrate)
                 .expect("Vector already occupied");
 
-            self.init_timer(50, false);
+            self.init_timer(vec, false);
             self.set_timer(TimerMode::Periodic, test_time);
         }
 
