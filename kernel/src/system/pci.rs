@@ -148,6 +148,9 @@ impl Ord for DeviceControl {
 }
 
 impl DeviceControl {
+
+    // This is required because rustc cannot determine that raw pointers point to an array
+    #[allow(invalid_reference_casting)]
     fn new(cfg_region_addr: u64, address: DeviceAddress) -> Option<Self> {
         let mut cfg_region = unsafe {
             MmioAlloc::new(cfg_region_addr as usize)
@@ -155,11 +158,9 @@ impl DeviceControl {
                 .unwrap()
         };
 
-        // IDE tells me what this type is, so I don't accidentally cast the Box<_>
-        let mut reg_ref = &mut *cfg_region;
 
         let header_region =
-            unsafe { &mut *(&mut reg_ref as *mut _ as *mut configuration::CommonHeader) };
+            unsafe { &mut *(&mut cfg_region[0] as *mut _ as *mut configuration::CommonHeader) };
 
         if header_region.vendor() == u16::MAX {
             return None;
@@ -170,13 +171,13 @@ impl DeviceControl {
         // Drop to prevent aliasing
         let header: &mut dyn PciHeader = match header_type {
             HeaderType::Generic => unsafe {
-                &mut *(&mut reg_ref as *mut _ as *mut configuration::GenericHeader)
+                &mut *(&mut cfg_region[0] as *mut _ as *mut configuration::GenericHeader)
             },
             HeaderType::Bridge => unsafe {
-                &mut *(&mut reg_ref as *mut _ as *mut configuration::BridgeHeader)
+                &mut *(&mut cfg_region[0] as *mut _ as *mut configuration::BridgeHeader)
             },
             HeaderType::CardBusBridge => unsafe {
-                &mut *(&mut reg_ref as *mut _ as *mut configuration::CardBusBridge)
+                &mut *(&mut cfg_region[0] as *mut _ as *mut configuration::CardBusBridge)
             },
         };
 
