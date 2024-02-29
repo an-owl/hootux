@@ -7,7 +7,7 @@ pub(super) static SLEEP_QUEUE: crate::util::Mutex<SleepQueue> =
 // todo register handler for this into timer interrupt
 #[derive(Debug)]
 pub(crate) struct SleepQueue {
-    list: alloc::collections::VecDeque<Option<Timer>>,
+    list: alloc::collections::VecDeque<Timer>,
     // is this even worth it
     dirty: bool,
 }
@@ -21,43 +21,22 @@ impl crate::util::Mutex<SleepQueue> {
             t.inner.in_queue.store(true, atomic::Ordering::Relaxed);
             // Locates the insertion point regardless of weather or not something exists there
             let mut l = self.lock();
-            let s = Some(t);
-            let index = l.list.binary_search(&s).unwrap_or_else(|i| i);
-            l.list.insert(index, s);
+            let index = l.list.binary_search(&t).unwrap_or_else(|i| i);
+            l.list.insert(index, t);
         })
     }
 
     /// Wakes all timers which can be woken
     pub(crate) fn wakeup(&self) {
         let ct = crate::time::get_sys_time();
-        let mut l = self.lock();
-        let mut dirty = false;
+        let mut l = if let Some(l) = self.try_lock() {
+            l
+        } else {
+            return
+        };
 
-        for i in l.list.iter_mut() {
-            if let Some(w) = i {
-                if w.try_wake(ct) {
-                    // taking prevents calls to the allocator
-                    i.take();
-                    dirty = true;
-                } else {
-                    break;
-                }
-            } // ignore None, these are already woken
-        }
-        l.dirty = dirty;
-    }
-
-    /// Attempts to clean the queue. The queue will not be cleaned if it is locked by another thread
-    /// or if the dirty bit is not set.  
-    fn clean(&self) {
-        // dont clean if locked, i don't want that overhead
-        if let Some(mut l) = self.try_lock() {
-            if l.dirty {
-                while let Some(None) = l.list.front() {
-                    l.list.pop_front();
-                }
-                l.dirty = false;
-            }
+        if l.list.front().is_some_and(|t| t.try_wake(ct)) {
+            l.list.pop_front().unwrap();
         }
     }
 }
@@ -110,7 +89,6 @@ impl core::future::Future for Timer {
 
             core::task::Poll::Pending
         } else {
-            SLEEP_QUEUE.clean();
             core::task::Poll::Ready(())
         }
     }
