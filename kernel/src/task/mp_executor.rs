@@ -11,7 +11,6 @@ const RUN_QUEUE_SIZE: usize = 128;
 static GLOBAL_TASK_CACHE: TaskCache = TaskCache::new();
 type TaskableFuture = Pin<Box<dyn Future<Output = super::TaskResult> + Send + 'static>>;
 
-#[derive()]
 struct TaskWaker {
     task: Weak<Task>,
     id: super::TaskId,
@@ -20,7 +19,8 @@ struct TaskWaker {
 impl alloc::task::Wake for TaskWaker {
     fn wake(self: Arc<Self>) {
         if let Some(task) = self.task.upgrade() {
-            super::SYS_EXECUTOR.read().get(&task.owner.load(atomic::Ordering::Relaxed).num()).unwrap()
+            let n = task.owner.load(atomic::Ordering::Relaxed).num();
+            super::SYS_EXECUTOR.read().get(&n).unwrap()
                 .run_queue
                 .push(self.id)
                 .expect("Run queue is full");
@@ -98,10 +98,10 @@ impl TaskCache {
 
     #[track_caller]
     fn insert(&self, task: Arc<Task>) {
-        self.cache
+        let rc = self.cache
             .write()
-            .insert(task.id, task)
-            .expect("Tried to insert a task to the global task cache twice");
+            .insert(task.id, task);
+        assert!(rc.is_none(),"Tried to insert a task to the global task cache twice");
     }
 
     /// Drops the task with `id`
@@ -142,7 +142,7 @@ impl LocalExec {
         // when another CPU steals a task the cache should be invalidated
         if let Ok(_) = self.invalidate.compare_exchange_weak(true,false,atomic::Ordering::Relaxed,atomic::Ordering::Relaxed) {
             let mut l = self.cache.lock();
-            l.local_cache.clear();
+            //l.local_cache.clear();
             l.waker_cache.clear();
         }
 
@@ -150,6 +150,7 @@ impl LocalExec {
             let task = if let Some(task) = self.fetch_task(id) {
                 task
             } else {
+                // task does not exist (probably dropped)
                 continue
             };
 
@@ -170,14 +171,20 @@ impl LocalExec {
 
             match task.poll(&mut core::task::Context::from_waker(&waker)) {
                 // todo impl Display for task and display more info here
-                Poll::Ready(super::TaskResult::Error) => log::error!("{id:?} Exited with error"), // task should log error info
-                Poll::Ready(super::TaskResult::Panicked) => {
-                    log::error!("{id:?} Panicked and was caught successfully") // todo implement Display for Task
+                Poll::Ready(r) => {
+                    GLOBAL_TASK_CACHE.drop(id);
+                    // todo implement Display for Task, should show a name and owned device(s)
+                    match r {
+                        super::TaskResult::ExitedNormally => {}
+                        super::TaskResult::StoppedExternally => log::warn!("Task {} returned {:?}, was the device removed? see driver log for details",id.0,super::TaskResult::StoppedExternally),
+                        super::TaskResult::Error => log::error!("{id:?} Exited with error"), // task should log error info
+                        super::TaskResult::Panicked => log::error!("{id:?} Panicked and was caught successfully")
+                    }
                 }
                 _ => {} // ops normal
             }
 
-            GLOBAL_TASK_CACHE.drop(id);
+
         }
     }
 
@@ -189,6 +196,7 @@ impl LocalExec {
             l.local_cache.insert(id, w.clone());
             return Some(w);
         }
+        // task may have been dropped
         None
     }
 
@@ -208,21 +216,20 @@ impl LocalExec {
             static ARBITRATION: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
             let target_id = ARBITRATION.fetch_add(1, atomic::Ordering::Relaxed) % crate::mp::num_cpus();
             // don't steal from self
+            // fixme disabled CPUs may be requested
             if target_id == crate::who_am_i() {
                 continue;
             }
 
             let b = super::SYS_EXECUTOR.read();
             if let Some(target) = b.get(&target_id) {
-                if let Some(id) = target.run_queue.pop() {
-
+                if let Some(tid) = target.run_queue.pop() {
                     target.invalidate.store(true,atomic::Ordering::Relaxed);
-                    GLOBAL_TASK_CACHE
-                        .fetch(id)
-                        .unwrap()
-                        .owner
-                        .store(TaskOwner::Cpu(crate::who_am_i()), atomic::Ordering::Relaxed);
-                    return Some(id);
+
+                    if let Some(i) = GLOBAL_TASK_CACHE.fetch(tid) {
+                        i.owner.store(TaskOwner::Cpu(crate::who_am_i()), atomic::Ordering::Relaxed);
+                    }
+                    return Some(tid);
                 }
             }
 
