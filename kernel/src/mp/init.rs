@@ -16,6 +16,8 @@ static AP_INIT_COUNT: core::sync::atomic::AtomicU32 = core::sync::atomic::Atomic
 ///
 /// This fn is unsafe because the caller must ensure that `tls_data` `tls_file_size` and `tls_data_size`
 /// correctly describe the thread local template.
+#[cfg(feature = "multiprocessing")]
+// in theory if this fn is not present then nothing else in this module is either.
 pub(super) unsafe fn start_mp(tls_data: *const u8, tls_file_size: usize, tls_data_size: usize) {
     let acpi = crate::system::sysfs::get_sysfs().firmware().get_acpi().find_table::<acpi::madt::Madt>().unwrap();
     let cpus = acpi.parse_interrupt_model_in(alloc::alloc::Global).unwrap().1.unwrap();

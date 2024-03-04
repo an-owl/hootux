@@ -6,9 +6,10 @@ readme = "README.md"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 [features]
-default = ["write-combining"]
+default = ["write-combining","multiprocessing"]
 alloc-debug-serial = [] #This is for debugging the memory allocator
 write-combining = []
+multiprocessing = []
 
 [dependencies]
 bootloader_api = "0.11.4"
