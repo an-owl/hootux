@@ -96,7 +96,7 @@ fn kernel_main(b: &'static mut bootloader_api::BootInfo) -> ! {
         t
     };
     // temporary, until thread local segment is set up
-    interrupts::apic::cal_and_run(0x20000, 50);
+    interrupts::apic::cal_and_run(0x20000);
 
     init_logger();
 
@@ -118,13 +118,25 @@ fn kernel_main(b: &'static mut bootloader_api::BootInfo) -> ! {
     system::pci::enumerate_devices(&pci_cfg);
     log::info!("Bus scan complete");
 
-    // SAFETY: MP not initialized, race conditions are impossible.
+    // SAFETY: MP not initialized, race conditions are impossible.gugui
     unsafe { system::sysfs::get_sysfs().firmware().cfg_acpi(acpi_tables) }
 
     #[cfg(test)]
     test_main();
 
     init_static_drivers();
+
+    // Should this be started before or after init_static_drivers()?
+    {
+        let tls = b.tls_template.into_option().unwrap();
+        unsafe {
+            mp::start_mp(
+                tls.start_addr as usize as *const u8,
+                tls.file_size as usize,
+                tls.mem_size as usize,
+            )
+        }
+    }
 
     task::run_task(Box::pin(keyboard::print_key()));
     task::run_exec(); //executor.run();

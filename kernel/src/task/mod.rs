@@ -60,7 +60,7 @@ pub enum TaskResult {
     /// Task completed and exited normally or was shut down by the kernel
     ExitedNormally,
     /// Task stopped because it was signalled externally to do so.
-    /// This may indicate that task encountered an error, and should log log info about why the task was stopped.
+    /// This may indicate that task encountered an error, or the device was removed, and should log info about why the task was stopped.
     StoppedExternally,
     /// Task encountered an error and was unable to continue.
     Error,
