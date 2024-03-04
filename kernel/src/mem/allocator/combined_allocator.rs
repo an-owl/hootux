@@ -1,6 +1,6 @@
 use super::HeapAlloc;
 use crate::mem;
-use crate::mem::PAGE_SIZE;
+use crate::mem::{buddy_frame_alloc, PAGE_SIZE};
 use core::alloc::{AllocError, Layout};
 use core::ptr::NonNull;
 
@@ -12,11 +12,16 @@ where
 {
     superior: S,
     inferior: I,
+    phys_alloc: buddy_frame_alloc::BuddyFrameAlloc,
 }
 
 impl<S: SuperiorAllocator, I: InferiorAllocator> DualHeap<S, I> {
     pub const fn new(superior: S, inferior: I) -> Self {
-        Self { superior, inferior }
+        Self {
+            superior,
+            inferior,
+            phys_alloc: buddy_frame_alloc::BuddyFrameAlloc::new(),
+        }
     }
 
     /// Initializes self
@@ -30,6 +35,10 @@ impl<S: SuperiorAllocator, I: InferiorAllocator> DualHeap<S, I> {
             self.inferior.init(ptr);
             self.superior.init(ptr as usize);
         }
+    }
+
+    pub(crate) fn phys_alloc(&self) -> &buddy_frame_alloc::BuddyFrameAlloc {
+        &self.phys_alloc
     }
 }
 
