@@ -8,8 +8,6 @@ pub(super) static SLEEP_QUEUE: crate::util::Mutex<SleepQueue> =
 #[derive(Debug)]
 pub(crate) struct SleepQueue {
     list: alloc::collections::VecDeque<Timer>,
-    // is this even worth it
-    dirty: bool,
 }
 
 impl crate::util::Mutex<SleepQueue> {
