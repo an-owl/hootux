@@ -105,10 +105,6 @@ fn kernel_main(b: &'static mut bootloader_api::BootInfo) -> ! {
     debug!("Successfully initialized Kernel");
 
     let madt = acpi_tables.find_table::<acpi::madt::Madt>().unwrap();
-    log::info!(
-        "{:#x?}",
-        madt.parse_interrupt_model_in(alloc::alloc::Global)
-    );
     system::sysfs::get_sysfs().setup_ioapic(&madt);
 
     log::info!("Scanning pcie bus");

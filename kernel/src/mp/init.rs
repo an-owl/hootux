@@ -141,9 +141,8 @@ unsafe fn init_harness(tr_data: &mut TrampolineData, cache: &StartupCache, tls_p
                 break Ok(());
             }
             DataRequest::LongModeStack => {
-                log::debug!("AP requested stack");
                 let mut v = Vec::new();
-                v.resize(STACK_SIZE + 1,0u8); // +1 allows rsp to be aligned (wastes shitloads of memory though). todo make new allocator to fix this
+                v.resize(STACK_SIZE,0u8); // +1 allows rsp to be aligned (wastes shitloads of memory though). todo make new allocator to fix this
                 let ptr = v.leak().last_mut().unwrap() as *mut u8 as usize as u64;
                 tr_data.xfer.send(ptr);
                 log::debug!("Kernel stack at {ptr:#x}");
