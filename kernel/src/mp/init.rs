@@ -3,11 +3,8 @@ use alloc::vec::Vec;
 use acpi::platform::ProcessorState;
 use x86_msr::MsrFlags;
 use x86_msr::Msr;
-use crate::interrupts::apic::Apic;
 
 const STACK_SIZE: usize = 0x100000;
-const XFER_OFFSET: usize = 0;
-const INIT_GDT_OFFSET: usize = 0;
 static AP_INIT_COUNT: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
 
 /// Starts up all available Application Processors.
@@ -27,7 +24,7 @@ pub(super) unsafe fn start_mp(tls_data: *const u8, tls_file_size: usize, tls_dat
 
     let gdt_ptr = GdtPtr{size: 64, ptr: init_gdt.as_u64() as u32 + core::mem::offset_of!(TrampolineData,gdt) as u32}; // size is in bytes
 
-    let mut cache = StartupCache::new(addr);
+    let cache = StartupCache::new(addr);
     // This is safe, this will never be re-written
     // GDT must be in the trampoline region
     let data_region = (init_gdt + &*tramp_box as *const _ as usize).as_mut_ptr::<TrampolineData>();
@@ -75,7 +72,7 @@ unsafe fn bring_up_ap(id: super::CpuIndex, trampoline_addr: x86_64::VirtAddr, ca
     use crate::interrupts::{apic,apic::Apic};
 
     let block = |msec| {
-        let init_blk: crate::time::AbsoluteTime = crate::task::util::Duration::millis(10).into();
+        let init_blk: crate::time::AbsoluteTime = crate::task::util::Duration::millis(msec).into();
         while !init_blk.is_future() {
             core::hint::spin_loop()
         }
@@ -121,7 +118,7 @@ unsafe fn bring_up_ap(id: super::CpuIndex, trampoline_addr: x86_64::VirtAddr, ca
 /// # Safety
 ///
 /// The caller must ensure that `tls_ptr` points to a unique thread local segment that is correctly initialized
-unsafe extern "C" fn init_harness(tr_data: &mut TrampolineData, cache: &StartupCache, tls_ptr: *const *const u8) -> Result<(),()> {
+unsafe fn init_harness(tr_data: &mut TrampolineData, cache: &StartupCache, tls_ptr: *const *const u8) -> Result<(),()> {
 
     // SAFETY: The box contains the frame the AP uses for startup, ..data_diff() returns the data offset into the frame.
     loop {
@@ -182,7 +179,8 @@ fn allocate_trampoline() -> Result<(x86_64::VirtAddr, Box<[u8;4096],crate::alloc
 struct StartupCache {
     gdt: x86_64::structures::gdt::GlobalDescriptorTable,
     l4_addr: x86_64::PhysAddr,
-    l4: Option<Box<x86_64::structures::paging::PageTable,crate::alloc_interface::DmaAlloc>>,
+    // This field is not accessed, the allocation is used while MP is initialized
+    _l4: Option<Box<x86_64::structures::paging::PageTable,crate::alloc_interface::DmaAlloc>>,
 }
 
 impl StartupCache {
@@ -232,15 +230,10 @@ impl StartupCache {
         Self {
             gdt,
             l4_addr: addr,
-            l4: table,
+            _l4: table,
         }
     }
 
-    fn get_or_new(opt: &mut Option<Self>, trampoline_addr: x86_64::VirtAddr) {
-        if opt.is_none() {
-            *opt = Some(Self::new(trampoline_addr));
-        }
-    }
 
 }
 
@@ -252,6 +245,7 @@ fn long_mode_init() -> ! {
         registers::segmentation::Segment,
         registers::control::Cr0Flags,
     };
+    use crate::interrupts::apic::Apic;
 
     unsafe fn cast_static<'a,T>(r: &'a T) -> &'static T {
         core::mem::transmute(r)
@@ -274,7 +268,7 @@ fn long_mode_init() -> ! {
 
     // SAFETY: This points to a valid TSS and the data is valid
     unsafe {
-        gdt::GlobalDescriptorTable::load(unsafe {cast_static(&gdt)});
+        gdt::GlobalDescriptorTable::load(cast_static(&gdt));
         segmentation::CS::set_reg(c);
         segmentation::DS::set_reg(d);
         segmentation::SS::set_reg(d);
@@ -344,15 +338,9 @@ impl TransferSemaphore {
     }
 }
 
-/// Returns the diff between [_trampoline] and [_trampoline_data]
-fn trampoline_data_diff() -> usize {
-    // SAFETY: This is safe.
-    // IMO this shouldn't need to be marked unsafe, im not actually accessing the value.
-    unsafe { _trampoline_data.as_ptr() as *const () as usize - _trampoline as *const () as usize }
-}
-
 #[repr(u32)]
 #[derive(Copy, Clone, Eq, PartialEq, Default)]
+#[allow(dead_code)] // these are never constructed they are only read.
 enum DataRequest {
     #[default]
     Empty = 0,
@@ -379,6 +367,7 @@ struct GdtPtr {
 // imports
 extern {
     fn _trampoline(); // this will never be directly called.
+    #[allow(improper_ctypes)] // hey, if it works...
     static _trampoline_data: core::mem::MaybeUninit<TrampolineData>;
 }
 
