@@ -1,7 +1,6 @@
 pub(super) static SLEEP_QUEUE: crate::util::Mutex<SleepQueue> =
     crate::util::Mutex::new(SleepQueue {
         list: alloc::collections::VecDeque::new(),
-        dirty: false,
     });
 
 // todo register handler for this into timer interrupt
