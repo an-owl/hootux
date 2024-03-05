@@ -40,7 +40,7 @@ pub fn _print(args: core::fmt::Arguments) {
 
     if let Some(s) = COM.read().get(0) {
         // drop the result, if something goes wrong dont who a I going to tell?
-        drop(s.write_sync(args.to_string().into_bytes().into_boxed_slice()));
+        let _ = s.write_sync(args.to_string().into_bytes().into_boxed_slice());
     } else {
         x86_64::instructions::interrupts::without_interrupts(|| {
             SP0.lock()
@@ -274,6 +274,8 @@ impl Serial {
                             if let Some(b) = self.write_buff.lock().pop() {
                                 self.try_send(b).unwrap() // checks if sending is allowed beforehand
                             } else {
+                                // Relaxed because `in`/`out` instructions are serializing and `try_send()` here will always send
+                                self.run.store(false,atomic::Ordering::Relaxed);
                                 break;
                             }
                         }

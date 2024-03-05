@@ -89,12 +89,13 @@ impl<T: Copy> ChonkyBuff<T> {
             l.chonk_offset += 1;
             return Some(l.chonk.front()?[l.chonk_offset - 1]);
         } else {
-            let mut bind = l.chonk.split_off(0);
+            let mut bind = l.chonk.split_off(1);
             // we want to remove the first element not the rest
             core::mem::swap(&mut bind, &mut l.chonk);
+            let rm_len = bind.back().unwrap().len();
             l.comp_chonk.append(&mut bind);
             self.invd_len
-                .fetch_add(bind.back()?.len(), atomic::Ordering::Release);
+                .fetch_add(rm_len, atomic::Ordering::Release);
 
             // re-tries fetching
             l.chonk_offset = 0;
