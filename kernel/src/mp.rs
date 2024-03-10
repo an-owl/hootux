@@ -1,5 +1,6 @@
 
 mod init;
+pub mod bitmap;
 
 pub type CpuCount = core::num::NonZeroU32;
 pub type CpuIndex = u32;
