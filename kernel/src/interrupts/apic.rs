@@ -61,7 +61,7 @@ pub trait Apic: crate::time::Timer {
     ///
     /// # Safety
     ///
-    /// This is unsafe because it causes teh target(s) to take actions which may cause UB.
+    /// This is unsafe because it causes the target(s) to take actions which may cause UB.
     unsafe fn send_ipi(&mut self, target: IpiTarget, int_type: InterruptType, vector: u8) -> Result<(),IpiError>;
 
     /// Waits until `timeout` for IPI to be received.
