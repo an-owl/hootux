@@ -52,7 +52,7 @@ impl CpuBMap {
         }
     }
 
-    fn get(&self, cpu: super::CpuIndex) -> bool {
+    pub fn get(&self, cpu: super::CpuIndex) -> bool {
         if let Some(u) = self.map.read().get(cpu as usize/u64::BITS as usize) {
             let t = u.load(atomic::Ordering::Relaxed);
             // check if bit is set
@@ -67,6 +67,26 @@ impl CpuBMap {
             map: self,
             last: None
         }
+    }
+
+    /// Returns the number of all the CPUs which are set.
+    /// This will return None if no CPUs are set
+    pub fn count(&self) -> Option<super::CpuCount> {
+        let mut count = 0;
+        for i in self.map.read().iter() {
+            let u = i.load(atomic::Ordering::Relaxed);
+            count += u.count_ones();
+        }
+
+        count.try_into().ok()
+    }
+
+    /// Returns the contents of `self`, clears the contents of `self`.
+    fn take(&mut self) -> Self {
+        let mut n = Self::new();
+        n.map.write().resize_with(self.map.read().len(),|| Default::default());
+        core::mem::swap(self,&mut n);
+        n
     }
 }
 
