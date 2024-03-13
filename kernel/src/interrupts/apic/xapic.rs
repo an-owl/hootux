@@ -180,6 +180,10 @@ impl Apic for xApic {
         let mut icrh = InterruptCommandRegisterHigh::new();
         icrh.set_destination(dst.try_into().map_err(|_| super::IpiError::BadTarget)?);
 
+        while InterruptCommandRegisterLow::from_bytes(self.interrupt_command_register.0.data.to_le_bytes()).delivery_status() {
+            // todo is this hint necessary?
+            core::hint::spin_loop();
+        }
         core::hint::black_box(&self.interrupt_command_register);
         self.interrupt_command_register.1.data = icrh.into();
         core::hint::black_box(&self.interrupt_command_register);
