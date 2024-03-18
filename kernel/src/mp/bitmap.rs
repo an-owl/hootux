@@ -90,7 +90,7 @@ impl CpuBMap {
     }
 }
 
-struct CpuBitmapIterator<'a> {
+pub struct CpuBitmapIterator<'a> {
     map: &'a CpuBMap,
     last: Option<super::CpuIndex>
 }
