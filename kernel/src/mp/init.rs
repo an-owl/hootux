@@ -232,10 +232,7 @@ impl StartupCache {
             _l4: table,
         }
     }
-
-
 }
-
 
 fn long_mode_init() -> ! {
     use x86_64::{
@@ -312,17 +309,15 @@ struct TransferSemaphore {
 impl TransferSemaphore {
     /// Waits until the AP requests data returns the request ID. This fn will timeout after 2ms.
     fn wait(&self) -> Option<DataRequest> {
-        //let timeout: crate::time::AbsoluteTime = crate::time::Duration::millis(2).into();
+        let timeout: crate::time::AbsoluteTime = crate::time::Duration::millis(2).into();
         loop {
             let rx = self.request.load(atomic::Ordering::Acquire);
             if rx == DataRequest::Empty {
-                /*if !timeout.is_future() {
+                if !timeout.is_future() {
                     continue
                 } else {
                     return None
                 }
-                 */
-                continue
             } else {
                 return Some(rx);
             }
