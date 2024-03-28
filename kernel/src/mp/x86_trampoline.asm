@@ -104,7 +104,7 @@ init_longmode:
     mov esi,RQ_RUST_ENTRY_POINT
     call request_64 ; request address for jumping to ap_startup
 
-    jmp rdi
+    call rdi ; Call here is used so the callee can get a pointer to this page to invalidate its TLB entry
 
     ;takes esi is arg
     ;result returned in rdi

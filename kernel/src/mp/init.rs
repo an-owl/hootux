@@ -18,6 +18,15 @@ static AP_INIT_COUNT: core::sync::atomic::AtomicU32 = core::sync::atomic::Atomic
 pub(super) unsafe fn start_mp(tls_data: *const u8, tls_file_size: usize, tls_data_size: usize) {
     let acpi = crate::system::sysfs::get_sysfs().firmware().get_acpi().find_table::<acpi::madt::Madt>().unwrap();
     let cpus = acpi.parse_interrupt_model_in(alloc::alloc::Global).unwrap().1.unwrap();
+
+    if cpus.application_processors.len() == 0 {
+        return
+    }
+
+    // Enables shootdowns, default state is disabled.
+    // Shootdowns only need to be enabled if running in MP
+    crate::mem::tlb::enable_shootdowns();
+
     // tramp_box is freed when the fn exits
     let (addr,mut tramp_box) = allocate_trampoline().expect("Failed to allocate trampoline");
     let init_gdt = addr + (unsafe { &_trampoline_data as *const _ as usize } - _trampoline as *const fn() as usize) as u64;
@@ -56,7 +65,13 @@ pub(super) unsafe fn start_mp(tls_data: *const u8, tls_file_size: usize, tls_dat
         }
     }
 
-    unsafe { crate::mem::mem_map::unmap_page(x86_64::structures::paging::Page::<x86_64::structures::paging::Size4KiB>::from_start_address(addr).unwrap()) }
+    // init page will be synched manually from
+    // SAFETY: TLBs will be invalidated during long_mode_init
+    unsafe {
+        crate::mem::tlb::without_shootdowns(|| {
+                crate::mem::mem_map::unmap_page(x86_64::structures::paging::Page::<x86_64::structures::paging::Size4KiB>::from_start_address(addr).unwrap());
+        });
+    }
     ap_init_sync();
 }
 
@@ -143,7 +158,7 @@ unsafe fn init_harness(tr_data: &mut TrampolineData, cache: &StartupCache, tls_p
             DataRequest::LongModeStack => {
                 let mut v = Vec::new();
                 v.resize(STACK_SIZE,0u8); // +1 allows rsp to be aligned (wastes shitloads of memory though). todo make new allocator to fix this
-                let ptr = v.leak().last_mut().unwrap() as *mut u8 as usize as u64;
+                let ptr = (v.leak().last_mut().unwrap() as *mut u8 as usize as u64) + 1; // I think sp is supposed to be one off the end
                 tr_data.xfer.send(ptr);
                 log::debug!("Kernel stack at {ptr:#x}");
             }
@@ -253,6 +268,10 @@ fn long_mode_init() -> ! {
     unsafe { x86_64::registers::control::Cr0::update(|f| f.set(Cr0Flags::CACHE_DISABLE | Cr0Flags::NOT_WRITE_THROUGH, false)); }
     unsafe { x86_64::registers::control::Cr0::update(|f| f.set(Cr0Flags::MONITOR_COPROCESSOR | Cr0Flags::NUMERIC_ERROR , true)); }
 
+    super::cpu_start();
+    //SAFETY: This enables shootdowns. Shootdowns must be blocked by default
+    unsafe { crate::mem::tlb::enable_shootdowns(); }
+
     // prevent the compiler from dropping the GDT and TSS because it must be present until the CPU is stopped.
     // ManuallyDrop keeps it static on the stack (because this frame is never dropped).
     let mut gdt = core::mem::ManuallyDrop::new(gdt::GlobalDescriptorTable::new());
@@ -280,6 +299,18 @@ fn long_mode_init() -> ! {
 
     // SAFETY: This is safe, all interrupts raised will be handled by existing IDT
     unsafe { crate::interrupts::apic::get_apic().set_enable(true) };
+
+    //
+    unsafe {
+        let ra = crate::return_address!().expect("Failed to get AP trampoline address");
+        core::arch::asm!(
+        "invlpg [{0}]",
+        in(reg) ra,
+        options(nomem,nostack,preserves_flags)
+        )
+    }
+
+    x86_64::instructions::interrupts::enable();
 
     // todo handle properly
     // this will require determining under what cases will the APIC timer not already be configured.

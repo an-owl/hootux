@@ -16,6 +16,7 @@
 #![feature(linked_list_cursors)]
 #![feature(core_intrinsics)]
 #![feature(box_into_inner)]
+#![feature(link_llvm_intrinsics)]
 
 extern crate alloc;
 pub use mem::allocator::alloc_interface;
@@ -33,6 +34,7 @@ pub mod system;
 pub mod task;
 pub mod time;
 mod util;
+pub mod llvm;
 
 #[thread_local]
 static WHO_AM_I: util::UnlockedStatic<u32> = util::UnlockedStatic::new();

@@ -46,8 +46,11 @@ lazy_static! {
 pub(crate) fn new_tss() -> TaskStateSegment {
     let mut tss = TaskStateSegment::new();
     tss.interrupt_stack_table[DOUBLE_FAULT_IST_INDEX as usize] = {
-        let b = alloc::boxed::Box::new([0u8;STACK_SIZE]);
-        VirtAddr::from_ptr(b.as_ref()) + STACK_SIZE
+        // This is preferred over allocating a Box<[_,_]>
+        let mut b: alloc::vec::Vec<u8> = alloc::vec::Vec::new();
+        b.resize(STACK_SIZE,0);
+        let l = b.leak();
+        VirtAddr::from_ptr(&l[0]) + STACK_SIZE
     };
     tss
 }

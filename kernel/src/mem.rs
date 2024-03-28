@@ -1,4 +1,3 @@
-use crate::util::KernelStatic;
 use bootloader_api::info::{MemoryRegion, MemoryRegionKind};
 use x86_64::{
     structures::paging::{
@@ -8,6 +7,7 @@ use x86_64::{
     },
     PhysAddr, VirtAddr,
 };
+use crate::mem::allocator::{buddy_alloc, combined_allocator, fixed_size_block};
 
 // offset 0-11
 // l1 12-2
@@ -22,7 +22,7 @@ mod high_order_alloc;
 pub mod mem_map;
 pub(self) mod offset_page_table;
 pub mod thread_local_storage;
-
+pub mod tlb;
 pub mod write_combining;
 
 pub const PAGE_SIZE: usize = 4096;
@@ -34,11 +34,36 @@ pub unsafe fn set_sys_frame_alloc(mem_map: &'static mut bootloader_api::info::Me
 }
 /// This is the page table tree for the higher half kernel is shared by all CPU's. It should be used
 /// in the higher half of all user mode programs too.
-pub(crate) static SYS_MAPPER: KernelStatic<offset_page_table::OffsetPageTable> =
-    KernelStatic::new();
+pub(crate) static SYS_MAPPER: SysMapper = SysMapper{};
 
+// TODO: remove in favour of re-working memory management.
+pub(crate) struct SysMapper{}
+
+impl SysMapper {
+    pub fn get(&self) -> MapperWorkaround {
+        MapperWorkaround { inner: allocator::COMBINED_ALLOCATOR.lock() }
+    }
+}
+pub (crate) struct MapperWorkaround {
+    inner: crate::util::mutex::ReentrantMutexGuard<'static, combined_allocator::DualHeap<buddy_alloc::BuddyHeap, fixed_size_block::NewFixedBlockAllocator>>,
+}
+
+impl core::ops::Deref for MapperWorkaround {
+    type Target = offset_page_table::OffsetPageTable;
+    fn deref(&self) -> &Self::Target {
+        self.inner.mapper()
+    }
+}
+
+impl core::ops::DerefMut for MapperWorkaround {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.inner.mapper_mut()
+    }
+}
+
+#[deprecated]
 pub unsafe fn set_sys_mem_tree_no_cr3(new_mapper: offset_page_table::OffsetPageTable) {
-    SYS_MAPPER.init(new_mapper);
+    allocator::COMBINED_ALLOCATOR.lock().cfg_mapper(new_mapper);
 }
 
 /// A FrameAllocator that returns usable frames from the bootloader's memory map.
@@ -453,14 +478,4 @@ pub enum MemRegion {
     Mem16,
     Mem32,
     Mem64,
-}
-
-impl MemRegion {
-    const fn region_of(addr: u64) -> Self {
-        match addr {
-            a if a < 0x10000 => Self::Mem16,
-            a if a < 0x100000000 => Self::Mem32,
-            _ => Self::Mem64,
-        }
-    }
 }

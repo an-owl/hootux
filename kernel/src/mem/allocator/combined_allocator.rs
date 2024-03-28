@@ -13,6 +13,7 @@ where
     superior: S,
     inferior: I,
     phys_alloc: buddy_frame_alloc::BuddyFrameAlloc,
+    mapper: Option<super::super::offset_page_table::OffsetPageTable>
 }
 
 impl<S: SuperiorAllocator, I: InferiorAllocator> DualHeap<S, I> {
@@ -21,6 +22,7 @@ impl<S: SuperiorAllocator, I: InferiorAllocator> DualHeap<S, I> {
             superior,
             inferior,
             phys_alloc: buddy_frame_alloc::BuddyFrameAlloc::new(),
+            mapper: None,
         }
     }
 
@@ -35,6 +37,17 @@ impl<S: SuperiorAllocator, I: InferiorAllocator> DualHeap<S, I> {
             self.inferior.init(ptr);
             self.superior.init(ptr as usize);
         }
+    }
+
+    pub fn mapper_mut(&mut self) -> &mut super::super::offset_page_table::OffsetPageTable {
+        self.mapper.as_mut().expect("Mapper not initialized")
+    }
+    pub fn mapper(&self) -> &super::super::offset_page_table::OffsetPageTable {
+        self.mapper.as_ref().expect("Mapper not initialized")
+    }
+
+    pub fn cfg_mapper(&mut self, mapper: super::super::offset_page_table::OffsetPageTable) {
+        self.mapper = Some(mapper)
     }
 
     pub(crate) fn phys_alloc(&self) -> &buddy_frame_alloc::BuddyFrameAlloc {
