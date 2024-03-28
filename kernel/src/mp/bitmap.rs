@@ -82,7 +82,7 @@ impl CpuBMap {
     }
 
     /// Returns the contents of `self`, clears the contents of `self`.
-    fn take(&mut self) -> Self {
+    pub fn take(&mut self) -> Self {
         let mut n = Self::new();
         n.map.write().resize_with(self.map.read().len(),|| Default::default());
         core::mem::swap(self,&mut n);
