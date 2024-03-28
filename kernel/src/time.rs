@@ -218,7 +218,7 @@ impl AbsoluteTime {
 
     /// Returns true if the time represented by self has passed.
     pub fn is_future(&self) -> bool {
-         self.nanos > get_sys_time()
+         self.nanos < get_sys_time()
     }
 }
 
