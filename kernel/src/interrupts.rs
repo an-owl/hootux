@@ -1,7 +1,6 @@
 use crate::gdt;
 use crate::interrupts::apic::LOCAL_APIC;
 use crate::println;
-use kernel_interrupts_proc_macro::{gen_interrupt_stubs, set_idt_entries};
 use lazy_static::lazy_static;
 use log::{error, warn};
 use x86_64::structures::idt::{InterruptDescriptorTable, InterruptStackFrame, PageFaultErrorCode};
@@ -12,6 +11,8 @@ pub mod buff;
 
 pub const PIC_0_OFFSET: u8 = 32;
 pub const PIC_1_OFFSET: u8 = PIC_0_OFFSET + 8;
+
+kernel_proc_macro::interrupt_config!(pub const PUB_VEC_START: u8 = 0x21; fn bind_stubs);
 
 pub static PICS: spin::Mutex<pic8259::ChainedPics> =
     spin::Mutex::new(unsafe { pic8259::ChainedPics::new(PIC_0_OFFSET, PIC_1_OFFSET) });
@@ -36,8 +37,9 @@ lazy_static! {
         idt[InterruptIndex::Keyboard.as_usize()].set_handler_fn(keyboard_interrupt_handler);
         idt.general_protection_fault.set_handler_fn(except_general_protection);
         idt.segment_not_present.set_handler_fn(except_seg_not_present);
+        idt[32].set_handler_fn(crate::mem::tlb::int_shootdown_wrapper);
         idt[33].set_handler_fn(apic_error);
-        set_idt_entries!(32);
+        bind_stubs(&mut idt);
         idt[255].set_handler_fn(spurious);
         idt
     };
@@ -130,6 +132,7 @@ fn test_breakpoint() {
 #[repr(u8)]
 pub enum InterruptIndex {
     Keyboard,
+    TlbShootdown, // 0x21
     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
     Generic(u8),
 }
@@ -141,10 +144,11 @@ impl From<u8> for InterruptIndex {
 }
 
 impl InterruptIndex {
-    fn as_u8(self) -> u8 {
+    pub(crate) fn as_u8(self) -> u8 {
         match self {
-            InterruptIndex::Keyboard => PIC_0_OFFSET + 1,
-            InterruptIndex::Generic(n) => n,
+            Self::Keyboard => PIC_0_OFFSET + 1,
+            Self::TlbShootdown => 0x20,
+            Self::Generic(n) => n,
         }
     }
 
@@ -202,7 +206,6 @@ impl InterruptIndex {
     }
 }
 
-gen_interrupt_stubs!(32);
 
 /// Attempts to reserve `count` contiguous interrupts. Starting at `req_priority`.
 /// If `count` contiguous interrupts cannot be located this fn will return the next highest number
@@ -219,7 +222,7 @@ pub fn reserve_irq(req_priority: u8, count: u8) -> Result<u8, u8> {
     ihr.lock();
 
     let n = ihr
-        .reserve_contiguous(req_priority.max(32), count) // vec[0..32] is reserved for exceptions
+        .reserve_contiguous(req_priority.max(PUB_VEC_START), count) // vec[0..32] is reserved for exceptions
         .map_err(|n| n)?;
 
     ihr.free();
@@ -229,7 +232,7 @@ pub fn reserve_irq(req_priority: u8, count: u8) -> Result<u8, u8> {
 
 /// Reserves a single irq without locking the IHR
 pub fn reserve_single(req_priority: u8) -> Option<u8> {
-    vector_tables::IHR.reserve_contiguous(req_priority, 1).ok()
+    vector_tables::IHR.reserve_contiguous(req_priority.max(PUB_VEC_START), 1).ok()
 }
 
 /// Registers an interrupt handler to the given IRQ. This function will return `Ok(())` on success

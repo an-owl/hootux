@@ -1,100 +1,23 @@
-//! This crate contain procedural macros for hootux
-
 use proc_macro::TokenStream;
-use quote::quote;
-use syn::Lit;
-use syn::__private::quote::format_ident;
-use syn::__private::TokenStream2;
 
-const MAX_INT_VECTOR: u32 = 255;
+mod interrupts;
 
-/// This macro is for generating interrupt stub functions starting at the number given and ending at [MAX_VECTOR].
-/// The code generated for each fn is as follows
+/// sets the kernel interrupt configuration by defining a constant containing the
+/// first public vector which may be used. A function name must also be given, which will be used
+/// to bind interrupt stub handles to their interrupt vectors.
 ///
-/// ``` ignore
-/// extern "x86_interrupt" fn __proc_interrupt_stub_fn_vector_#interrupt_vec_num() {
-///     kernel_statics::fetch_local().interrupt_log.log(#interrupt_vec_num);
-///     if let Some(f) = *vector_tables::IHR.get(#interrupt_vec_num).read() {
-///         f();
-///     } else {
-///         warn!("Unhandled interrupt at vector {}", #interrupt_vec_num)
-///     }
+/// ```ignore
+///
+/// kernel_interrupts_proc_macro::interrupt_config!(const COUNT: u32 = 0x20; fn config);
+///
+/// fn example(idt: x86_64::structures::idt::InterruptDescriptorTable) {
+///     config(idt) // config is provided to `interrupt_config!` macro
+///                 // interrupts vectors [0x20..] are now bound to interrupt stubs
 /// }
 /// ```
-///
-/// The stub fn will log the interrupt
 #[proc_macro]
-pub fn gen_interrupt_stubs(start: TokenStream) -> TokenStream {
-    let p: Lit = syn::parse(start).unwrap();
+pub fn interrupt_config(input: TokenStream) -> TokenStream {
+    let i: interrupts::InterruptConfig = syn::parse(input).unwrap();
+    i.into()
 
-    if let Lit::Int(int) = p {
-        let num: u32 = int.base10_digits().parse().unwrap();
-        gen_interrupt_stubs_inner(num).into()
-    } else {
-        panic!()
-    }
-}
-
-fn gen_interrupt_stubs_inner(num: u32) -> TokenStream2 {
-    if num > MAX_INT_VECTOR {
-        return quote!();
-    }
-
-    let byte = num as u8;
-
-    let next = gen_interrupt_stubs_inner(num + 1);
-
-    let name = format_ident!("__proc_interrupt_stub_fn_vector_{num:}");
-
-    let this = quote!(
-        extern "x86-interrupt" fn #name(_sf: InterruptStackFrame) {
-
-            unsafe {
-            crate::interrupts::vector_tables::INT_LOG.log(#byte);
-            }
-
-            if let Some(f) = vector_tables::IHR.get(#byte).read().callable() {
-                f.call();
-            } else {
-                warn!("Unhandled interrupt at vector {}", #byte)
-            }
-        }
-    );
-
-    quote!(
-        #this
-        #next
-    )
-}
-
-#[proc_macro]
-pub fn set_idt_entries(start: TokenStream) -> TokenStream {
-    let p: Lit = syn::parse(start).unwrap();
-
-    if let Lit::Int(int) = p {
-        let num: u32 = int.base10_digits().parse().unwrap();
-        gen_idt_load(num).into()
-    } else {
-        panic!()
-    }
-}
-
-fn gen_idt_load(num: u32) -> TokenStream2 {
-    if num >= MAX_INT_VECTOR {
-        return quote!();
-    }
-
-    let t = num as usize;
-
-    let name = format_ident!("__proc_interrupt_stub_fn_vector_{num:}");
-
-    let next = gen_idt_load(num + 1);
-    let this = quote!(
-        idt[#t].set_handler_fn(#name);
-    );
-
-    quote!(
-        #this
-        #next
-    )
 }
