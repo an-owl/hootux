@@ -1,7 +1,8 @@
 
+
 pub struct CpuBMap {
     // This uses a Vec to avoid th issue linux had (has?) with systems with more thant 256 CPUs
-    // u64 is the smallest size we can allocate so this doesn't waste space
+    // usize is the smallest size we can allocate so this doesn't waste space
     map: spin::RwLock<alloc::vec::Vec<core::sync::atomic::AtomicUsize>>,
 }
 
@@ -24,9 +25,9 @@ impl CpuBMap {
         let index = cpu / usize::BITS as usize;
 
         let l = self.map.upgradeable_read();
-        if l.len() < index {
+        if l.len() < index + 1 {
             let mut l = l.upgrade();
-            l.resize_with(index, || Default::default());
+            l.resize_with(index + 1, || Default::default());
             l[index].fetch_or(1 << offset, atomic::Ordering::Relaxed);
         } else {
             l[index].fetch_or(1 << offset, atomic::Ordering::Relaxed);
@@ -43,9 +44,9 @@ impl CpuBMap {
         let index = cpu / usize::BITS as usize;
 
         let l = self.map.upgradeable_read();
-        if l.len() < index {
+        if l.len() < index + 1 {
             let mut l = l.upgrade();
-            l.resize_with(index, || Default::default());
+            l.resize_with(index + 1, || Default::default());
             l[index].fetch_and(!(1 << offset), atomic::Ordering::Relaxed);
         } else {
             l[index].fetch_or(!(1 << offset), atomic::Ordering::Relaxed);
@@ -53,10 +54,10 @@ impl CpuBMap {
     }
 
     pub fn get(&self, cpu: super::CpuIndex) -> bool {
-        if let Some(u) = self.map.read().get(cpu as usize/u64::BITS as usize) {
+        if let Some(u) = self.map.read().get(cpu as usize/usize::BITS as usize) {
             let t = u.load(atomic::Ordering::Relaxed);
             // check if bit is set
-            t & 1 << cpu % usize::BITS == 1
+            0 != t & 1 << (cpu % usize::BITS)
         } else {
             false
         }
