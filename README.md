@@ -47,6 +47,8 @@ achieve them.
  - Remove combinedAllocator in favour of a solution that doesn't suck.
  - Replace InterruptIndex with abstract IRQ type
    - Replace all its uses
+   - Ok maybe it should be a struct wrapper around it.
+     - This allows a proper kernel interrupt API using a private InterruptIndex
  - Unify initialization of ACPI consumers
  - Clean up memory module
    - make buddy allocators use the same code
@@ -62,9 +64,11 @@ achieve them.
    - because I really need to
  - Add gdbstub
    - do mp first. to allow tasks to be run asynchronously while the debugger is doing things.
- - Multiprocessing
+ - ~~Multiprocessing~~
    - NUMA?
    - thread local allocators?
+   - Add TLB synchronization to allocator to prevent shootdowns
+     - Add dirty linear-memory free-list where linear addresses are freed into.
  - Add caching mechanism
    - Because it seems useful and interesting to implement
    - I need to figure out the best way to do this too.
