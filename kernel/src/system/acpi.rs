@@ -53,7 +53,7 @@ pub(crate) mod data_access {
     //! of the data. [DataAccessType] is provided to allow a universal access to needed data.
 
     use crate::alloc_interface::MmioAlloc;
-    use acpi::platform::address::{AccessSize, AddressSpace, GenericAddress};
+    use acpi::address::{AccessSize, AddressSpace, GenericAddress};
     use core::alloc::{Allocator, Layout};
     use core::fmt::{Debug, Formatter};
     use x86_64::VirtAddr;

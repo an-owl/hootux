@@ -208,7 +208,7 @@ impl AhciDriver {
     }
 
     /// Actually runs the driver. Receives ints and dispatches self accordingly
-    async fn run(mut self: Box<Self>) {
+    async fn run(mut self: Box<Self>) -> hootux::task::TaskResult {
         loop {
             match self.wakeup.poll().await {
                 PollDev::All => self.hba.chk_ports().await,

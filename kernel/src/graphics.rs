@@ -7,8 +7,8 @@ pub mod basic_output;
 
 mod pixel;
 
-pub static KERNEL_FRAMEBUFFER: crate::kernel_structures::KernelStatic<FrameBuffer> =
-    crate::kernel_structures::KernelStatic::new();
+pub static KERNEL_FRAMEBUFFER: crate::util::KernelStatic<FrameBuffer> =
+    crate::util::KernelStatic::new();
 
 static KERNEL_PIX_FORMAT: atomic::Atomic<PixelFormat> = atomic::Atomic::new(PixelFormat::Bgr4Byte);
 
@@ -296,6 +296,7 @@ impl SpriteMut for FrameBuffer {
     }
 }
 
+use fontgen_bugfix as bitmap_fontgen;
 //TODO: This is a workaround to a bug in bindeps remove all of these when possible, and swap "fontgen_bugfix" for "fontgen"
 fn font_map() -> bitmap_fontgen::Font {
     (&font::FONT_MAP).into()
@@ -304,6 +305,7 @@ fn font_map() -> bitmap_fontgen::Font {
 mod font {
     use super::Integer;
     use crate::graphics::Sprite;
+    use fontgen_bugfix as bitmap_fontgen;
 
     pub(super) static FONT_MAP: bitmap_fontgen::ConstFontMap = include!(env!("FONT_MAP_FILE"));
 

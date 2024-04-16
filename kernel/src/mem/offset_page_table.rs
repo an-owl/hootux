@@ -8,6 +8,11 @@ use x86_64::structures::paging::{
     Size2MiB, Size4KiB,
 };
 use x86_64::{PhysAddr, VirtAddr};
+use super::tlb::{
+    shootdown,
+    shootdown_hint,
+    ShootdownContent,
+};
 
 pub struct OffsetPageTable {
     offset_base: VirtAddr,
@@ -35,6 +40,10 @@ impl OffsetPageTable {
             offset_base,
             l4_table,
         }
+    }
+
+    pub(crate) fn get_l4_table(&self) -> &PageTable {
+        self.l4_table
     }
 
     /// Returns all mapped pages and their frames from `start` to `end`
@@ -326,7 +335,7 @@ impl OffsetPageTable {
 
     /// Allocates a new table into memory without mapping it
     fn new_table(&self) -> *mut PageTable {
-        let frame: PhysFrame<Size4KiB> = super::SYS_FRAME_ALLOCATOR
+        let frame: PhysFrame<Size4KiB> = super::allocator::COMBINED_ALLOCATOR.lock().phys_alloc()
             .get()
             .allocate_frame()
             .expect("System ran out of memory");
@@ -441,6 +450,8 @@ impl Mapper<Size4KiB> for OffsetPageTable {
                 }
 
                 let old = core::mem::replace(entry, PageTableEntry::new());
+                // P flag is cleared and not restored. shootdown_hint is not required all, faults are genuine
+                shootdown(page.into());
                 Ok((old.frame().unwrap(), MapperFlush::new(page))) // all errors checked cannot panic
             }
 
@@ -457,7 +468,12 @@ impl Mapper<Size4KiB> for OffsetPageTable {
     ) -> Result<MapperFlush<Size4KiB>, FlagUpdateError> {
         match self.traverse_mut(PageTableLevel::L1, page) {
             Ok(table) => {
-                table[PageTableLevel::L1.get_index(page)].set_flags(flags);
+                shootdown_hint(|| {
+                    let entry = &mut table[PageTableLevel::L1.get_index(page)];
+                    entry.flags().set(PageTableFlags::PRESENT, false);
+                    shootdown(page.into());
+                    entry.set_flags(flags);
+                });
                 Ok(MapperFlush::new(page))
             }
             Err(InternalError::PageNotMapped(_)) => Err(FlagUpdateError::PageNotMapped),
@@ -471,7 +487,16 @@ impl Mapper<Size4KiB> for OffsetPageTable {
         page: Page<Size4KiB>,
         flags: PageTableFlags,
     ) -> Result<MapperFlushAll, FlagUpdateError> {
-        self.l4_table[PageTableLevel::L4.get_index(page)].set_flags(flags);
+        shootdown_hint(|| {
+            let entry = &mut self.l4_table[PageTableLevel::L4.get_index(page)];
+            if entry.flags().contains(PageTableFlags::PRESENT) {
+                let mut f = entry.flags();
+                f.set(PageTableFlags::PRESENT,false);
+                entry.set_flags(f);
+            }
+            shootdown(page.into());
+            entry.set_flags(flags);
+        });
         Ok(MapperFlushAll::new())
     }
 
@@ -483,7 +508,12 @@ impl Mapper<Size4KiB> for OffsetPageTable {
         const LEVEL: PageTableLevel = PageTableLevel::L3;
         match self.traverse_mut(LEVEL, page) {
             Ok(table) => {
-                table[LEVEL.get_index(page)].set_flags(flags);
+                shootdown_hint(|| {
+                    let entry = &mut table[LEVEL.get_index(page)];
+                    entry.flags().set(PageTableFlags::PRESENT, false);
+                    shootdown(ShootdownContent::FullContext);
+                    entry.set_flags(flags);
+                });
                 Ok(MapperFlushAll::new())
             }
             Err(InternalError::PageNotMapped(_)) => Err(FlagUpdateError::PageNotMapped),
@@ -499,7 +529,12 @@ impl Mapper<Size4KiB> for OffsetPageTable {
         const LEVEL: PageTableLevel = PageTableLevel::L2;
         match self.traverse_mut(LEVEL, page) {
             Ok(table) => {
-                table[LEVEL.get_index(page)].set_flags(flags);
+                shootdown_hint(|| {
+                    let entry = &mut table[LEVEL.get_index(page)];
+                    entry.flags().set(PageTableFlags::PRESENT, false);
+                    shootdown(ShootdownContent::FullContext);
+                    entry.set_flags(flags);
+                });
                 Ok(MapperFlushAll::new())
             }
             Err(InternalError::PageNotMapped(_)) => Err(FlagUpdateError::PageNotMapped),
@@ -582,6 +617,7 @@ impl Mapper<Size2MiB> for OffsetPageTable {
                 }
 
                 let old = core::mem::replace(entry, PageTableEntry::new());
+                shootdown(ShootdownContent::FullContext);
                 Ok((
                     unsafe {
                         PhysFrame::from_start_address_unchecked(
@@ -606,7 +642,12 @@ impl Mapper<Size2MiB> for OffsetPageTable {
         const LEVEL: PageTableLevel = PageTableLevel::L2;
         match self.traverse_mut(LEVEL, page) {
             Ok(table) => {
-                table[LEVEL.get_index(page)].set_flags(flags);
+                shootdown_hint(|| {
+                    let entry = &mut table[LEVEL.get_index(page)];
+                    entry.flags().set(PageTableFlags::PRESENT, false);
+                    shootdown(ShootdownContent::FullContext);
+                    entry.set_flags(flags);
+                });
                 Ok(MapperFlush::new(page))
             }
             Err(InternalError::PageNotMapped(_)) => Err(FlagUpdateError::PageNotMapped),
@@ -620,7 +661,16 @@ impl Mapper<Size2MiB> for OffsetPageTable {
         page: Page<Size2MiB>,
         flags: PageTableFlags,
     ) -> Result<MapperFlushAll, FlagUpdateError> {
-        self.l4_table[PageTableLevel::L4.get_index(page)].set_flags(flags);
+        shootdown_hint(|| {
+            let entry = &mut self.l4_table[PageTableLevel::L4.get_index(page)];
+            if entry.flags().contains(PageTableFlags::PRESENT) {
+                let mut f = entry.flags();
+                f.set(PageTableFlags::PRESENT,false);
+                entry.set_flags(f);
+            }
+            shootdown(page.into());
+            entry.set_flags(flags);
+        });
         Ok(MapperFlushAll::new())
     }
 
@@ -632,7 +682,12 @@ impl Mapper<Size2MiB> for OffsetPageTable {
         const LEVEL: PageTableLevel = PageTableLevel::L3;
         match self.traverse_mut(LEVEL, page) {
             Ok(table) => {
-                table[LEVEL.get_index(page)].set_flags(flags);
+                shootdown_hint(|| {
+                    let entry = &mut table[LEVEL.get_index(page)];
+                    entry.flags().set(PageTableFlags::PRESENT, false);
+                    shootdown(ShootdownContent::FullContext);
+                    entry.set_flags(flags);
+                });
                 Ok(MapperFlushAll::new())
             }
             Err(InternalError::PageNotMapped(_)) => Err(FlagUpdateError::PageNotMapped),
@@ -648,7 +703,12 @@ impl Mapper<Size2MiB> for OffsetPageTable {
         const LEVEL: PageTableLevel = PageTableLevel::L2;
         match self.traverse_mut(LEVEL, page) {
             Ok(table) => {
-                table[LEVEL.get_index(page)].set_flags(flags);
+                shootdown_hint(|| {
+                    let entry = &mut table[LEVEL.get_index(page)];
+                    entry.flags().set(PageTableFlags::PRESENT, false);
+                    shootdown(ShootdownContent::FullContext);
+                    entry.set_flags(flags);
+                });
                 Ok(MapperFlushAll::new())
             }
             Err(InternalError::PageNotMapped(_)) => Err(FlagUpdateError::PageNotMapped),
@@ -733,6 +793,7 @@ impl Mapper<Size1GiB> for OffsetPageTable {
                 }
 
                 let old = core::mem::replace(entry, PageTableEntry::new());
+                shootdown(page.into());
                 Ok((
                     unsafe {
                         PhysFrame::from_start_address_unchecked(
@@ -757,7 +818,12 @@ impl Mapper<Size1GiB> for OffsetPageTable {
         const LEVEL: PageTableLevel = PageTableLevel::L3;
         match self.traverse_mut(LEVEL, page) {
             Ok(table) => {
-                table[LEVEL.get_index(page)].set_flags(flags);
+                shootdown_hint(|| {
+                    let entry = &mut table[LEVEL.get_index(page)];
+                    entry.flags().set(PageTableFlags::PRESENT, false);
+                    shootdown(ShootdownContent::FullContext);
+                    entry.set_flags(flags);
+                });
                 Ok(MapperFlush::new(page))
             }
             Err(InternalError::PageNotMapped(_)) => Err(FlagUpdateError::PageNotMapped),
@@ -771,7 +837,16 @@ impl Mapper<Size1GiB> for OffsetPageTable {
         page: Page<Size1GiB>,
         flags: PageTableFlags,
     ) -> Result<MapperFlushAll, FlagUpdateError> {
-        self.l4_table[PageTableLevel::L4.get_index(page)].set_flags(flags);
+        shootdown_hint(|| {
+            let entry = &mut self.l4_table[PageTableLevel::L4.get_index(page)];
+            if entry.flags().contains(PageTableFlags::PRESENT) {
+                let mut f = entry.flags();
+                f.set(PageTableFlags::PRESENT,false);
+                entry.set_flags(f);
+            }
+            shootdown(page.into());
+            entry.set_flags(flags);
+        });
         Ok(MapperFlushAll::new())
     }
 
@@ -783,7 +858,12 @@ impl Mapper<Size1GiB> for OffsetPageTable {
         const LEVEL: PageTableLevel = PageTableLevel::L3;
         match self.traverse_mut(LEVEL, page) {
             Ok(table) => {
-                table[LEVEL.get_index(page)].set_flags(flags);
+                shootdown_hint(|| {
+                    let entry = &mut table[LEVEL.get_index(page)];
+                    entry.flags().set(PageTableFlags::PRESENT, false);
+                    shootdown(ShootdownContent::FullContext);
+                    entry.set_flags(flags);
+                });
                 Ok(MapperFlushAll::new())
             }
             Err(InternalError::PageNotMapped(_)) => Err(FlagUpdateError::PageNotMapped),

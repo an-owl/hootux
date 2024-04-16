@@ -5,14 +5,13 @@
 
 use super::*;
 use crate::mem::buddy_frame_alloc::FrameAllocRef;
-use x86_64::structures::paging::mapper::TranslateError;
-use x86_64::structures::paging::{Mapper, PageTableFlags};
+use x86_64::structures::paging::mapper::{FlagUpdateError, TranslateError};
 
 /// Flags for Normal data in L1 (4K) pages.
 pub const PROGRAM_DATA_FLAGS: PageTableFlags = PageTableFlags::from_bits_truncate((1 << 63) | 0b11);
 
 /// Flags for memory mapped I/O. Sets caching mode to UC uncacheable
-pub const MMIO_FLAGS: PageTableFlags = PageTableFlags::from_bits_truncate((1 << 63) | 0b11011);
+pub const MMIO_FLAGS: PageTableFlags = PageTableFlags::from_bits_truncate((1 << 63) | 0b10011);
 
 /// Maps the given pages into memory using frames given by the system frame allocator. This is the
 /// preferred method Mapping memory ranges. This fn will flush all the given pages
@@ -32,9 +31,12 @@ pub unsafe fn map_range<'a, S: PageSize + core::fmt::Debug, I: Iterator<Item = P
     FrameAllocRef<'a>: FrameAllocator<S>,
     offset_page_table::OffsetPageTable: Mapper<S>,
 {
+    let b = allocator::COMBINED_ALLOCATOR.lock();
+
     for page in pages {
-        let frame = FrameAllocator::<S>::allocate_frame(&mut SYS_FRAME_ALLOCATOR.get())
+        let frame_addr = b.phys_alloc().allocate(alloc::alloc::Layout::from_size_align(S::SIZE as usize, S::SIZE as usize).unwrap(),MemRegion::Mem64)
             .expect("System ran out of memory");
+        let frame = PhysFrame::from_start_address(PhysAddr::new(frame_addr as u64)).unwrap();
 
         match SYS_MAPPER
             .get()
@@ -92,8 +94,11 @@ where
     FrameAllocRef<'a>: FrameAllocator<S>,
     offset_page_table::OffsetPageTable: Mapper<S>,
 {
-    let frame = FrameAllocator::<S>::allocate_frame(&mut SYS_FRAME_ALLOCATOR.get())
+    let b = allocator::COMBINED_ALLOCATOR.lock();
+
+    let frame_addr = b.phys_alloc().allocate(alloc::alloc::Layout::from_size_align(S::SIZE as usize, S::SIZE as usize).unwrap(),MemRegion::Mem64)
         .expect("System ran out of memory");
+    let frame = PhysFrame::from_start_address(PhysAddr::new(frame_addr as u64)).unwrap();
 
     match SYS_MAPPER
         .get()
@@ -171,4 +176,43 @@ pub fn translate(addr: usize) -> Option<u64> {
 // ptr is never dereferenced so this will only be a single impl
 pub fn translate_ptr<T>(ptr: *const T) -> Option<u64> {
     translate(ptr as usize)
+}
+
+/// Updates the page flags of the given page
+/// Only supports 4k pages atm
+pub(crate) fn set_flags(page: usize, flags: PageTableFlags) -> Result<(), UpdateFlagsErr> {
+    let r = unsafe {
+        SYS_MAPPER.get().update_flags(
+            Page::<Size4KiB>::from_start_address(VirtAddr::new(page as u64))
+                .map_err(|_| UpdateFlagsErr::InvalidAddress)?,
+            flags,
+        )
+    };
+    r.map_err(|e| match e {
+        FlagUpdateError::PageNotMapped => UpdateFlagsErr::PageNotMapped(page),
+        FlagUpdateError::ParentEntryHugePage => UpdateFlagsErr::HugePage(page),
+    })?
+    .flush();
+    Ok(())
+}
+
+/// Iterates over `iter` updating each page.
+/// If an error is encountered this fn will immediately return the error.
+pub(crate) fn set_flags_iter<P: PageSize, T: Iterator<Item = Page<P>>>(
+    iter: T,
+    flags: PageTableFlags,
+) -> Result<(), UpdateFlagsErr> {
+    for p in iter {
+        let s = p.start_address();
+        set_flags(s.as_u64() as usize, flags)?
+    }
+    Ok(())
+}
+
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+
+pub enum UpdateFlagsErr {
+    PageNotMapped(usize),
+    HugePage(usize),
+    InvalidAddress,
 }

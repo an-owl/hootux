@@ -16,11 +16,12 @@ lto = false
 panic = 'abort'
 
 [dependencies]
-bootloader = "0.11.4"
+bootloader = { path = "../bootloader", features = ["uefi_no_write_protect_bit"] }
 hootux = { path = "./kernel" }
 getopts = "0.2.21"
 toml = "0.7.2"
+daemonize = "0.5.0"
 
 [build-dependencies]
-bootloader = "0.11.4"
+bootloader = { path = "../bootloader", features = ["uefi_no_write_protect_bit"] }
 hootux-bin = { path = "kernel-bin", artifact = "bin",  target = "x86_64-unknown-none" }

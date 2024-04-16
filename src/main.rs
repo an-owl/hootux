@@ -31,12 +31,25 @@ fn main() {
     };
 
     let mut children = Vec::new();
-    let mut qemu_child = qemu.spawn().unwrap();
-    if let Some(mut c) = opts.run_debug(&toml) {
-        children.push(c.spawn().unwrap());
-    }
 
-    qemu_child.wait().unwrap();
+    let mut run = || {
+        let mut qemu_child = qemu.spawn().unwrap();
+        if let Some(mut c) = opts.run_debug(&toml) {
+            children.push(c.spawn().unwrap());
+        }
+        qemu_child
+    };
+
+    if opts.daemonize {
+        let d = daemonize::Daemonize::new()
+            .user(&*std::env::var("USER").expect("Who are you people!?: No user"))
+            .working_directory(&*std::env::current_dir().unwrap());
+        if d.execute().is_child() {
+            run().wait();
+        }
+    } else {
+        run().wait();
+    };
 }
 
 #[non_exhaustive]
@@ -88,6 +101,7 @@ struct Options {
     export_path: Option<String>,
     confg_path: String,
     native_dbg_shell: bool,
+    daemonize: bool,
 }
 
 impl Options {
@@ -138,6 +152,14 @@ impl Options {
             "n",
             "native-shell",
             "Uses this shell for the debug window.",
+            "",
+            HasArg::No,
+            Occur::Optional,
+        );
+        opts.opt(
+            "",
+            "daemonize",
+            "Daemoizes all children, exiting the runner",
             "",
             HasArg::No,
             Occur::Optional,
@@ -222,6 +244,7 @@ impl Options {
                 .opt_str("config")
                 .unwrap_or("runcfg.toml".to_string()),
             native_dbg_shell: matches.opt_present("n"),
+            daemonize: matches.opt_present("daemonize"),
         }
     }
 

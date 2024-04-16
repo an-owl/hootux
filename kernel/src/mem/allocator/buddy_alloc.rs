@@ -128,7 +128,7 @@ impl BuddyHeapInner {
             VirtAddr::new(self.end as u64)
         ).expect("BuddyAlloc has become misaligned");
         let flags = PageTableFlags::PRESENT | PageTableFlags::WRITABLE | PageTableFlags::HUGE_PAGE;
-        let frame = mem::SYS_FRAME_ALLOCATOR
+        let frame = mem::allocator::COMBINED_ALLOCATOR.lock().phys_alloc()
             .get()
             .allocate_frame()
             .expect("System ran out of memory");

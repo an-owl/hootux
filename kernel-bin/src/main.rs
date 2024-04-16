@@ -10,6 +10,7 @@ extern crate alloc;
 
 use alloc::boxed::Box;
 use bootloader_api::entry_point;
+use core::ptr::NonNull;
 use hootux::exit_qemu;
 use hootux::graphics::basic_output::BasicTTY;
 use hootux::interrupts::apic::Apic;
@@ -74,7 +75,8 @@ fn kernel_main(b: &'static mut bootloader_api::BootInfo) -> ! {
     if let Some(buff) =
         core::mem::replace(&mut b.framebuffer, bootloader_api::info::Optional::None).into_option()
     {
-        // take framebuffer to prevent aliasing
+        mem::write_combining::set_wc_data(&NonNull::from(buff.buffer())).unwrap(); // wont panic
+
         graphics::KERNEL_FRAMEBUFFER.init(graphics::FrameBuffer::from(buff));
         graphics::KERNEL_FRAMEBUFFER.get().clear();
         *graphics::basic_output::WRITER.lock() = Some(BasicTTY::new(&graphics::KERNEL_FRAMEBUFFER));
@@ -94,7 +96,7 @@ fn kernel_main(b: &'static mut bootloader_api::BootInfo) -> ! {
         t
     };
     // temporary, until thread local segment is set up
-    interrupts::apic::cal_and_run(0x20000, 50);
+    interrupts::apic::cal_and_run(0x20000);
 
     init_logger();
 
@@ -102,18 +104,35 @@ fn kernel_main(b: &'static mut bootloader_api::BootInfo) -> ! {
 
     debug!("Successfully initialized Kernel");
 
+    let madt = acpi_tables.find_table::<acpi::madt::Madt>().unwrap();
+    system::sysfs::get_sysfs().setup_ioapic(&madt);
+
     log::info!("Scanning pcie bus");
 
     // move into task
     let pci_cfg = acpi::mcfg::PciConfigRegions::new(&acpi_tables).unwrap();
     system::pci::enumerate_devices(&pci_cfg);
-
     log::info!("Bus scan complete");
+
+    // SAFETY: MP not initialized, race conditions are impossible.gugui
+    unsafe { system::sysfs::get_sysfs().firmware().cfg_acpi(acpi_tables) }
 
     #[cfg(test)]
     test_main();
 
     init_static_drivers();
+
+    // Should this be started before or after init_static_drivers()?
+    {
+        let tls = b.tls_template.into_option().unwrap();
+        unsafe {
+            mp::start_mp(
+                tls.start_addr as usize as *const u8,
+                tls.file_size as usize,
+                tls.mem_size as usize,
+            )
+        }
+    }
 
     task::run_task(Box::pin(keyboard::print_key()));
     task::run_exec(); //executor.run();
@@ -131,7 +150,8 @@ fn say_hi() {
 }
 
 fn init_static_drivers() {
-    ahci::init()
+    serial::init_rt_serial();
+    ahci::init();
 }
 
 #[cfg(not(test))]

@@ -1,6 +1,6 @@
 use super::HeapAlloc;
 use crate::mem;
-use crate::mem::PAGE_SIZE;
+use crate::mem::{buddy_frame_alloc, PAGE_SIZE};
 use core::alloc::{AllocError, Layout};
 use core::ptr::NonNull;
 
@@ -12,11 +12,18 @@ where
 {
     superior: S,
     inferior: I,
+    phys_alloc: buddy_frame_alloc::BuddyFrameAlloc,
+    mapper: Option<super::super::offset_page_table::OffsetPageTable>
 }
 
 impl<S: SuperiorAllocator, I: InferiorAllocator> DualHeap<S, I> {
     pub const fn new(superior: S, inferior: I) -> Self {
-        Self { superior, inferior }
+        Self {
+            superior,
+            inferior,
+            phys_alloc: buddy_frame_alloc::BuddyFrameAlloc::new(),
+            mapper: None,
+        }
     }
 
     /// Initializes self
@@ -31,10 +38,25 @@ impl<S: SuperiorAllocator, I: InferiorAllocator> DualHeap<S, I> {
             self.superior.init(ptr as usize);
         }
     }
+
+    pub fn mapper_mut(&mut self) -> &mut super::super::offset_page_table::OffsetPageTable {
+        self.mapper.as_mut().expect("Mapper not initialized")
+    }
+    pub fn mapper(&self) -> &super::super::offset_page_table::OffsetPageTable {
+        self.mapper.as_ref().expect("Mapper not initialized")
+    }
+
+    pub fn cfg_mapper(&mut self, mapper: super::super::offset_page_table::OffsetPageTable) {
+        self.mapper = Some(mapper)
+    }
+
+    pub(crate) fn phys_alloc(&self) -> &buddy_frame_alloc::BuddyFrameAlloc {
+        &self.phys_alloc
+    }
 }
 
 unsafe impl<S: SuperiorAllocator, I: InferiorAllocator> core::alloc::GlobalAlloc
-    for crate::kernel_structures::mutex::ReentrantMutex<DualHeap<S, I>>
+    for crate::util::mutex::ReentrantMutex<DualHeap<S, I>>
 {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         use x86_64::structures::paging::{

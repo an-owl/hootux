@@ -10,15 +10,20 @@ fn main() {
         std::process::exit(1);
     };
 
-    let uefi_build_out = out_dir.clone() + "uefi.img";
-    bootloader::UefiBoot::new(std::path::Path::new(&kernel))
-        .create_disk_image(uefi_build_out.as_ref())
-        .unwrap();
+    let builder = bootloader::DiskImageBuilder::new(kernel.clone().into());
 
+    {
+        let k_out = out_dir.clone() + "hootux";
+        let mut out = std::io::BufWriter::new(std::fs::File::create(&k_out).unwrap());
+        let mut in_f = std::fs::File::open(&kernel).unwrap();
+        std::io::copy(&mut in_f, &mut out).unwrap();
+    }
+
+    let uefi_build_out = out_dir.clone() + "uefi.img";
     let bios = out_dir.clone() + "bios.img";
-    bootloader::BiosBoot::new(std::path::Path::new(&kernel))
-        .create_disk_image(bios.as_ref())
-        .unwrap();
+
+    builder.create_uefi_image(uefi_build_out.as_ref()).unwrap();
+    builder.create_uefi_image(bios.as_ref()).unwrap();
 
     println!("cargo:rustc-env=UEFI_PATH={uefi_build_out}");
     println!("cargo:rustc-env=BIOS_PATH={bios}");

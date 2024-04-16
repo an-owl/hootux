@@ -99,6 +99,7 @@ impl<'a> Iterator for CapabilityIter<'a> {
 
     fn next(&mut self) -> Option<Self::Item> {
         let next = self.next?;
+        #[allow(invalid_reference_casting)]
         let t = unsafe { &*(&self.region[next] as *const _ as *const CapabilityHeader) };
         let ret = CapabilityPointer {
             id: CapabilityId::from(t.id),

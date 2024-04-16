@@ -2,11 +2,13 @@ use crate::alloc_interface::MmioAlloc;
 use crate::interrupts::apic::apic_structures::apic_types::TimerMode;
 use crate::interrupts::apic::pub_apic::SysApic;
 use crate::interrupts::apic::xapic::xApic;
-use crate::kernel_structures::KernelStatic;
+use crate::util::KernelStatic;
 use alloc::boxed::Box;
+use modular_bitfield::BitfieldSpecifier;
 use apic_structures::registers::ApicError;
 
 pub mod apic_structures;
+pub(crate) mod ioapic;
 pub mod pub_apic;
 pub mod xapic;
 
@@ -14,6 +16,8 @@ pub mod xapic;
 #[thread_local]
 pub(crate) static LOCAL_APIC: KernelStatic<Box<dyn Apic, crate::mem::allocator::GenericAlloc>> =
     KernelStatic::new();
+
+static TIMER_IRQ: crate::util::Worm<super::InterruptIndex> = crate::util::Worm::new();
 
 /// Trait for control over the Local Advanced Programmable Interrupt Controller
 ///
@@ -50,10 +54,75 @@ pub trait Apic: crate::time::Timer {
     fn begin_calibration(&mut self, test_time: u32, vec: u8);
 
     fn get_id(&self) -> u32;
+
+    /// Sends an IPI
+    ///
+    /// See ISDM v4 10.6 for info.
+    ///
+    /// # Safety
+    ///
+    /// This is unsafe because it causes the target(s) to take actions which may cause UB.
+    unsafe fn send_ipi(&mut self, target: IpiTarget, int_type: InterruptType, vector: u8) -> Result<(),IpiError>;
+
+    /// Waits until `timeout` for IPI to be received.
+    /// Returns `false` if timeout is exceeded.
+    fn block_ipi_delivered(&self, timeout: crate::task::util::Duration) -> bool;
 }
 
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub enum IpiError {
+    /// The LAPIC cannot target this APIC-ID.
+    /// This occurs on xAPIC devices when a target greater than `255` is used.
+    BadTarget,
+    /// A non-zero vector was used and the delivery mode was not fixed.
+    ///
+    /// All non-Fixed modes must use vector 0 for forward compatibility.
+    BadMode,
+}
+
+pub enum IpiTarget {
+    /// 00: Targets the CPU  given in the tuple field.
+    Other(crate::mp::CpuIndex),
+    /// 01: Interrupts this CPU.
+    ThisCpu,
+    /// 10: Interrupts all CPUs,
+    All,
+    /// 11: Interrupts all CPUs but not the issuer.
+    AllNotThisCpu
+}
+
+#[derive(BitfieldSpecifier,Copy,Clone,Eq,PartialEq)]
+#[bits = 3]
+pub enum InterruptType {
+    /// Raises an interrupt for the vector given in the vector field.
+    Fixed = 0,
+    /// Delivers the interrupt to the CPU with the lowest priority among the processors specified.
+    /// This a broadcast target or a logical addressing mode.
+    /// This priority is determined by the TPR register
+    ///
+    /// This is model specific, I can't find how to determine if this is supported
+    LowestPriority,
+    /// Raises a System Management Interrupt. This causes the CPU to switch to SMM and do things.
+    /// SMM may do nothing, it may do something, whatever it does will be transparent to the OS.
+    Smi,
+    /// Raises an NMI, this is pretty self explanatory.
+    NMI = 4,
+    /// Signals INIT to the target.
+    /// This should **never** be used with a broadcast or logical target, while it is *technically* allowed it can cause problems.
+    ///
+    /// This resets the target and places it into wait for SIPI mode.
+    Init,
+    /// Startup IPI.
+    /// Causes the target to start executing code at the page address given in the vector field i.e 0xVV0_0000.
+    /// If the target is not in a wait-for-SIPI state then this interrupt is ignored by the target
+    ///
+    /// See [InterruptType::Init] for info about using this with broadcast targets
+    SIPI,
+}
+
+// todo make this configurable at build time
 const TARGET_FREQ: u32 = 300;
-const TARGET_PERIOD: u64 = (1000000000f64 * (1 as f64 / TARGET_FREQ as f64)) as u64; // no touch
+const TARGET_PERIOD: u64 = (1000000000f64 * (1f64 / TARGET_FREQ as f64)) as u64; // no touch
 
 //#[thread_local]
 static mut CALI: Option<u64> = None;
@@ -75,13 +144,33 @@ fn timer_handler() {
 
 /// Calibrates local APIC and sets interrupt handler.
 /// This is temporary and required because of the privacy of [crate::kernel_statics]
-pub fn cal_and_run(time: u32, vec: u8) {
-    LOCAL_APIC.get().begin_calibration(time, vec);
+pub fn cal_and_run(time: u32) {
+    if !TIMER_IRQ.is_set() {
+        // SAFETY: MP not initialized, this cannot cause race conditions
+        unsafe { TIMER_IRQ.write(super::InterruptIndex::Generic(super::reserve_single(0).unwrap())); }
+    }
+
+    LOCAL_APIC.get().begin_calibration(time, TIMER_IRQ.read().as_u8());
 
     unsafe {
-        super::vector_tables::alloc_irq_special(vec, timer_handler).expect("???");
-        LOCAL_APIC.get().init_timer(vec, false);
+        super::vector_tables::alloc_irq_special(TIMER_IRQ.as_u8(), timer_handler).expect("???");
+        LOCAL_APIC.get().init_timer(TIMER_IRQ.as_u8(), false);
     };
+}
+
+/// Attempts to start the timer on the Local APIC using the current timer IRQ and tick rate.
+/// This fn will fail if a timer has not already been configured.
+///
+/// # Safety
+///
+/// This fn **is** safe because it required a pre-existing configuration.
+pub(crate) fn try_start_timer_residual() -> Result<(),()> {
+    unsafe {
+        LOCAL_APIC.get().init_timer(TIMER_IRQ.as_u8(),false);
+        LOCAL_APIC.get().set_timer(TimerMode::Periodic,
+        CALI.ok_or(())? as u32)
+    }
+    Ok(())
 }
 
 /// Determines type of apic and loads it into `LOCAL_APIC`
@@ -109,7 +198,6 @@ pub fn load_apic() {
     }
 
     LOCAL_APIC.init(apic);
-    crate::WHO_AM_I.init(LOCAL_APIC.get().get_id());
 }
 
 /// Declares End Of Interrupt on apic devices, without potentially causing a deadlock.
@@ -125,4 +213,13 @@ pub(crate) unsafe fn apic_eoi() {
 /// Returns an interface for the apic
 pub fn get_apic() -> SysApic {
     SysApic::new()
+}
+
+#[derive(modular_bitfield::BitfieldSpecifier)]
+#[bits = 2]
+enum DestinationShorthand {
+    NoShorthand,
+    ThisCpu,
+    All,
+    AllNotSelf,
 }

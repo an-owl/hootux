@@ -6,6 +6,9 @@
 //! Timers may not all act exactly the same and their module level documentation should reflect
 //! these quirks
 
+use core::pin::Pin;
+use core::task::{Context, Poll};
+
 pub mod acpi_pm_timer;
 pub(crate) type TimerResult = Result<(), TimerError>;
 
@@ -204,6 +207,26 @@ impl Duration {
 
     pub fn get_nanos(&self) -> u64 {
         self.nanos
+    }
+}
+
+pub struct AbsoluteTime {
+    nanos: u64
+}
+
+impl AbsoluteTime {
+
+    /// Returns true if the time represented by self has passed.
+    pub fn is_future(&self) -> bool {
+         self.nanos < get_sys_time()
+    }
+}
+
+impl From<Duration> for AbsoluteTime {
+    fn from(value: Duration) -> Self {
+        Self {
+            nanos: get_sys_time() + value.nanos
+        }
     }
 }
 

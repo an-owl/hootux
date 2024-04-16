@@ -1,6 +1,6 @@
 use super::MemRegion;
 use super::PAGE_SIZE;
-use crate::kernel_structures::mutex::ReentrantMutex;
+use crate::util::mutex::ReentrantMutex;
 use bootloader_api::info::{MemoryRegion, MemoryRegions};
 use x86_64::PhysAddr;
 
@@ -12,8 +12,7 @@ const ORDER_MAX_SIZE: usize = PAGE_SIZE << (ORDERS - 1);
 const HIGH_ORDER_BLOCK_RATIO: u32 = 2;
 const HIGH_ORDER_BLOCK_SIZE: u32 = (ORDER_MAX_SIZE as u32) * HIGH_ORDER_BLOCK_RATIO;
 
-static MEM_MAP: crate::kernel_structures::KernelStatic<PreInitFrameAlloc> =
-    crate::kernel_structures::KernelStatic::new();
+static MEM_MAP: crate::util::KernelStatic<PreInitFrameAlloc> = crate::util::KernelStatic::new();
 
 pub(super) unsafe fn init_mem_map(regions: &'static mut MemoryRegions) {
     MEM_MAP.init(PreInitFrameAlloc::new(regions));
@@ -199,7 +198,7 @@ pub fn drain_map() {
     //let f_alloc = super::SYS_FRAME_ALLOCATOR.alloc.lock();
     //for i in f_alloc.mem_16.free_list {}
 
-    assert!(super::SYS_FRAME_ALLOCATOR
+    assert!(super::allocator::COMBINED_ALLOCATOR.lock().phys_alloc()
         .alloc
         .lock()
         .is_fully_init
@@ -207,11 +206,11 @@ pub fn drain_map() {
 
     // Must be in smallest -> largest order or alloc will try to return the wrong region
     drain_map_inner(MemRegion::Mem16);
-    super::SYS_FRAME_ALLOCATOR.alloc.lock().is_fully_init = Some(MemRegion::Mem16);
+    super::allocator::COMBINED_ALLOCATOR.lock().phys_alloc().alloc.lock().is_fully_init = Some(MemRegion::Mem16);
     drain_map_inner(MemRegion::Mem32);
-    super::SYS_FRAME_ALLOCATOR.alloc.lock().is_fully_init = Some(MemRegion::Mem32);
+    super::allocator::COMBINED_ALLOCATOR.lock().phys_alloc().alloc.lock().is_fully_init = Some(MemRegion::Mem32);
     drain_map_inner(MemRegion::Mem64);
-    super::SYS_FRAME_ALLOCATOR.alloc.lock().is_fully_init = Some(MemRegion::Mem64);
+    super::allocator::COMBINED_ALLOCATOR.lock().phys_alloc().alloc.lock().is_fully_init = Some(MemRegion::Mem64);
 }
 
 /// Inner fn for `drain_map()` drains all of `MEM_MAP`'s region into `super::SYS_FRAME_ALLOC`
@@ -250,7 +249,8 @@ fn drain_map_inner(region: MemRegion) {
         );
 
         #[cfg(not(feature = "alloc-debug-serial"))]
-        let f_alloc = super::SYS_FRAME_ALLOCATOR.get().frame_alloc.alloc.lock();
+        let b = super::allocator::COMBINED_ALLOCATOR.lock();
+        let f_alloc = b.phys_alloc().get().frame_alloc.alloc.lock();
 
         #[cfg(feature = "alloc-debug-serial")]
         let mut f_alloc = super::SYS_FRAME_ALLOCATOR.get().frame_alloc.alloc.lock();
@@ -267,7 +267,7 @@ fn drain_map_inner(region: MemRegion) {
         drop(f_alloc);
 
         // SAFETY: region is given by frame allocator and is unused
-        unsafe { super::SYS_FRAME_ALLOCATOR.dealloc(base, len) }
+        unsafe { super::allocator::COMBINED_ALLOCATOR.lock().phys_alloc().dealloc(base, len) }
 
         #[cfg(feature = "alloc-debug-serial")]
         {
@@ -404,23 +404,21 @@ impl DmaRegion {
 
             if let None = filter.next() {
                 // still calls Box::new
-                if i != ORDERS - 1 {
-                    drop(filter);
-                } else {
-                    // I could make this locate any adjacent memory regions and free those but this is just convenient
-
-                    // gets the address of the lower buddy regardless of whether this is the higher one or not.
-                    let ba = addr as u64 & !(HIGH_ORDER_BLOCK_SIZE - 1) as u64;
-
-                    // Will never return None
-                    let f = super::high_order_alloc::FreeMem::new(ba, HIGH_ORDER_BLOCK_SIZE as u64)
-                        .unwrap();
-                    self.high_order
-                        .free(f)
-                        .expect("Failed to move memory into HighOrderAlloc");
-                }
+                drop(filter);
                 use_ord = i;
                 break;
+            } else if i == ORDERS - 1 {
+                // I could make this locate any adjacent memory regions and free those but this is just convenient
+
+                // gets the address of the lower buddy regardless of whether this is the higher one or not.
+                let ba = addr as u64 & !(HIGH_ORDER_BLOCK_SIZE - 1) as u64;
+
+                // Will never return None
+                let f = super::high_order_alloc::FreeMem::new(ba, HIGH_ORDER_BLOCK_SIZE as u64)
+                    .unwrap();
+                self.high_order
+                    .free(f)
+                    .expect("Failed to move memory into HighOrderAlloc");
             }
         }
         self.free_list[use_ord].push_front(addr)

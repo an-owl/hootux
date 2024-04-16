@@ -55,7 +55,10 @@ impl DeviceAddress {
         }
     }
 
-    fn advanced_cfg_addr(&self, mcfg: &acpi::mcfg::PciConfigRegions) -> Option<u64> {
+    fn advanced_cfg_addr(
+        &self,
+        mcfg: &acpi::mcfg::PciConfigRegions<alloc::alloc::Global>,
+    ) -> Option<u64> {
         mcfg.physical_address(self.segment_group, self.bus, self.device, self.function)
     }
 
@@ -107,7 +110,7 @@ impl core::fmt::Debug for DeviceControl {
 }
 
 pub struct LockedDevice<'a> {
-    inner: crate::kernel_structures::mutex::MutexGuard<'a, DeviceControl>,
+    inner: crate::util::mutex::MutexGuard<'a, DeviceControl>,
 }
 
 impl<'a> core::ops::Deref for LockedDevice<'a> {
@@ -145,12 +148,16 @@ impl Ord for DeviceControl {
 }
 
 impl DeviceControl {
+
+    // This is required because rustc cannot determine that raw pointers point to an array
+    #[allow(invalid_reference_casting)]
     fn new(cfg_region_addr: u64, address: DeviceAddress) -> Option<Self> {
         let mut cfg_region = unsafe {
             MmioAlloc::new(cfg_region_addr as usize)
                 .boxed_alloc::<[u8; 4096]>()
                 .unwrap()
         };
+
 
         let header_region =
             unsafe { &mut *(&mut cfg_region[0] as *mut _ as *mut configuration::CommonHeader) };
@@ -159,6 +166,7 @@ impl DeviceControl {
             return None;
         }
         let header_type = header_region.header_type();
+
 
         // Drop to prevent aliasing
         let header: &mut dyn PciHeader = match header_type {
@@ -871,13 +879,13 @@ impl Ord for BarInfo {
     }
 }
 
-pub fn enumerate_devices(pci_regions: &acpi::mcfg::PciConfigRegions) {
+pub fn enumerate_devices(pci_regions: &acpi::mcfg::PciConfigRegions<alloc::alloc::Global>) {
     scan::scan_advanced(pci_regions)
 }
 
 // todo: Should this be in another module? if so probably system
 struct HwMap<K: Ord, V> {
-    lock: crate::kernel_structures::Mutex<()>,
+    lock: crate::util::Mutex<()>,
     map: core::cell::UnsafeCell<alloc::collections::BTreeMap<K, V>>,
 }
 
@@ -886,7 +894,7 @@ impl<K: Ord, V> HwMap<K, V> {
     // This prevents synchronisation errors. derefs are safe because the inner value is initialized
     fn new() -> Self {
         Self {
-            lock: crate::kernel_structures::Mutex::new(()),
+            lock: crate::util::Mutex::new(()),
             map: core::cell::UnsafeCell::new(alloc::collections::BTreeMap::new()),
         }
     }

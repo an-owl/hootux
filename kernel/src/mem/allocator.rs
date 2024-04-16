@@ -14,8 +14,8 @@ pub mod page_table_allocator;
 //pub mod mmio_bump_alloc;
 pub mod alloc_interface;
 pub(self) mod allocator_linked_list;
-mod buddy_alloc;
-pub(self) mod combined_allocator;
+pub(super) mod buddy_alloc;
+pub(super) mod combined_allocator;
 
 pub struct Locked<A> {
     inner: spin::Mutex<A>,
@@ -41,9 +41,9 @@ static ALLOCATOR: Locked<fixed_size_block::FixedBlockAllocator> =
     Locked::new(fixed_size_block::FixedBlockAllocator::new());
 
 #[global_allocator]
-static COMBINED_ALLOCATOR: crate::kernel_structures::mutex::ReentrantMutex<
+pub(super) static COMBINED_ALLOCATOR: crate::util::mutex::ReentrantMutex<
     combined_allocator::DualHeap<buddy_alloc::BuddyHeap, fixed_size_block::NewFixedBlockAllocator>,
-> = crate::kernel_structures::mutex::ReentrantMutex::new(combined_allocator::DualHeap::new(
+> = crate::util::mutex::ReentrantMutex::new(combined_allocator::DualHeap::new(
     buddy_alloc::BuddyHeap::new(),
     fixed_size_block::NewFixedBlockAllocator::new(),
 ));

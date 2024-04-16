@@ -126,6 +126,7 @@ impl HandleRegistry {
             InterruptHandleContainer::Reserved => Ok(()),
             InterruptHandleContainer::SpecialHandle(_) => Ok(()),
             InterruptHandleContainer::Generic(_) => Ok(()),
+            InterruptHandleContainer::HighPerfCascading(_) => Ok(()),
         }
     }
 
@@ -202,6 +203,9 @@ impl HandleRegistry {
     }
 }
 
+// SAFETY: HandleRegistry handles its own thread synchronization
+unsafe impl Sync for HandleRegistry {}
+
 /// Allocates a special interrupt handler for `irq` which will call `handle`.
 ///
 /// Returns `Err(()) if the given interrupt handler is already allocated.
@@ -265,7 +269,7 @@ impl InterruptHandle {
 }
 
 /// Indicates the current state of the IRQ and the type of handler it uses.
-pub(crate) enum InterruptHandleContainer {
+pub enum InterruptHandleContainer {
     Empty,
     /// Reserved IRQs are specially requested, These should not be modified except by the caller
     /// that reserved them
@@ -274,6 +278,7 @@ pub(crate) enum InterruptHandleContainer {
     SpecialHandle(fn()),
     /// Generic handlers will wake a kernel task and push a vector number onto the tasks work queue
     Generic(InterruptHandle),
+    HighPerfCascading(alloc::vec::Vec<alloc::boxed::Box<dyn Fn()>>),
 }
 
 impl InterruptHandleContainer {
@@ -283,6 +288,7 @@ impl InterruptHandleContainer {
             InterruptHandleContainer::Reserved => None,
             InterruptHandleContainer::SpecialHandle(_) => Some(self),
             InterruptHandleContainer::Generic(_) => Some(self),
+            InterruptHandleContainer::HighPerfCascading(_) => Some(self),
         }
     }
 
@@ -290,6 +296,11 @@ impl InterruptHandleContainer {
         match self {
             InterruptHandleContainer::SpecialHandle(h) => h(),
             InterruptHandleContainer::Generic(h) => h.call(),
+            InterruptHandleContainer::HighPerfCascading(v) => {
+                for i in v {
+                    i()
+                }
+            }
             _ => {}
         }
     }

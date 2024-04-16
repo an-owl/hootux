@@ -44,6 +44,12 @@ recommend setting an `uefi.vars` a efivars file.
 This part is mostly for my own sanity to try to manage what I want to do and to lay out the things I need to to to
 achieve them.
 
+ - Remove combinedAllocator in favour of a solution that doesn't suck.
+ - Replace InterruptIndex with abstract IRQ type
+   - Replace all its uses
+   - Ok maybe it should be a struct wrapper around it.
+     - This allows a proper kernel interrupt API using a private InterruptIndex
+ - Unify initialization of ACPI consumers
  - Clean up memory module
    - make buddy allocators use the same code
      - use a marker for optimizing it.
@@ -58,15 +64,17 @@ achieve them.
    - because I really need to
  - Add gdbstub
    - do mp first. to allow tasks to be run asynchronously while the debugger is doing things.
- - Multiprocessing
+ - ~~Multiprocessing~~
    - NUMA?
    - thread local allocators?
+   - Add TLB synchronization to allocator to prevent shootdowns
+     - Add dirty linear-memory free-list where linear addresses are freed into.
  - Add caching mechanism
    - Because it seems useful and interesting to implement
    - I need to figure out the best way to do this too.
    - I'd like to use an ARC algorithm, but it seems a bit over my head.
  - ANSI support
-   - This will require creating a font module using bitmaps not rasters
+   - ~~This will require creating a font module using bitmaps not rasters~~
      - Just take a font from Linux and use `bindgen`
  - VFS
    - Support FAT filesystems

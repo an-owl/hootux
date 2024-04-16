@@ -1,16 +1,18 @@
 use crate::gdt;
 use crate::interrupts::apic::LOCAL_APIC;
 use crate::println;
-use kernel_interrupts_proc_macro::{gen_interrupt_stubs, set_idt_entries};
 use lazy_static::lazy_static;
 use log::{error, warn};
 use x86_64::structures::idt::{InterruptDescriptorTable, InterruptStackFrame, PageFaultErrorCode};
 
 pub mod apic;
 pub mod vector_tables;
+pub mod buff;
 
 pub const PIC_0_OFFSET: u8 = 32;
 pub const PIC_1_OFFSET: u8 = PIC_0_OFFSET + 8;
+
+kernel_proc_macro::interrupt_config!(pub const PUB_VEC_START: u8 = 0x21; fn bind_stubs);
 
 pub static PICS: spin::Mutex<pic8259::ChainedPics> =
     spin::Mutex::new(unsafe { pic8259::ChainedPics::new(PIC_0_OFFSET, PIC_1_OFFSET) });
@@ -32,11 +34,12 @@ lazy_static! {
                 .set_stack_index(gdt::DOUBLE_FAULT_IST_INDEX);
         }
 
-        idt[InterruptIndex::Timer.as_usize()].set_handler_fn(timer_interrupt_handler);
         idt[InterruptIndex::Keyboard.as_usize()].set_handler_fn(keyboard_interrupt_handler);
         idt.general_protection_fault.set_handler_fn(except_general_protection);
+        idt.segment_not_present.set_handler_fn(except_seg_not_present);
+        idt[32].set_handler_fn(crate::mem::tlb::int_shootdown_wrapper);
         idt[33].set_handler_fn(apic_error);
-        set_idt_entries!(34);
+        bind_stubs(&mut idt);
         idt[255].set_handler_fn(spurious);
         idt
     };
@@ -114,6 +117,10 @@ extern "x86-interrupt" fn spurious(sf: InterruptStackFrame) {
     println!("{sf:#?}");
 }
 
+extern "x86-interrupt" fn except_seg_not_present(sf: InterruptStackFrame, e: u64) {
+    panic!("**SEGMENT NOT PRESENT**\n{sf:#?}\n{e:#x}")
+}
+
 #[test_case]
 fn test_breakpoint() {
     init_exceptions();
@@ -124,8 +131,8 @@ fn test_breakpoint() {
 #[derive(Clone, Copy, Debug)]
 #[repr(u8)]
 pub enum InterruptIndex {
-    Timer = PIC_0_OFFSET,
     Keyboard,
+    TlbShootdown, // 0x21
     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
     Generic(u8),
 }
@@ -137,20 +144,68 @@ impl From<u8> for InterruptIndex {
 }
 
 impl InterruptIndex {
-    fn as_u8(self) -> u8 {
+    pub(crate) fn as_u8(self) -> u8 {
         match self {
-            InterruptIndex::Timer => PIC_0_OFFSET,
-            InterruptIndex::Keyboard => PIC_0_OFFSET + 1,
-            InterruptIndex::Generic(n) => n,
+            Self::Keyboard => PIC_0_OFFSET + 1,
+            Self::TlbShootdown => 0x20,
+            Self::Generic(n) => n,
         }
     }
 
     fn as_usize(self) -> usize {
         usize::from(self.as_u8())
     }
+
+    /// Binds the GSI to the IRQ represented by self.
+    /// This will configure the interrupt using `config`.
+    /// The vector field of `config` will be replaced with the real vector allocated to this IRQ
+    pub fn get_gsi(&self, gsi: u8) -> apic::ioapic::GlobalSystemInterrupt {
+        apic::ioapic::GlobalSystemInterrupt::new(gsi, self.as_u8())
+    }
+
+    /// Returns a [apic::ioapic::GlobalSystemInterrupt] for a legacy ISA interrupt.
+    /// If a [crate::system::sysfs::systemctl::InterruptOverride] is returned then this fn will
+    /// attempt to set the `polarity` and `trigger_mode` if they are defined otherwise they must  be
+    /// configured by the caller.
+    /// It is UB to modify `polarity` and `trigger_mode` if they are defined by the override struct
+    pub fn get_isa(
+        &self,
+        isa_irq: u8,
+    ) -> (
+        apic::ioapic::GlobalSystemInterrupt,
+        Option<crate::system::sysfs::systemctl::InterruptOverride>,
+    ) {
+        if let Some(v) = crate::system::sysfs::get_sysfs()
+            .systemctl
+            .ioapic
+            .lookup_override(isa_irq)
+        {
+            let mut gsi = apic::ioapic::GlobalSystemInterrupt::new(
+                v.global_system_interrupt as u8,
+                self.as_u8(),
+            );
+            if let Some(p) = v.polarity {
+                gsi.polarity = p;
+            }
+            if let Some(m) = v.trigger_mode {
+                gsi.trigger_mode = m;
+            }
+            (gsi, Some(v))
+        } else {
+            (self.get_gsi(isa_irq), None)
+        }
+    }
+
+    /// Sets the interrupt handler in the interrupt handler registry
+    ///
+    /// The caller must ensure that hte registered handler correctly handles any interrupts raised
+    #[track_caller]
+    pub fn set(&self, handler: vector_tables::InterruptHandleContainer) {
+        assert!(handler.callable().is_some(), "Tried to set invalid handler");
+        vector_tables::IHR.set(self.as_u8(), handler).unwrap() // ?
+    }
 }
 
-gen_interrupt_stubs!(34);
 
 /// Attempts to reserve `count` contiguous interrupts. Starting at `req_priority`.
 /// If `count` contiguous interrupts cannot be located this fn will return the next highest number
@@ -167,7 +222,7 @@ pub fn reserve_irq(req_priority: u8, count: u8) -> Result<u8, u8> {
     ihr.lock();
 
     let n = ihr
-        .reserve_contiguous(req_priority.max(32), count) // vec[0..32] is reserved for exceptions
+        .reserve_contiguous(req_priority.max(PUB_VEC_START), count) // vec[0..32] is reserved for exceptions
         .map_err(|n| n)?;
 
     ihr.free();
@@ -177,7 +232,7 @@ pub fn reserve_irq(req_priority: u8, count: u8) -> Result<u8, u8> {
 
 /// Reserves a single irq without locking the IHR
 pub fn reserve_single(req_priority: u8) -> Option<u8> {
-    vector_tables::IHR.reserve_contiguous(req_priority, 1).ok()
+    vector_tables::IHR.reserve_contiguous(req_priority.max(PUB_VEC_START), 1).ok()
 }
 
 /// Registers an interrupt handler to the given IRQ. This function will return `Ok(())` on success
@@ -224,4 +279,8 @@ pub(crate) fn reg_waker(irq: InterruptIndex, waker: &core::task::Waker) -> Resul
     } else {
         Err(())
     }
+}
+
+pub fn load_idt() {
+    IDT.load();
 }

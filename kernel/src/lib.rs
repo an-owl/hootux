@@ -16,6 +16,7 @@
 #![feature(linked_list_cursors)]
 #![feature(core_intrinsics)]
 #![feature(box_into_inner)]
+#![feature(link_llvm_intrinsics)]
 
 extern crate alloc;
 pub use mem::allocator::alloc_interface;
@@ -24,17 +25,19 @@ mod device_check;
 pub mod gdt;
 pub mod graphics;
 pub mod interrupts;
-mod kernel_structures;
 mod logger;
 pub mod mem;
+pub mod mp;
 pub mod runlevel;
 pub mod serial;
 pub mod system;
 pub mod task;
 pub mod time;
+mod util;
+pub mod llvm;
 
 #[thread_local]
-static WHO_AM_I: kernel_structures::UnlockedStatic<u32> = kernel_structures::UnlockedStatic::new();
+static WHO_AM_I: util::UnlockedStatic<u32> = util::UnlockedStatic::new();
 
 /// Return the ApicId given by the APIC where available or via CPUID.
 fn who_am_i() -> u32 {
@@ -45,13 +48,18 @@ fn who_am_i() -> u32 {
     }
 
     let cpuid = raw_cpuid::CpuId::new();
-    if let Some(_) = cpuid.get_extended_topology_info_v2() {
+    let id = if let Some(_) = cpuid.get_extended_topology_info_v2() {
         raw_cpuid::cpuid!(0x1f).edx
     } else if let Some(_) = cpuid.get_extended_topology_info() {
         raw_cpuid::cpuid!(0xb).edx
     } else {
         return cpuid.get_feature_info().unwrap().initial_local_apic_id() as u32;
+    };
+    if runlevel::runlevel() != runlevel::Runlevel::PreInit {
+        WHO_AM_I.init(id);
+        x86_64::instructions::nop();
     }
+    id
 }
 
 pub trait Testable {
@@ -77,12 +85,20 @@ pub fn test_runner(tests: &[&dyn Testable]) {
     exit_qemu(QemuExitCode::Success);
 }
 
+pub fn p_pat() {
+    use x86_msr::Msr;
+    log::debug!("{:?}", unsafe { x86_msr::architecture::Pat::read() })
+}
+
 pub fn init() {
+    serial_println!("Called init");
     gdt::init();
     interrupts::init_exceptions();
     //unsafe { interrupts::PICS.lock().initialize() }
     unsafe { interrupts::PICS.lock().disable() }
     x86_64::instructions::interrupts::enable();
+    mem::write_combining::init_wc();
+    serial_println!("Exited init")
 }
 
 pub fn init_logger() {

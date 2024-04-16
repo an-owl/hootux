@@ -3,20 +3,22 @@ use core::fmt;
 use core::fmt::Write;
 use x86_64::instructions::interrupts::without_interrupts;
 
+use fontgen_bugfix as bitmap_fontgen;
+
 const FONT_SIZE: bitmap_fontgen::FontSize = bitmap_fontgen::FontSize {
     width: 8,
     height: 16,
 };
 const FONT_WEIGHT: bitmap_fontgen::FontWeight = bitmap_fontgen::FontWeight { inner: "Medium" };
 
-type LockedFb<'a> = crate::kernel_structures::static_protected::Ref<'a, FrameBuffer>;
+type LockedFb<'a> = crate::util::static_protected::Ref<'a, FrameBuffer>;
 
 //TODO add scheduled write from buffer
 pub static WRITER: spin::Mutex<Option<BasicTTY>> = spin::Mutex::new(None);
 
 //assume framebuffer is always `Some`
 pub struct BasicTTY {
-    framebuffer: &'static crate::kernel_structures::KernelStatic<FrameBuffer>,
+    framebuffer: &'static crate::util::KernelStatic<FrameBuffer>,
     font_map: bitmap_fontgen::Font,
 
     cursor_x: usize,
@@ -31,7 +33,7 @@ pub struct BasicTTY {
 
 impl BasicTTY {
     /// create new BasicTTY
-    pub fn new(buff: &'static crate::kernel_structures::KernelStatic<FrameBuffer>) -> Self {
+    pub fn new(buff: &'static crate::util::KernelStatic<FrameBuffer>) -> Self {
         let char_width = FONT_SIZE.width as usize;
         let char_height = FONT_SIZE.height as usize;
 

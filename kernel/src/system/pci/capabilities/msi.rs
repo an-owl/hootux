@@ -299,6 +299,8 @@ impl<'a> TryFrom<&'a mut DeviceControl> for MessageSignaledIntX<'a> {
 
     fn try_from(dev: &'a mut DeviceControl) -> Result<Self, Self::Error> {
         let cap = dev.capabilities.get(&CapabilityId::MsiX).ok_or(())?.clone();
+
+        #[allow(invalid_reference_casting)]
         let base =
             unsafe { &mut *(&mut dev.cfg_region[cap.offset as usize] as *mut _ as *mut RawMsiX) };
 

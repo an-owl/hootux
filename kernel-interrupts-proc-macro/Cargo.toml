@@ -1,5 +1,5 @@
 [package]
-name = "kernel-interrupts-proc-macro"
+name = "kernel-proc-macro"
 version = "0.1.0"
 edition = "2021"
 
@@ -8,5 +8,7 @@ edition = "2021"
 proc-macro = true
 
 [dependencies]
-syn = { version = "1.0.99" }
+syn = { version = "2.0.58",features = ["full"] }
 quote = "1.0.21"
+proc-macro2 = "1.0.79"
+multiboot2-header = "0.3.2"
