@@ -103,9 +103,7 @@ impl syn::parse::Parse for MultiBootHeaderParser {
         let _ = input.parse::<syn::Token![,]>(); // I don't actually care if this is found but if one is here it needs to be removed
 
         let mut tags = Vec::new();
-        let mut c = 0;
         while !input.is_empty() {
-            c += 1;
             tags.push(input.parse()?);
             let _ = input.parse::<syn::Token![,]>();
         }
