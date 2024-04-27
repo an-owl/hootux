@@ -25,13 +25,30 @@ const BOOT_CONFIG: bootloader_api::BootloaderConfig = {
     let mut cfg = bootloader_api::BootloaderConfig::new_default();
     cfg.kernel_stack_size = 0x100000;
     cfg.mappings.physical_memory = Some(Mapping::Dynamic);
-
     cfg
 };
+
+kernel_proc_macro::multiboot2_header! {
+    multiboot2_header::HeaderTagISA::I386,
+    #[link_section = ".multiboot2_header"],
+    multiboot2_header::EfiBootServiceHeaderTag::new(multiboot2_header::HeaderTagFlag::Required),
+    multiboot2_header::EntryEfi64HeaderTag::new(multiboot2_header::HeaderTagFlag::Required, 0x200000), // address is specified in linker script
+    Pad::new(),
+}
+
+#[allow(dead_code)]
+struct Pad(u32);
+
+impl Pad {
+    const fn new() -> Pad {
+        Pad(0)
+    }
+}
 
 entry_point!(kernel_main, config = &BOOT_CONFIG);
 #[no_mangle]
 fn kernel_main(b: &'static mut bootloader_api::BootInfo) -> ! {
+
     //initialize system
 
     serial_println!("Kernel start");
@@ -136,6 +153,15 @@ fn kernel_main(b: &'static mut bootloader_api::BootInfo) -> ! {
 
     task::run_task(Box::pin(keyboard::print_key()));
     task::run_exec(); //executor.run();
+}
+
+
+libboot::kernel_entry!(_libboot_entry);
+
+#[no_mangle]
+pub extern "C" fn _libboot_entry(_bi: libboot::boot_info::BootInfo) -> ! {
+    log::info!("libboot worked");
+    stop();
 }
 
 fn say_hi() {

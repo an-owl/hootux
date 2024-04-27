@@ -38,7 +38,7 @@ impl MultiBootHeaderParser {
                 checksum: i32,
             }
 
-            #[repr(C, packed(8))]
+            #[repr(C, packed(4))]
             struct #st_name {
                 #buff ,
                 tail: ::multiboot2_header::EndHeaderTag

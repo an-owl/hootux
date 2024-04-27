@@ -12,6 +12,9 @@ log = "0.4.17"
 x86_64 = "0.14.10"
 acpi = "5.0.0"
 
-futures-util = { version = "0.3.28", default-features = false, features = ["alloc","sink"] }
+multiboot2-header = "0.3.2"
+libboot = { path = "../lib/libboot", features = ["uefi","multiboot2","debug-bits"]}
+kernel-proc-macro = { path = "../kernel-interrupts-proc-macro"}
 
+futures-util = { version = "0.3.28", default-features = false, features = ["alloc","sink"] }
 ahci = { path = "../drivers/ahci" }
