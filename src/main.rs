@@ -1,5 +1,5 @@
 use getopts::{Fail, HasArg, Occur};
-use std::io::Read;
+use std::io::{Read, Write};
 use std::process::{Command, Stdio};
 use toml::value::Value;
 
@@ -9,6 +9,18 @@ static BRIEF: &str = r#"\
 Usage `cargo run -- [OPTIONS]`
 "#;
 
+const GRUB_DEFAULT_CONFIG: &str =
+r#"set timeout=0
+set default=0
+
+menuentry hootux {
+    insmod all_video
+    GRUB_GFXMODE=auto
+    multiboot2 /boot/hootux
+    boot
+}
+"#;
+
 /*
 Return codes:
 0. Ok
@@ -16,15 +28,26 @@ Return codes:
 2. Argument error
 4. Unable to locate firmware
 5. Unable to locate qemu
+6. fs error during build
 0x1? toml misconfigured
+0x6x
+0x2x failed to run something
 */
 
 fn main() {
     let opts = Options::get_args();
-    opts.export();
     let toml = opts.fetch_toml();
 
-    let mut qemu = if let Some(q) = opts.build_exec(&toml) {
+    let kernel = if let Some(k) = build_kernel() {
+        k
+    } else {
+        eprintln!("Failed to get path to kernel");
+        std::process::exit(0x26)
+    };
+    let img = opts.build_grub_img(&kernel);
+
+    let mut qemu = if let Some(q) = opts.build_exec(&img, &toml) {
+        eprintln!("{q:?}");
         q
     } else {
         std::process::exit(0)
@@ -34,7 +57,7 @@ fn main() {
 
     let mut run = || {
         let mut qemu_child = qemu.spawn().unwrap();
-        if let Some(mut c) = opts.run_debug(&toml) {
+        if let Some(mut c) = opts.run_debug(&toml, &kernel) {
             children.push(c.spawn().unwrap());
         }
         qemu_child
@@ -61,21 +84,14 @@ enum Subcommand {
 }
 
 impl Subcommand {
-    fn build_qemu(&self) -> Option<Command> {
+    fn build_qemu(&self, drive: impl AsRef<std::path::Path>) -> Option<Command> {
         let mut command = Command::new(QEMU);
 
-        let uefi_path = env!("UEFI_PATH");
-        let bios_path = env!("BIOS_PATH");
         match self {
-            Subcommand::Bios => {
+            Subcommand::Uefi | Subcommand::Bios => {
                 command
                     .arg("-drive")
-                    .arg(format!("format=raw,file={bios_path}"));
-            }
-            Subcommand::Uefi => {
-                command
-                    .arg("-drive")
-                    .arg(format!("format=raw,file={uefi_path}"));
+                    .arg(format!("format=raw,file={}",drive.as_ref().to_str().unwrap()));
             }
             Subcommand::NoRun => return None,
         }
@@ -102,6 +118,7 @@ struct Options {
     confg_path: String,
     native_dbg_shell: bool,
     daemonize: bool,
+    grub_cfg: String,
 }
 
 impl Options {
@@ -126,7 +143,7 @@ impl Options {
         opts.opt(
             "e",
             "export",
-            "Exports binary. By default located in `./target`. Cannot be used with --uefi",
+            "Deprecated - does nothing. I may re-enable this in the future",
             "OUT_FILE",
             HasArg::Maybe,
             Occur::Optional,
@@ -163,6 +180,14 @@ impl Options {
             "",
             HasArg::No,
             Occur::Optional,
+        );
+        opts.opt(
+            "g",
+            "grub-cfg",
+            "Overrides the default grub config with the one given in the path",
+            "-g PATH",
+            HasArg::Yes,
+            Occur::Optional
         );
 
         let matches = match opts.parse(std::env::args_os()) {
@@ -232,6 +257,21 @@ impl Options {
             }
         };
 
+        let grub_cfg = {
+            if matches.opt_present("g") {
+                let path = matches.opt_str("g").expect("Opt `g` require argument but `None` was returned");
+                match std::fs::read_to_string(path) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        eprintln!("Failed to read supplied grub config {e}");
+                        std::process::exit(0x25);
+                    }
+                }
+            } else {
+                GRUB_DEFAULT_CONFIG.to_string()
+            }
+        };
+
         Options {
             subcommand,
             debug: debug.map_or_else(|| matches.opt_present("debug"), |_| true),
@@ -245,6 +285,7 @@ impl Options {
                 .unwrap_or("runcfg.toml".to_string()),
             native_dbg_shell: matches.opt_present("n"),
             daemonize: matches.opt_present("daemonize"),
+            grub_cfg
         }
     }
 
@@ -265,8 +306,8 @@ impl Options {
     }
 
     /// This fn may return a Command for QEMU.  
-    fn build_exec(&self, toml: &Value) -> Option<Command> {
-        let mut qemu = self.subcommand.build_qemu()?;
+    fn build_exec(&self, drive: impl AsRef<std::path::Path>,toml: &Value) -> Option<Command> {
+        let mut qemu = self.subcommand.build_qemu(drive)?;
         let mut args = Vec::new();
 
         let mut parse_args = |table| {
@@ -353,43 +394,7 @@ impl Options {
         Some(qemu)
     }
 
-    /// Runs export operation if export is enabled. Exports to `./` target if no path si specified
-    ///
-    /// # Panics
-    ///
-    /// This fn will panic if `std::fs::copy()` fails
-    fn export(&self) {
-        if self.export {
-            if let Some(path) = self.export_path.as_ref() {
-                let destination = std::path::PathBuf::from(path);
-                let bin = std::path::Path::new(env!("KERNEL_BIN"));
-
-                std::fs::copy(bin, destination)
-                    .expect(&*format!("Failed to export file to {}", path));
-            } else {
-                let path = env!("KERNEL_BIN").to_string();
-                let bin = std::path::PathBuf::from(path.clone());
-
-                let mut target = None;
-                for p in bin.ancestors() {
-                    if p.ends_with("release") || p.ends_with("debug") {
-                        target = Some(p)
-                    }
-                }
-
-                if let Some(p) = target {
-                    std::fs::copy(&bin, p).expect(&*format!("Failed to export file to {}", path));
-                } else {
-                    eprintln!(
-                        "Unable to figure out where to export. Please provide path to --export"
-                    );
-                    eprintln!("Error: failed to export continuing anyway");
-                }
-            }
-        }
-    }
-
-    fn run_debug(&self, toml: &Value) -> Option<Command> {
+    fn run_debug(&self, toml: &Value, kernel: impl AsRef<std::path::Path>) -> Option<Command> {
         let dbg = self.launch_debug?;
         let mut term_args =
             if let Some(Value::Array(args)) = toml_fast(toml, "debug.terminal".to_string()) {
@@ -459,7 +464,7 @@ impl Options {
 
             let mut dbg = dbg_path;
             dbg += " ";
-            dbg += env!("KERNEL_BIN");
+            dbg += kernel.as_ref().to_str().unwrap();
             if let Some(dbg_args) = dbg_args {
                 for i in dbg_args {
                     if let Value::String(s) = i {
@@ -474,7 +479,7 @@ impl Options {
         } else {
             // if a terminal has not been specified
             let mut command = Command::new(dbg_path);
-            command.arg(env!("KERNEL_BIN"));
+            command.arg(kernel.as_ref().as_os_str());
             if let Some(dbg_args) = dbg_args {
                 for i in dbg_args {
                     if let Value::String(s) = i {
@@ -485,6 +490,68 @@ impl Options {
 
             Some(command)
         };
+    }
+
+    fn build_grub_img(&self, kernel: impl AsRef<std::path::Path>) -> std::path::PathBuf {
+        macro_rules! mkdir {
+            ($path:expr) => {
+                match std::fs::create_dir($path) {
+                    Ok(_) => {},
+                    Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {},
+                    Err(e) => {
+                        eprintln!("{e}");
+                        std::process::exit(0x60)
+                    },
+                }
+            };
+        }
+
+        let tgt: std::path::PathBuf = "target".into();
+        mkdir!(tgt.join("img"));
+        mkdir!(tgt.join("img/boot"));
+        mkdir!(tgt.join("img/boot/grub"));
+        let mut cfg = match std::fs::File::create(tgt.join("img/boot/grub/grub.cfg")) {
+            Ok(f) => f,
+            Err(e) => {
+                eprintln!("{e}");
+                std::process::exit(0x60)
+            }
+        };
+        if let Err(e) = write!(cfg, "{}", self.grub_cfg) {
+            eprintln!("Failed to write grub.cfg {e}");
+            std::process::exit(0x61)
+        };
+
+        match std::fs::copy(kernel,tgt.join("img/boot/hootux")) {
+            Ok(_) => {}
+            Err(e) => {
+                eprintln!("Failed to copy kernel {e}");
+                std::process::exit(0x61);
+            }
+        };
+
+        const IMG_NAME: &str = "grub.img";
+        let img = tgt.join(IMG_NAME);
+        let mut mkrescue = Command::new("grub-mkrescue");
+        mkrescue.args(["-o",IMG_NAME,"img"]);
+        mkrescue.current_dir(tgt);
+        eprintln!("Running {:?}",mkrescue);
+        let mut child = match mkrescue.spawn() {
+            Ok(c) => c,
+            Err(e) => {
+                eprintln!("Failed to start, returned {e}");
+                std::process::exit(0x20)
+            }
+        };
+
+        match child.wait() {
+            Ok(_) => {}
+            Err(e) => {
+                eprintln!("{mkrescue:?} returned {e}");
+                std::process::exit(0x21)
+            }
+        }
+        img
     }
 }
 
@@ -509,4 +576,28 @@ fn toml_fast(toml: &Value, path: String) -> Option<&Value> {
         }
     }
     Some(value)
+}
+
+fn build_kernel() -> Option<std::path::PathBuf> {
+    let mut cargo = Command::new("cargo");
+    cargo.current_dir("kernel-bin");
+    cargo.arg("build").arg("--message-format=json").arg("--target=x86_64-unknown-none");
+    cargo.stdout(Stdio::piped());
+
+    let mut child = cargo.spawn().ok()?;
+    let out = child.stdout.take()?;
+
+    for i in cargo_metadata::Message::parse_stream(std::io::BufReader::new(out)) {
+        match i {
+            Ok(cargo_metadata::Message::CompilerArtifact(m)) => {
+                if m.target.name == "hootux-bin" {
+                    return m.executable.map(|p| p.into())
+                }
+            }
+            Ok(_) => continue,
+            Err(e) => panic!("Failed to read stdout for cargo: {e}"),
+        }
+    };
+    eprintln!("Error: Artifact for `kernel-bin` not found");
+    std::process::exit(0x24);
 }
