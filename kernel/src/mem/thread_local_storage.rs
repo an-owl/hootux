@@ -6,9 +6,9 @@
 use alloc::boxed::Box;
 use x86_msr::Msr;
 
-const TLS_ALIGN: usize = 8;
+const TLS_ALIGN: usize = 4096;
 
-/// Creates a region of `mem_size` which contains contains thread local data. This function will allocate
+/// Creates a region of `mem_size` which contains thread local data. This function will allocate
 /// `mem_size` bytes onto the heap. The returned pointer points to the uninitialized Thread Control
 /// Block.
 ///
@@ -48,7 +48,7 @@ pub unsafe fn new_tls(t_data: *const u8, file_size: usize, mem_size: usize) -> *
 ///
 /// This function will leak `mem_size` bytes onto the heap
 ///
-/// # Saftey
+/// # Safety
 ///
 /// This function is unsafe because the caller must ensure that the given args properly describe
 /// the thread local template.
