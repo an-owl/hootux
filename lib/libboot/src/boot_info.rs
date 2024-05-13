@@ -3,7 +3,6 @@
 pub use ::uefi::table::boot::MemoryType;
 #[cfg(feature = "uefi")]
 pub use ::uefi::table::boot::MemoryAttribute;
-
 use cfg_if::cfg_if;
 
 cfg_if! {
@@ -20,8 +19,85 @@ pub struct BootInfo {
     /// For 32bit systems this may be configured to always be a 32bit offset
     /// If memory is identity mapped then this is 0
     pub physical_address_offset: u64,
-    pub memory_map: MemoryMap,
+    /// This must always be present when [crate::_libboot_entry] is called.
+    /// This is an option so that [Option::take] can be used.
+    pub memory_map: Option<MemoryMap>,
     pub optionals: BootInfoOptionals
+}
+
+impl BootInfo {
+
+    /// This doesn't work correctly. It should locate the PT_TLS segment from the ELF program headers,
+    /// however I cannot figure out how to locate the program headers.
+    ///
+    /// Instead, it locates the sections called ".tdata" and ".tbss". Only one of these are required
+    /// for this to return `Some(_)`
+    /// If no ".tdata" section is present then the `file` field will be an empty slice
+    pub fn get_tls_template(&self) -> Option<TlsTemplate> {
+        let sections = self.optionals.mb2_info.as_ref()?.elf_sections()?;
+        let mut len = 0;
+        let mut init = None;
+        for s in sections {
+            if let Ok(n) = s.name() {
+                match n {
+                    ".tdata" => {
+                        // SAFETY: This address and size is given by the bootloader
+                        init = Some( unsafe { core::slice::from_raw_parts(s.start_address() as usize as *const u8, s.size() as usize) } );
+                        len += s.size() as usize
+                    }
+                    ".tbss" => {
+                        len += s.size() as usize;
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        if len == 0 {
+            None
+        } else {
+            Some(TlsTemplate {
+                file: init.unwrap_or( &[]),
+                size: len,
+            })
+        }
+    }
+
+    /// Returns the RDP address
+    pub fn rsdp_ptr(&self) -> Option<Rsdp> {
+        if let Some(ref mb2) = self.optionals.mb2_info {
+            if let Some(r) = mb2.rsdp_v2_tag() {
+                Some(Rsdp::RsdpV2(r as *const _ as usize))
+            } else if let Some(r) = mb2.rsdp_v1_tag() {
+                Some(Rsdp::RsdpV1(r as *const _ as usize))
+            } else {
+                None
+            }
+        } else { None } // more to come
+    }
+}
+
+pub enum Rsdp {
+    RsdpV1(usize),
+    RsdpV2(usize),
+}
+
+impl Rsdp {
+    pub fn addr(&self) -> usize {
+        match self {
+            Rsdp::RsdpV1(p) => *p,
+            Rsdp::RsdpV2(p) => *p,
+        }
+    }
+}
+
+pub struct TlsTemplate {
+    /// A raw slice containing the initialized TLS data.
+    /// It is guaranteed to be valid when to valid memory when [crate::_libboot_entry] is called.
+    pub file: &'static [u8],
+    /// Total size of the thread local segment.
+    /// During initialization this much memory should be allocated.
+    pub size: usize,
 }
 
 #[derive(Default)]
@@ -48,14 +124,14 @@ pub struct GraphicInfo {
     pub height: u64,
     pub stride: u64,
     pub pixel_format: PixelFormat,
-    pub framebuffer: &'static [u8]
+    pub framebuffer: &'static mut [u8]
 }
 
 pub enum PixelFormat {
     /// Big endian RGB
-    Rgb,
+    Rgb32,
     /// Little endian RGB
-    Bgr,
+    Bgr32,
     /// Video hardware is using a custom pixel format.
     /// Masks for each channel are given below.
     /// `reserved` contains bits which are ignored.
@@ -83,6 +159,23 @@ pub enum MapIter<'a> {
     Uefi(uefi::table::boot::MemoryMapIter<'a>)
 }
 
+impl MemoryMap {
+    pub fn iter(&self) -> MapIter {
+        match self {
+            #[cfg(feature = "uefi")]
+            Self::Uefi(u) => MapIter::Uefi(u.entries()),
+        }
+    }
+
+    /// Modifies the memory map to ensure that each region is page aligned.
+    pub fn sanitize(&mut self) {
+        match self {
+            #[cfg(feature = "uefi")]
+            MemoryMap::Uefi(_) => {} // already sanitized
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct MemoryRegion {
     pub phys_addr: u64,
@@ -94,7 +187,7 @@ pub struct MemoryRegion {
 #[cfg(feature = "uefi")]
 impl From<uefi::table::boot::MemoryDescriptor> for MemoryRegion {
     fn from(value: uefi::table::boot::MemoryDescriptor) -> Self {
-        match value.ty {
+        let ty = match value.ty {
             MemoryType::LOADER_DATA => MemoryRegionType::Bootloader,
 
             MemoryType::RESERVED |
@@ -118,7 +211,7 @@ impl From<uefi::table::boot::MemoryDescriptor> for MemoryRegion {
         Self {
             phys_addr: value.phys_start,
             size: value.page_count * PAGE_SIZE as u64,
-            ty: MemoryRegionType::Usable,
+            ty,
             distinct: MemoryRegionDistinct::Uefi {
                 ty: value.ty,
                 virt_addr: value.virt_start,
@@ -149,6 +242,12 @@ pub enum MemoryRegionType {
     /// Unknown memory type
     /// See [MemoryRegionType::Unusable] for info on how to determine the actual type.
     Unknown(u32),
+}
+
+impl PartialEq for MemoryRegionType {
+    fn eq(&self, other: &Self) -> bool {
+        core::mem::discriminant(self) == core::mem::discriminant(other)
+    }
 }
 
 #[derive(Debug)]

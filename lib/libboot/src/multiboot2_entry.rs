@@ -10,7 +10,7 @@ type SysTable = uefi::table::SystemTable<uefi::table::Boot>;
 const PHYS_OFFSET_ADDR: usize = {
     #[cfg(target_pointer_width = "64")]
     {
-        0xFFFFFF0000000000 // entry 2 of l4 table
+        0xFFFF808000000000 // entry 2 of l4 table
     }
     #[cfg(not(target_pointer_width = "64"))]
     0
@@ -50,7 +50,6 @@ _kernel_preload_entry_mb2efi64:
     jmp _kernel_preload_entry_mb2efi64
 "#);
 
-// Because this is only the address of this is referenced I could make this "x86-interrupt" to prevent it from being called
 extern "C" {
     #[deny(clippy::disallowed_methods)]
     pub fn _kernel_preload_entry_mb2efi64() -> !;
@@ -83,6 +82,7 @@ extern "C" fn _kernel_mb2_preload_efi64(magic: u32, mbi_ptr: *const multiboot2::
 
     let new_stack = alloc_new_stack(&mut st);
     // allocate this before own_l4 because that will map bi_ptr
+    // This is not initialized, do not read
     let bi_ptr: *mut crate::boot_info::BootInfo = {
         let r = st.boot_services().allocate_pool(MemoryType::LOADER_DATA, core::mem::size_of::<crate::boot_info::BootInfo>());
         throw(&mut st, r).cast()
@@ -98,7 +98,7 @@ extern "C" fn _kernel_mb2_preload_efi64(magic: u32, mbi_ptr: *const multiboot2::
 
     #[cfg(feature = "debug-bits")]
     for i in mbi.elf_sections().unwrap() {
-        let _ = core::writeln!(st.stderr(),"Section: {}, {:?}, start: {:#x}, len: {:#x}", i.name().unwrap(), i.section_type(), i.start_address(), i.size());
+        let _ = core::writeln!(st.stderr(),"Section: {}, {:?}, start: {:#x}, len: {:#x}, flags: {:#x}", i.name().unwrap(), i.section_type(), i.start_address(), i.size(), i.flags());
     }
 
     if let Some(false) = check_kernel_is_mapped(&mbi, &mapper) {
@@ -123,7 +123,7 @@ extern "C" fn _kernel_mb2_preload_efi64(magic: u32, mbi_ptr: *const multiboot2::
 
     let bi = crate::boot_info::BootInfo {
         physical_address_offset: PHYS_OFFSET_ADDR as u64,
-        memory_map: crate::boot_info::MemoryMap::Uefi(map),
+        memory_map: Some(crate::boot_info::MemoryMap::Uefi(map)),
         optionals: crate::boot_info::BootInfoOptionals {
             mb2_info: Some(mbi),
             efi_system_table: Some(st),
@@ -249,7 +249,7 @@ fn own_l4<'s>(st: &'s mut SysTable) -> x86_64::structures::paging::mapper::Offse
             MemoryType::LOADER_DATA => {
 
                 #[cfg(feature = "debug-bits")]
-                let _ = core::writeln!(st.stderr(), "Mapping {e}: {i:?}");
+                let _ = core::writeln!(st.stderr(), "Mapping {e}: {i:x?}");
 
                 // This contains both the kernel and BootInfo data, all of these must be mapped.
                 // The kernel can figure out later what can be reclaimed.
@@ -353,8 +353,8 @@ fn get_gop_data(st: &mut SysTable) -> Option<crate::boot_info::GraphicInfo> {
     let mode = gop.current_mode_info();
 
     let pf = match mode.pixel_format() {
-        PixelFormat::Rgb => crate::boot_info::PixelFormat::Rgb,
-        PixelFormat::Bgr => crate::boot_info::PixelFormat::Bgr,
+        PixelFormat::Rgb => crate::boot_info::PixelFormat::Rgb32,
+        PixelFormat::Bgr => crate::boot_info::PixelFormat::Bgr32,
         PixelFormat::Bitmask => {
             if let Some(uefi::proto::console::gop::PixelBitmask { red, green, blue, reserved }) = mode.pixel_bitmask() {
                 crate::boot_info::PixelFormat::ColourMask { red, green, blue, reserved }
@@ -374,8 +374,8 @@ fn get_gop_data(st: &mut SysTable) -> Option<crate::boot_info::GraphicInfo> {
 
     // SAFETY: As long as the firmware doesn't lie then this is safe
     Some(crate::boot_info::GraphicInfo {
-        height: mode.resolution().0 as u64,
-        width: mode.resolution().1 as u64,
+        height: mode.resolution().1 as u64,
+        width: mode.resolution().0 as u64,
         stride: mode.stride() as u64,
         pixel_format: pf,
         framebuffer: unsafe { core::slice::from_raw_parts_mut(gop.frame_buffer().as_mut_ptr(), gop.frame_buffer().size()) },
@@ -383,7 +383,7 @@ fn get_gop_data(st: &mut SysTable) -> Option<crate::boot_info::GraphicInfo> {
 }
 
 fn map_framebuffer(st: &mut SysTable, mapper: &mut x86_64::structures::paging::mapper::OffsetPageTable, fb_info: &super::boot_info::GraphicInfo) {
-    let b = fb_info.framebuffer;
+    let b = &fb_info.framebuffer;
     if b.len() > 0x200000 { // This may be problematic if it overruns the device memory, but with a PCI VGA device it is unlikely to.
         let range = x86_64::structures::paging::page::PageRangeInclusive::<x86_64::structures::paging::Size2MiB> {
             start: Page::containing_address(x86_64::VirtAddr::from_ptr(&b[0])),
