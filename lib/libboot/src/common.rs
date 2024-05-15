@@ -21,7 +21,7 @@ impl StackPointer {
     /// See [core::slice::from_raw_parts_mut] for safety information
     pub unsafe fn new_from_bottom(ptr: *mut (), len: usize) -> Self {
         Self {
-            ptr: unsafe { ptr.offset(len.try_into().expect("Failed to locate stack pointer, len too large")) },
+            ptr: unsafe { ptr.byte_offset(len.try_into().expect("Failed to locate stack pointer, len too large")) },
             len,
         }
     }
