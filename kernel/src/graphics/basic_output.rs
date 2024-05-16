@@ -3,8 +3,6 @@ use core::fmt;
 use core::fmt::Write;
 use x86_64::instructions::interrupts::without_interrupts;
 
-use fontgen_bugfix as bitmap_fontgen;
-
 const FONT_SIZE: bitmap_fontgen::FontSize = bitmap_fontgen::FontSize {
     width: 8,
     height: 16,

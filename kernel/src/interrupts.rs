@@ -17,6 +17,9 @@ kernel_proc_macro::interrupt_config!(pub const PUB_VEC_START: u8 = 0x21; fn bind
 pub static PICS: spin::Mutex<pic8259::ChainedPics> =
     spin::Mutex::new(unsafe { pic8259::ChainedPics::new(PIC_0_OFFSET, PIC_1_OFFSET) });
 
+static mut IDT: InterruptDescriptorTable = InterruptDescriptorTable::new();
+
+/*
 lazy_static! {
     static ref IDT: InterruptDescriptorTable = {
         let mut idt = InterruptDescriptorTable::new();
@@ -45,8 +48,32 @@ lazy_static! {
     };
 }
 
+ */
+
 pub fn init_exceptions() {
-    IDT.load()
+    let idt = unsafe {&mut IDT};
+    idt.breakpoint.set_handler_fn(except_breakpoint);
+    // these unsafe blocks set alternate stack addresses ofr interrupts
+    unsafe {
+        idt.double_fault
+            .set_handler_fn(except_double)
+            .set_stack_index(gdt::DOUBLE_FAULT_IST_INDEX);
+    }
+
+    unsafe {
+        idt.page_fault
+            .set_handler_fn(except_page)
+            .set_stack_index(gdt::DOUBLE_FAULT_IST_INDEX);
+    }
+
+    idt[InterruptIndex::Keyboard.as_usize()].set_handler_fn(keyboard_interrupt_handler);
+    idt.general_protection_fault.set_handler_fn(except_general_protection);
+    idt.segment_not_present.set_handler_fn(except_seg_not_present);
+    idt[32].set_handler_fn(crate::mem::tlb::int_shootdown_wrapper);
+    idt[33].set_handler_fn(apic_error);
+    bind_stubs(idt);
+    idt[255].set_handler_fn(spurious);
+    unsafe { IDT.load() }
 }
 
 extern "x86-interrupt" fn except_breakpoint(stack_frame: InterruptStackFrame) {
@@ -282,5 +309,5 @@ pub(crate) fn reg_waker(irq: InterruptIndex, waker: &core::task::Waker) -> Resul
 }
 
 pub fn load_idt() {
-    IDT.load();
+    unsafe { IDT.load(); }
 }

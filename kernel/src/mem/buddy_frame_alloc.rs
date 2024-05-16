@@ -1,7 +1,6 @@
 use super::MemRegion;
 use super::PAGE_SIZE;
 use crate::util::mutex::ReentrantMutex;
-use bootloader_api::info::{MemoryRegion, MemoryRegions};
 use x86_64::PhysAddr;
 
 // todo: handle 2M and 1G blocks separately from the allocator (lower order too)
@@ -14,82 +13,59 @@ const HIGH_ORDER_BLOCK_SIZE: u32 = (ORDER_MAX_SIZE as u32) * HIGH_ORDER_BLOCK_RA
 
 static MEM_MAP: crate::util::KernelStatic<PreInitFrameAlloc> = crate::util::KernelStatic::new();
 
-pub(super) unsafe fn init_mem_map(regions: &'static mut MemoryRegions) {
+pub(super) unsafe fn init_mem_map(regions: libboot::boot_info::MemoryMap) {
     MEM_MAP.init(PreInitFrameAlloc::new(regions));
 }
 
-struct PreInitFrameAlloc<'a> {
-    list: &'a [MemoryRegion],
+struct PreInitFrameAlloc {
+    list: libboot::boot_info::MemoryMap,
     mem_16_n: Option<usize>,
     mem_32_n: Option<usize>,
     mem_64_n: Option<usize>,
 }
 
-impl<'a> PreInitFrameAlloc<'a> {
+impl PreInitFrameAlloc {
     /// Creates a new PreInitFrameAlloc from the given memory regions
     ///
     /// # Safety
     ///
     /// This fn is unsafe because the caller must ensure that `regions` correctly describes physical
     /// memory
-    unsafe fn new(regions: &'a mut MemoryRegions) -> Self {
+    unsafe fn new(regions: libboot::boot_info::MemoryMap) -> Self {
         let mut mem_16_n = None;
         let mut mem_32_n = None;
         let mut mem_64_n = None;
 
-        // sanitize alignments.
-        // Memory regions may not all be frame aligned this must be corrected it would be both
-        // difficult and unsafe to allocate partially reserved frames its best to just not allow
-        // them in the first place.
-        for region in regions.iter_mut() {
-            // usable regions are aligned away from the occupied region
-            if region.kind == bootloader_api::info::MemoryRegionKind::Usable {
-                // start aligns up
-                if region.start & (PAGE_SIZE as u64 - 1) != 0 {
-                    region.start = (region.start & (!(PAGE_SIZE as u64 - 1))) + PAGE_SIZE as u64;
-                }
-                // end aligns down
-                if region.end & (PAGE_SIZE as u64 - 1) != 0 {
-                    region.end = region.end & (!(PAGE_SIZE as u64 - 1));
-                }
-            } else {
-                // Unusable regions expand to alignment
-                if region.end & (PAGE_SIZE as u64 - 1) != 0 {
-                    region.end = (region.end & (!(PAGE_SIZE as u64 - 1))) + PAGE_SIZE as u64;
-                }
-                if region.start & (PAGE_SIZE as u64 - 1) != 0 {
-                    region.start = region.end & (!(PAGE_SIZE as u64 - 1));
-                }
-            }
+        for i in regions.iter() {
+            crate::serial_println!("{:x?}",i);
+        }
+        macro_rules! usable_regions {
+            ($regions:ident) => { $regions.iter().filter(|p| p.ty == libboot::boot_info::MemoryRegionType::Usable) };
         }
 
-        let usable_regions = regions
-            .iter()
-            .filter(|p| p.kind == bootloader_api::info::MemoryRegionKind::Usable);
-
-        for i in usable_regions.clone() {
-            if let Some(n) = MemRegion::Mem16.first_in_region(i.start as usize, i.end as usize) {
+        for i in usable_regions!(regions) {
+            if let Some(n) = MemRegion::Mem16.first_in_region(i.phys_addr as usize, i.size as usize + i.phys_addr as usize) {
                 mem_16_n = Some(n);
                 break;
             }
         }
 
-        for i in usable_regions.clone() {
-            if let Some(n) = MemRegion::Mem32.first_in_region(i.start as usize, i.end as usize) {
+        for i in usable_regions!(regions) {
+            if let Some(n) = MemRegion::Mem32.first_in_region(i.phys_addr as usize, i.size as usize + i.phys_addr as usize) {
                 mem_32_n = Some(n);
                 break;
             }
         }
 
-        for i in usable_regions.clone() {
-            if let Some(n) = MemRegion::Mem64.first_in_region(i.start as usize, i.end as usize) {
+        for i in usable_regions!(regions) {
+            if let Some(n) = MemRegion::Mem64.first_in_region(i.phys_addr as usize, i.size as usize + i.phys_addr as usize) {
                 mem_64_n = Some(n);
                 break;
             }
         }
 
         Self {
-            list: &*regions,
+            list: regions,
             mem_16_n,
             mem_32_n,
             mem_64_n,
@@ -122,13 +98,13 @@ impl<'a> PreInitFrameAlloc<'a> {
         let mut iter = self
             .list
             .iter()
-            .filter(|p| p.kind == bootloader_api::info::MemoryRegionKind::Usable);
+            .filter(|p| p.ty == libboot::boot_info::MemoryRegionType::Usable);
 
         // Loops over memory region list to locate the next region.
         'base: while let Some(i) = iter.next() {
-            if (ret >= i.start as usize) && (ret < i.end as usize) {
+            if (ret >= i.phys_addr as usize) && (ret < i.size as usize + i.phys_addr as usize) {
                 // ret is found, now figure out next addr
-                if let Some(ptr) = region.first_in_region(ret + PAGE_SIZE, i.end as usize) {
+                if let Some(ptr) = region.first_in_region(ret + PAGE_SIZE, i.size as usize + i.phys_addr as usize) {
                     // next is in same memory region
                     match region {
                         MemRegion::Mem16 => self.mem_16_n = Some(ptr),
@@ -140,7 +116,7 @@ impl<'a> PreInitFrameAlloc<'a> {
                     // locate next memory region
                     while let Some(i) = iter.next() {
                         // Will only return Some() if this memory region is within the correct dma region
-                        if let Some(next) = region.first_in_region(i.start as usize, i.end as usize)
+                        if let Some(next) = region.first_in_region(i.phys_addr as usize,(i.size + i.phys_addr) as usize)
                         {
                             match region {
                                 MemRegion::Mem16 => self.mem_16_n = Some(next),
@@ -248,12 +224,12 @@ fn drain_map_inner(region: MemRegion) {
             len + base
         );
 
-        #[cfg(not(feature = "alloc-debug-serial"))]
         let b = super::allocator::COMBINED_ALLOCATOR.lock();
+        #[cfg(not(feature = "alloc-debug-serial"))]
         let f_alloc = b.phys_alloc().get().frame_alloc.alloc.lock();
 
         #[cfg(feature = "alloc-debug-serial")]
-        let mut f_alloc = super::SYS_FRAME_ALLOCATOR.get().frame_alloc.alloc.lock();
+        let mut f_alloc = b.phys_alloc().get().frame_alloc.alloc.lock();
 
         #[cfg(feature = "alloc-debug-serial")]
         let cache = {
@@ -271,7 +247,7 @@ fn drain_map_inner(region: MemRegion) {
 
         #[cfg(feature = "alloc-debug-serial")]
         {
-            let mut f_alloc = super::SYS_FRAME_ALLOCATOR.get().frame_alloc.alloc.lock();
+            let mut f_alloc = b.phys_alloc().get().frame_alloc.alloc.lock();
             let mut new_len = [0usize; ORDERS];
             for (i, l) in region.list(&mut *f_alloc).free_list.iter().enumerate() {
                 new_len[i] = l.len()
@@ -450,7 +426,9 @@ impl super::MemRegion {
         }
     }
 
-    /// Returns the first on the region of self available within the specified range
+    /// Returns the lowest address in this region of the specified addresses.
+    /// If the arguments cross the lower region boundary that address will be returned.
+    /// If the arguments do not the requested region this will return `None`
     ///
     /// # Panics
     ///

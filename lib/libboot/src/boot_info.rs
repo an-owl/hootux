@@ -65,11 +65,12 @@ impl BootInfo {
 
     /// Returns the RDP address
     pub fn rsdp_ptr(&self) -> Option<Rsdp> {
+        // We get the actual pointer to the RSDP, we must increment the ptr by 8 because there is an MBI header there
         if let Some(ref mb2) = self.optionals.mb2_info {
             if let Some(r) = mb2.rsdp_v2_tag() {
-                Some(Rsdp::RsdpV2(r as *const _ as usize))
+                Some(Rsdp::RsdpV2(r as *const _ as usize + 8))
             } else if let Some(r) = mb2.rsdp_v1_tag() {
-                Some(Rsdp::RsdpV1(r as *const _ as usize))
+                Some(Rsdp::RsdpV1(r as *const _ as usize + 8))
             } else {
                 None
             }

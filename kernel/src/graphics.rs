@@ -155,6 +155,18 @@ pub struct FrameBuffer {
 }
 
 impl FrameBuffer {
+
+    pub fn new(width: usize, height: usize, stride: usize, buff: &'static mut [u8], format: PixelFormat) -> Self {
+        assert!(height * width * (format.bytes_per_pixel() as usize) >= buff.len(), "Frame buffer is smaller than resolution requires");
+        Self {
+            height,
+            width,
+            stride,
+            format,
+            data: buff
+        }
+    }
+
     // TODO address buff as pixels
     /// Scrolls currently displayed frame upward by `l` scan lines
     pub fn scroll_up(&mut self, l: usize) {
@@ -296,7 +308,6 @@ impl SpriteMut for FrameBuffer {
     }
 }
 
-use fontgen_bugfix as bitmap_fontgen;
 //TODO: This is a workaround to a bug in bindeps remove all of these when possible, and swap "fontgen_bugfix" for "fontgen"
 fn font_map() -> bitmap_fontgen::Font {
     (&font::FONT_MAP).into()
@@ -305,7 +316,6 @@ fn font_map() -> bitmap_fontgen::Font {
 mod font {
     use super::Integer;
     use crate::graphics::Sprite;
-    use fontgen_bugfix as bitmap_fontgen;
 
     pub(super) static FONT_MAP: bitmap_fontgen::ConstFontMap = include!(env!("FONT_MAP_FILE"));
 

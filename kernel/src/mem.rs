@@ -29,7 +29,7 @@ pub const PAGE_SIZE: usize = 4096;
 
 
 /// Run PreInitialization for SYS_FRAME_ALLOC
-pub unsafe fn set_sys_frame_alloc(mem_map: &'static mut bootloader_api::info::MemoryRegions) {
+pub unsafe fn set_sys_frame_alloc(mem_map: libboot::boot_info::MemoryMap) {
     buddy_frame_alloc::init_mem_map(mem_map)
 }
 /// This is the page table tree for the higher half kernel is shared by all CPU's. It should be used

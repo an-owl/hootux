@@ -22,7 +22,8 @@ impl<T> KernelStatic<T> {
     }
 
     pub fn init(&self, new: T) {
-        *self.inner.lock() = Some(new);
+        let mut l = self.inner.lock();
+        *l = Some(new);
     }
 
     pub fn get(&self) -> Ref<T> {

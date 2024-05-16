@@ -25,9 +25,9 @@ impl<T: AllocAddressType, const BS: u32> HighOrderAlloc<T, BS> {
     pub(super) fn free(&mut self, region: FreeMem<T, BS>) -> Result<(), ()> {
         #[cfg(feature = "alloc-debug-serial")]
         crate::serial_println!(
-            "HighOrderAlloc<{},{}>::free()",
-            core::any::type_name::<T>(),
-            BS
+            "{}::free(region: {:x?})",
+            core::any::type_name::<Self>(),
+            region
         );
 
         // this should not panic during normal operation.

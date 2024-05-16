@@ -18,7 +18,8 @@ use hootux::task::keyboard;
 use hootux::time::kernel_init_timer;
 use hootux::*;
 use log::debug;
-use x86_64::VirtAddr;
+use x86_64::addr::VirtAddr;
+use libboot::boot_info::PixelFormat;
 
 const BOOT_CONFIG: bootloader_api::BootloaderConfig = {
     use bootloader_api::config::Mapping;
@@ -31,6 +32,8 @@ const BOOT_CONFIG: bootloader_api::BootloaderConfig = {
 kernel_proc_macro::multiboot2_header! {
     multiboot2_header::HeaderTagISA::I386,
     #[link_section = ".multiboot2_header"],
+    multiboot2_header::FramebufferHeaderTag::new(multiboot2_header::HeaderTagFlag::Optional,0,0,32)
+    Pad::new()
     multiboot2_header::EfiBootServiceHeaderTag::new(multiboot2_header::HeaderTagFlag::Required),
     multiboot2_header::EntryEfi64HeaderTag::new(multiboot2_header::HeaderTagFlag::Required, 0x200000), // address is specified in linker script
     Pad::new(),
@@ -45,27 +48,25 @@ impl Pad {
     }
 }
 
-entry_point!(kernel_main, config = &BOOT_CONFIG);
 #[no_mangle]
-fn kernel_main(b: &'static mut bootloader_api::BootInfo) -> ! {
+fn kernel_main(b: *mut libboot::boot_info::BootInfo) -> ! {
+    serial_println!("Kernel start");
+    let mut b = unsafe { b.read() };
 
     //initialize system
-
-    serial_println!("Kernel start");
-
-    if let Some(g) = b.framebuffer.as_mut() {
-        g.buffer_mut().fill_with(|| 0xff)
+    if let Some(ref mut g) = b.optionals.graphic_info {
+        g.framebuffer.fill_with(|| 0xff)
     }
 
     let mapper;
     unsafe {
         mapper = mem::init(VirtAddr::new(
-            b.physical_memory_offset.into_option().unwrap(),
+            b.physical_address_offset,
         ));
 
         init(); // todo break apart
 
-        mem::set_sys_frame_alloc(&mut b.memory_regions);
+        mem::set_sys_frame_alloc(b.memory_map.take().unwrap()); // memory map is guaranteed to be present
 
         mem::set_sys_mem_tree_no_cr3(mapper);
 
@@ -73,38 +74,51 @@ fn kernel_main(b: &'static mut bootloader_api::BootInfo) -> ! {
         mem::buddy_frame_alloc::drain_map();
     }
 
-    if let bootloader_api::info::Optional::Some(tls) = b.tls_template {
+    if let Some(tls) = b.get_tls_template() {
         // SAFETY: this is safe because the data given is correct
         unsafe {
             mem::thread_local_storage::init_tls(
-                tls.start_addr as usize as *const u8,
-                tls.file_size as usize,
-                tls.mem_size as usize,
+                tls.file.as_ptr(),
+                tls.file.len(),
+                tls.size,
             )
         }
     }
+
+    let foo: &dyn core::fmt::Display = &"Hello world";
+    serial_println!("{}",foo);
 
     interrupts::apic::load_apic();
     // SAFETY: prob safe but i dont want to think rn
     unsafe { interrupts::apic::get_apic().set_enable(true) }
 
     //initialize graphics
-    if let Some(buff) =
-        core::mem::replace(&mut b.framebuffer, bootloader_api::info::Optional::None).into_option()
-    {
-        mem::write_combining::set_wc_data(&NonNull::from(buff.buffer())).unwrap(); // wont panic
+    if let Some(buff) = b.optionals.graphic_info.take() {
 
-        graphics::KERNEL_FRAMEBUFFER.init(graphics::FrameBuffer::from(buff));
+        let mut fb = NonNull::from(buff.framebuffer);
+        mem::write_combining::set_wc_data(&fb).unwrap(); // wont panic
+
+        let pxmode = match buff.pixel_format {
+            PixelFormat::Rgb32 => panic!("Big endian is a mental disorder"),
+            PixelFormat::Bgr32 => graphics::PixelFormat::Bgr4Byte,
+            PixelFormat::ColourMask { .. } => panic!("Custom pixel format specified"),
+        };
+
+        // SAFETY: This is safe, we need a NonNull above and are just casting it back.
+        graphics::KERNEL_FRAMEBUFFER.init(graphics::FrameBuffer::new(buff.width as usize ,buff.height as usize, buff.stride as usize ,unsafe { fb.as_mut() }, pxmode));
         graphics::KERNEL_FRAMEBUFFER.get().clear();
         *graphics::basic_output::WRITER.lock() = Some(BasicTTY::new(&graphics::KERNEL_FRAMEBUFFER));
     };
 
     let acpi_tables = unsafe {
-        let t = acpi::AcpiTables::from_rsdp(
-            system::acpi::AcpiGrabber,
-            *b.rsdp_addr.as_mut().unwrap() as usize,
-        )
-        .unwrap();
+        let t = if let Some(acpi) = b.rsdp_ptr() {
+            acpi::AcpiTables::from_rsdp(
+                system::acpi::AcpiGrabber,
+                acpi.addr(),
+            ).unwrap()
+        } else {
+            todo!(); // try alternate ways to locate rsdp
+        };
         let fadt = acpi::PlatformInfo::new(&t).unwrap();
         let pmtimer = fadt.pm_timer.expect("No PmTimer found");
         let timer = Box::new(time::acpi_pm_timer::AcpiTimer::locate(pmtimer));
@@ -141,12 +155,12 @@ fn kernel_main(b: &'static mut bootloader_api::BootInfo) -> ! {
 
     // Should this be started before or after init_static_drivers()?
     {
-        let tls = b.tls_template.into_option().unwrap();
+        let tls = b.get_tls_template().unwrap();
         unsafe {
             mp::start_mp(
-                tls.start_addr as usize as *const u8,
-                tls.file_size as usize,
-                tls.mem_size as usize,
+                tls.file.as_ptr(),
+                tls.file.len(),
+                tls.size,
             )
         }
     }
@@ -155,13 +169,11 @@ fn kernel_main(b: &'static mut bootloader_api::BootInfo) -> ! {
     task::run_exec(); //executor.run();
 }
 
-
 libboot::kernel_entry!(_libboot_entry);
 
 #[no_mangle]
-pub extern "C" fn _libboot_entry(_bi: libboot::boot_info::BootInfo) -> ! {
-    log::info!("libboot worked");
-    stop();
+pub extern "C" fn _libboot_entry(bi: *mut libboot::boot_info::BootInfo) -> ! {
+    kernel_main(bi)
 }
 
 fn say_hi() {

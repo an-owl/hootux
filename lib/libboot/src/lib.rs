@@ -46,9 +46,13 @@ extern "C" {
 /// The entry point must have the link name "_libboot_entry"
 ///
 /// If you have a linker error complaining that "_libboot_entry" is not found then you omitted this entry point.
+///
+/// The pointer given is guaranteed to be valid and read/writable however the pointer may be null, for
+/// this reason the user should use [core::ptr::read] instead of dereferencing it.
+// fixme UEFI code currently casts raw ptrs to references
 #[macro_export]
 macro_rules! kernel_entry {
     ($entry_name:ident) => {
-        const _LIBBOOT_MACRO_ASSERT_ENTRY: extern "C" fn ($crate::boot_info::BootInfo) -> ! = $entry_name;
+        const _LIBBOOT_MACRO_ASSERT_ENTRY: extern "C" fn (*mut $crate::boot_info::BootInfo) -> ! = $entry_name;
     };
 }
