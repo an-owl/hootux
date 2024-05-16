@@ -14,8 +14,6 @@ r#"set timeout=0
 set default=0
 
 menuentry hootux {
-    insmod all_video
-    GRUB_GFXMODE=auto
     multiboot2 /boot/hootux
     boot
 }
