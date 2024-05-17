@@ -21,7 +21,6 @@ linked_list_allocator = "0.9.1"
 crossbeam-queue = { version = "0.3.3", default-features = false, features = ["alloc"] }
 conquer-once = { version = "0.3.2", default-features = false }
 futures-util = { version = "0.3.19", default-features = false, features = ["alloc","sink"] }
-noto-sans-mono-bitmap = "0.2.0"
 acpi = "5.0.0"
 x86_msr = { path  = "../x86_msr" }
 raw-cpuid = "10.3.0"

@@ -287,7 +287,6 @@ dependencies = [
  "linked_list_allocator",
  "log",
  "modular-bitfield",
- "noto-sans-mono-bitmap",
  "pc-keyboard",
  "pic8259",
  "raw-cpuid",
@@ -472,12 +471,6 @@ dependencies = [
  "derive_more",
  "multiboot2 0.20.0",
 ]
-
-[[package]]
-name = "noto-sans-mono-bitmap"
-version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a27daf9557165efe1d09b52f97393bf6283cadb0a76fbe64a1061e15553a994a"
 
 [[package]]
 name = "num_enum"
