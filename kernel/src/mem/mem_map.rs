@@ -62,7 +62,7 @@ pub unsafe fn map_range<'a, S: PageSize + core::fmt::Debug, I: Iterator<Item = P
 /// This fn is unsafe because it can be used to unmap in use pages that contain in use data.
 pub unsafe fn unmap_range<'a, S: PageSize + core::fmt::Debug, I: Iterator<Item = Page<S>>>(pages: I)
 where
-    BootInfoFrameAllocator: FrameAllocator<S>,
+
     offset_page_table::OffsetPageTable: Mapper<S>,
 {
     use x86_64::structures::paging::mapper::UnmapError;
@@ -124,7 +124,6 @@ where
 /// See [unmap_range]\#Safety
 pub unsafe fn unmap_page<'a, S: PageSize + core::fmt::Debug>(page: Page<S>)
 where
-    BootInfoFrameAllocator: FrameAllocator<S>,
     offset_page_table::OffsetPageTable: Mapper<S>,
 {
     match SYS_MAPPER.get().unmap(page) {

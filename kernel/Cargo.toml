@@ -9,7 +9,7 @@ readme = "README.md"
 alloc-debug-serial = [] #This is for debugging the memory allocator
 
 [dependencies]
-bootloader_api = "0.11.4"
+#bootloader_api = "0.11.4"
 volatile = "0.4.6"
 lazy_static = {version = "1.0", features = ["spin_no_std"]}
 spin = "0.9.8"

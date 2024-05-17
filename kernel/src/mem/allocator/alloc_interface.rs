@@ -239,7 +239,7 @@ unsafe impl Allocator for DmaAlloc {
         let end = start + layout.size() - 1;
 
         let range = PageRangeInclusive {
-            start: Page::containing_address(VirtAddr::new(start as u64)),
+            start: Page::<Size4KiB>::containing_address(VirtAddr::new(start as u64)),
             end: Page::containing_address(VirtAddr::new(end as u64)),
         };
 

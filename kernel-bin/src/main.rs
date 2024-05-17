@@ -9,7 +9,6 @@
 extern crate alloc;
 
 use alloc::boxed::Box;
-use bootloader_api::entry_point;
 use core::ptr::NonNull;
 use hootux::exit_qemu;
 use hootux::graphics::basic_output::BasicTTY;
@@ -20,14 +19,6 @@ use hootux::*;
 use log::debug;
 use x86_64::addr::VirtAddr;
 use libboot::boot_info::PixelFormat;
-
-const BOOT_CONFIG: bootloader_api::BootloaderConfig = {
-    use bootloader_api::config::Mapping;
-    let mut cfg = bootloader_api::BootloaderConfig::new_default();
-    cfg.kernel_stack_size = 0x100000;
-    cfg.mappings.physical_memory = Some(Mapping::Dynamic);
-    cfg
-};
 
 kernel_proc_macro::multiboot2_header! {
     multiboot2_header::HeaderTagISA::I386,

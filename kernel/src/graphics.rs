@@ -44,19 +44,6 @@ impl PixelFormat {
             PixelFormat::Grey1Byte => 1,
         }
     }
-
-    const fn from_bootloader_info(
-        layout: bootloader_api::info::PixelFormat,
-        len: usize,
-    ) -> Option<Self> {
-        use bootloader_api::info::PixelFormat as FarFormat;
-        match (layout, len) {
-            (FarFormat::Bgr, 4) => Some(Self::Bgr4Byte),
-            (FarFormat::Bgr, 3) => Some(Self::Bgr3Byte),
-            (FarFormat::U8, 1) => Some(Self::Grey1Byte),
-            _ => None,
-        }
-    }
 }
 
 /// Copies `origin` into `dst` while converting the pixel format from `org_fmt` into `new_fmt`.
@@ -215,50 +202,6 @@ impl FrameBuffer {
             )
         } else {
             None
-        }
-    }
-}
-
-impl From<bootloader_api::info::FrameBuffer> for FrameBuffer {
-    fn from(mut value: bootloader_api::info::FrameBuffer) -> Self {
-        let info = value.info();
-
-        {
-            let addr = value.buffer().as_ptr() as usize as u64;
-            let start_page = x86_64::structures::paging::Page::<x86_64::structures::paging::Size4KiB>::containing_address(x86_64::VirtAddr::new(addr));
-            let end_page = x86_64::structures::paging::Page::containing_address(
-                x86_64::VirtAddr::new(addr + value.buffer().len() as u64),
-            );
-            let range = x86_64::structures::paging::page::PageRangeInclusive {
-                start: start_page,
-                end: end_page,
-            };
-            let mut mapper = mem::SYS_MAPPER.get();
-            for page in range {
-                use x86_64::structures::paging::PageTableFlags;
-                unsafe {
-                    mapper
-                        .update_flags(
-                            page,
-                            PageTableFlags::PRESENT
-                                | PageTableFlags::WRITABLE
-                                | PageTableFlags::NO_CACHE
-                                | PageTableFlags::WRITE_THROUGH,
-                        )
-                        .unwrap()
-                        .flush();
-                }
-            }
-        }
-
-        Self {
-            height: info.height,
-            width: info.width,
-            stride: info.stride,
-            format: PixelFormat::from_bootloader_info(info.pixel_format, info.bytes_per_pixel)
-                .expect("Unsupported PixelFormat"),
-            // SAFETY: this is safe because the buffer is points to valid accessible unaliased memory.
-            data: unsafe { &mut *(value.buffer_mut() as *mut [u8]) },
         }
     }
 }
