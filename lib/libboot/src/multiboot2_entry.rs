@@ -147,10 +147,15 @@ fn alloc_new_stack(st: &mut SysTable) -> crate::common::StackPointer {
     // + 2 allows for a guard page at each end.
     let pages = (STACK_SIZE / 4096) + 2;
     let ptr = throw(st, st.boot_services().allocate_pages(uefi::table::boot::AllocateType::AnyPages, MemoryType::LOADER_DATA,pages));
+
+    // SAFETY: This is safe the pointer is re-located to the actual base later
+    // This acts as setting up guard pages
+    unsafe { throw(st, st.boot_services().free_pages(ptr,1)) };
+    unsafe { throw(st, st.boot_services().free_pages(ptr + 4096 + STACK_SIZE as u64,1)) };
+
     // + 4k for guard page, this will be unmapped freed later
     // SAFETY: This is safe, the pointer points to valid memory.
     unsafe  { crate::common::StackPointer::new_from_bottom((ptr + 4096) as usize as * mut (), STACK_SIZE) }
-
 }
 
 /// Checks that the kernel is mapped into `mapper`
