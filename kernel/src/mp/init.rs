@@ -1,3 +1,6 @@
+// Most of this module will be unused when MP is disabled.
+#![cfg_attr(not(feature = "multiprocessing"),allow(dead_code))]
+
 use alloc::boxed::Box;
 use alloc::vec::Vec;
 use acpi::platform::ProcessorState;
@@ -28,7 +31,11 @@ pub(super) unsafe fn start_mp(tls_data: *const u8, tls_file_size: usize, tls_dat
     crate::mem::tlb::enable_shootdowns();
 
     // tramp_box is freed when the fn exits
-    let (addr,mut tramp_box) = allocate_trampoline().expect("Failed to allocate trampoline");
+    let (addr,mut tramp_box) = match allocate_trampoline() {
+        Ok(r) => r,
+        Err(()) => return
+    };
+
     let init_gdt = addr + (unsafe { &_trampoline_data as *const _ as usize } - _trampoline as *const fn() as usize) as u64;
 
     let gdt_ptr = GdtPtr{size: 64, ptr: init_gdt.as_u64() as u32 + core::mem::offset_of!(TrampolineData,gdt) as u32}; // size is in bytes
@@ -180,7 +187,13 @@ fn allocate_trampoline() -> Result<(x86_64::VirtAddr, Box<[u8;4096],crate::alloc
     };
     // copy _trampoline into `region`
     let tra = _trampoline as *const fn() as *const [u8;4096];
-    let region = Box::new_in( unsafe{ *tra } ,crate::alloc_interface::DmaAlloc::new(crate::mem::MemRegion::Mem16,4096));
+    let region = match Box::try_new_in( unsafe{ *tra } ,crate::alloc_interface::DmaAlloc::new(crate::mem::MemRegion::Mem16,4096)) {
+        Ok(b) => b,
+        Err(_) => {
+            log::error!("Failed to allocate Mem16 memory to initialize multiprocessing");
+            return Err(())
+        }
+    };
 
     // shouldn't panic if it does then the bus is in the allocator or the translator
     let addr = PhysFrame::<x86_64::structures::paging::Size4KiB>::from_start_address(PhysAddr::new(crate::mem::mem_map::translate_ptr(&*region).unwrap())).unwrap();
@@ -213,8 +226,8 @@ impl StartupCache {
             let mut pm_code = DescriptorFlags::PRESENT | DescriptorFlags::EXECUTABLE | DescriptorFlags::GRANULARITY | DescriptorFlags::DEFAULT_SIZE | DescriptorFlags::USER_SEGMENT;
             let mut pm_data = DescriptorFlags::PRESENT | DescriptorFlags::GRANULARITY| DescriptorFlags::USER_SEGMENT | DescriptorFlags::DEFAULT_SIZE | DescriptorFlags::WRITABLE;
             // SAFETY: This is safe only bits 12:15 may be set in trampoline addr, left-shifted by 16 they are the base address 0:15 field
-            let offset_code = unsafe { DescriptorFlags::from_bits_unchecked(trampoline_addr.as_u64() << 16) };
-            let offset_data = unsafe { DescriptorFlags::from_bits_unchecked(( trampoline_addr.as_u64() +  (_trampoline_data.as_ptr() as usize as u64 - _trampoline as *const () as usize as u64) ) << 16) };
+            let offset_code = DescriptorFlags::from_bits_retain(trampoline_addr.as_u64() << 16);
+            let offset_data = unsafe { DescriptorFlags::from_bits_retain(( trampoline_addr.as_u64() +  (_trampoline_data.as_ptr() as usize as u64 - _trampoline as *const () as usize as u64) ) << 16) };
 
             pm_data |= offset_data;
             pm_code |= offset_code;
@@ -270,7 +283,7 @@ fn long_mode_init() -> ! {
 
     super::cpu_start();
     //SAFETY: This enables shootdowns. Shootdowns must be blocked by default
-    unsafe { crate::mem::tlb::enable_shootdowns(); }
+    crate::mem::tlb::enable_shootdowns();
 
     // prevent the compiler from dropping the GDT and TSS because it must be present until the CPU is stopped.
     // ManuallyDrop keeps it static on the stack (because this frame is never dropped).
