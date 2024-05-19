@@ -470,7 +470,9 @@ impl Mapper<Size4KiB> for OffsetPageTable {
             Ok(table) => {
                 shootdown_hint(|| {
                     let entry = &mut table[PageTableLevel::L1.get_index(page)];
-                    entry.flags().set(PageTableFlags::PRESENT, false);
+                    let mut f = entry.flags();
+                    f.set(PageTableFlags::PRESENT, false);
+                    entry.set_flags(f);
                     shootdown(page.into());
                     entry.set_flags(flags);
                 });
@@ -510,8 +512,12 @@ impl Mapper<Size4KiB> for OffsetPageTable {
             Ok(table) => {
                 shootdown_hint(|| {
                     let entry = &mut table[LEVEL.get_index(page)];
-                    entry.flags().set(PageTableFlags::PRESENT, false);
-                    shootdown(ShootdownContent::FullContext);
+                    if entry.flags().contains(PageTableFlags::PRESENT) {
+                        let mut f = entry.flags();
+                        f.set(PageTableFlags::PRESENT,false);
+                        entry.set_flags(f);
+                    }
+                    shootdown(page.into());
                     entry.set_flags(flags);
                 });
                 Ok(MapperFlushAll::new())
@@ -531,8 +537,12 @@ impl Mapper<Size4KiB> for OffsetPageTable {
             Ok(table) => {
                 shootdown_hint(|| {
                     let entry = &mut table[LEVEL.get_index(page)];
-                    entry.flags().set(PageTableFlags::PRESENT, false);
-                    shootdown(ShootdownContent::FullContext);
+                    if entry.flags().contains(PageTableFlags::PRESENT) {
+                        let mut f = entry.flags();
+                        f.set(PageTableFlags::PRESENT,false);
+                        entry.set_flags(f);
+                    }
+                    shootdown(page.into());
                     entry.set_flags(flags);
                 });
                 Ok(MapperFlushAll::new())
@@ -644,9 +654,12 @@ impl Mapper<Size2MiB> for OffsetPageTable {
             Ok(table) => {
                 shootdown_hint(|| {
                     let entry = &mut table[LEVEL.get_index(page)];
-                    entry.flags().set(PageTableFlags::PRESENT, false);
+                    let mut f = entry.flags();
+
+                    f.set(PageTableFlags::PRESENT, false);
+                    entry.set_flags(f);
                     shootdown(ShootdownContent::FullContext);
-                    entry.set_flags(flags);
+                    entry.set_flags(flags | PageTableFlags::HUGE_PAGE);
                 });
                 Ok(MapperFlush::new(page))
             }
@@ -684,8 +697,12 @@ impl Mapper<Size2MiB> for OffsetPageTable {
             Ok(table) => {
                 shootdown_hint(|| {
                     let entry = &mut table[LEVEL.get_index(page)];
-                    entry.flags().set(PageTableFlags::PRESENT, false);
-                    shootdown(ShootdownContent::FullContext);
+                    if entry.flags().contains(PageTableFlags::PRESENT) {
+                        let mut f = entry.flags();
+                        f.set(PageTableFlags::PRESENT,false);
+                        entry.set_flags(f);
+                    }
+                    shootdown(page.into());
                     entry.set_flags(flags);
                 });
                 Ok(MapperFlushAll::new())
@@ -705,8 +722,12 @@ impl Mapper<Size2MiB> for OffsetPageTable {
             Ok(table) => {
                 shootdown_hint(|| {
                     let entry = &mut table[LEVEL.get_index(page)];
-                    entry.flags().set(PageTableFlags::PRESENT, false);
-                    shootdown(ShootdownContent::FullContext);
+                    if entry.flags().contains(PageTableFlags::PRESENT) {
+                        let mut f = entry.flags();
+                        f.set(PageTableFlags::PRESENT,false);
+                        entry.set_flags(f);
+                    }
+                    shootdown(page.into());
                     entry.set_flags(flags);
                 });
                 Ok(MapperFlushAll::new())
@@ -820,9 +841,12 @@ impl Mapper<Size1GiB> for OffsetPageTable {
             Ok(table) => {
                 shootdown_hint(|| {
                     let entry = &mut table[LEVEL.get_index(page)];
-                    entry.flags().set(PageTableFlags::PRESENT, false);
+                    let mut f = entry.flags();
+
+                    f.set(PageTableFlags::PRESENT, false);
+                    entry.set_flags(f);
                     shootdown(ShootdownContent::FullContext);
-                    entry.set_flags(flags);
+                    entry.set_flags(flags | PageTableFlags::HUGE_PAGE);
                 });
                 Ok(MapperFlush::new(page))
             }
@@ -860,8 +884,12 @@ impl Mapper<Size1GiB> for OffsetPageTable {
             Ok(table) => {
                 shootdown_hint(|| {
                     let entry = &mut table[LEVEL.get_index(page)];
-                    entry.flags().set(PageTableFlags::PRESENT, false);
-                    shootdown(ShootdownContent::FullContext);
+                    if entry.flags().contains(PageTableFlags::PRESENT) {
+                        let mut f = entry.flags();
+                        f.set(PageTableFlags::PRESENT,false);
+                        entry.set_flags(f);
+                    }
+                    shootdown(page.into());
                     entry.set_flags(flags);
                 });
                 Ok(MapperFlushAll::new())

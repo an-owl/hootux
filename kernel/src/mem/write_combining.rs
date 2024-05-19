@@ -95,10 +95,6 @@ pub fn set_wc_data(
         // SAFETY: Not safe. This doesnt actually read the data but the compiler might try to.
         let end = unsafe { (&*region.as_ptr()).len() + start };
 
-        let start = x86_64::structures::paging::page::Page::<x86_64::structures::paging::Size4KiB>::containing_address(x86_64::VirtAddr::new(start as u64));
-        let end = x86_64::structures::paging::page::Page::<x86_64::structures::paging::Size4KiB>::containing_address(x86_64::VirtAddr::new(end as u64));
-        let range = x86_64::structures::paging::page::PageRange { start, end };
-
         // wc uses PAT[3], cache_disable & write_through selects PAT[3]
         let flags = {
             use x86_64::structures::paging::PageTableFlags;
@@ -109,7 +105,8 @@ pub fn set_wc_data(
                 | PageTableFlags::WRITE_THROUGH
         };
 
-        super::mem_map::set_flags_iter(range, flags)
+        crate::mem::mem_map::update_flags!(flags, x86_64::VirtAddr::new(start as u64), x86_64::VirtAddr::new(end as u64))
+        //super::mem_map::set_flags_iter(range, flags)
     }
     #[cfg(not(all(
         any(target_arch = "x86", target_arch = "x86_64"),
