@@ -85,6 +85,7 @@ impl ReadWriteMarker for ReadWrite {}
 
 pub struct ReadOnly;
 
+#[allow(dead_code)]
 pub trait ReadOnlyMarker {}
 
 impl ReadOnlyMarker for ReadOnly {}

@@ -179,31 +179,87 @@ pub fn translate_ptr<T>(ptr: *const T) -> Option<u64> {
 
 /// Updates the page flags of the given page
 /// Only supports 4k pages atm
-pub(crate) fn set_flags(page: usize, flags: PageTableFlags) -> Result<(), UpdateFlagsErr> {
+pub(crate) fn set_flags<S>(page: Page<S>, flags: PageTableFlags) -> Result<(), UpdateFlagsErr>
+    where
+        Page<S>: Copy,
+        S: PageSize,
+        offset_page_table::OffsetPageTable: Mapper<S>,
+
+{
     let r = unsafe {
         SYS_MAPPER.get().update_flags(
-            Page::<Size4KiB>::from_start_address(VirtAddr::new(page as u64))
+            Page::<S>::from_start_address(VirtAddr::new(page.start_address().as_u64()))
                 .map_err(|_| UpdateFlagsErr::InvalidAddress)?,
             flags,
         )
     };
+    let p = page.start_address();
     r.map_err(|e| match e {
-        FlagUpdateError::PageNotMapped => UpdateFlagsErr::PageNotMapped(page),
-        FlagUpdateError::ParentEntryHugePage => UpdateFlagsErr::HugePage(page),
+        FlagUpdateError::PageNotMapped => UpdateFlagsErr::PageNotMapped(p.as_u64()),
+        FlagUpdateError::ParentEntryHugePage => UpdateFlagsErr::ParentHugePage(p.as_u64()),
     })?
     .flush();
     Ok(())
 }
 
+/// Updates page table flags regardless of page size.
+/// This can be used to update one page or an iterator of pages.
+/// This has a single page form and a range form.
+///
+/// * `($flags,$addr)` When a single page is used `$addr` must be a [Page] in order to determine which type of page.
+/// * `($flags,$start_addr,$end_addr)` When using the range form the addresses must be [VirtAddr]
+/// to so the page size can be determined automatically
+///
+/// Note: The second form may be used with the same `$start_addr` & `$end_addr` to modify a
+/// single page while automatically resolving the size
+#[macro_export]
+macro_rules! update_flags {
+    ($flags:expr, $addr:expr) => {
+        $crate::mem::mem_map::set_flags($addr.into(), $flags)
+    };
+    ($flags:expr, $start_addr:expr, $end_addr:expr) => {
+
+        match $crate::mem::mem_map::set_flags_iter(
+            x86_64::structures::paging::page::PageRangeInclusive::<x86_64::structures::paging::Size4KiB>{
+                start: x86_64::structures::paging::page::Page::containing_address($start_addr),
+                end: x86_64::structures::paging::page::Page::containing_address($end_addr)},
+            $flags)
+        {
+            Err($crate::mem::mem_map::UpdateFlagsErr::ParentHugePage(p)) if $start_addr.as_u64() == p => {
+
+                match $crate::mem::mem_map::set_flags_iter(
+                    x86_64::structures::paging::page::PageRangeInclusive::<x86_64::structures::paging::Size2MiB>{
+                        start: x86_64::structures::paging::page::Page::containing_address($start_addr),
+                        end: x86_64::structures::paging::page::Page::containing_address($end_addr)},
+                    $flags) {
+                    Err($crate::mem::mem_map::UpdateFlagsErr::ParentHugePage(p)) if $start_addr.as_u64() == p => {
+
+
+                        $crate::mem::mem_map::set_flags_iter(
+                            x86_64::structures::paging::page::PageRangeInclusive::<x86_64::structures::paging::Size1GiB>{
+                                start: x86_64::structures::paging::page::Page::containing_address($start_addr),
+                                end: x86_64::structures::paging::page::Page::containing_address($end_addr)},
+                            $flags)
+
+                    }
+                    e => e,
+                }
+            }
+            e => e,
+        }
+    }
+}
+pub use update_flags;
+
 /// Iterates over `iter` updating each page.
-/// If an error is encountered this fn will immediately return the error.
+/// If an error is encountered while this is running then all pages before the one returned will have updated flags.
 pub(crate) fn set_flags_iter<P: PageSize, T: Iterator<Item = Page<P>>>(
     iter: T,
     flags: PageTableFlags,
-) -> Result<(), UpdateFlagsErr> {
+) -> Result<(), UpdateFlagsErr>
+    where offset_page_table::OffsetPageTable: Mapper<P> {
     for p in iter {
-        let s = p.start_address();
-        set_flags(s.as_u64() as usize, flags)?
+        set_flags(p, flags)?
     }
     Ok(())
 }
@@ -211,7 +267,7 @@ pub(crate) fn set_flags_iter<P: PageSize, T: Iterator<Item = Page<P>>>(
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 
 pub enum UpdateFlagsErr {
-    PageNotMapped(usize),
-    HugePage(usize),
+    PageNotMapped(u64),
+    ParentHugePage(u64),
     InvalidAddress,
 }

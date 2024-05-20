@@ -7,16 +7,16 @@
 //for interrupts.rs
 #![feature(abi_x86_interrupt)]
 #![feature(alloc_error_handler)]
-#![feature(inline_const)]
 #![feature(int_roundings)]
 #![feature(allocator_api)]
 #![feature(thread_local)]
 #![feature(optimize_attribute)]
 #![feature(extract_if)]
 #![feature(linked_list_cursors)]
-#![feature(core_intrinsics)]
 #![feature(box_into_inner)]
+#![allow(internal_features)] // I need these
 #![feature(link_llvm_intrinsics)]
+
 
 extern crate alloc;
 pub use mem::allocator::alloc_interface;
@@ -122,7 +122,6 @@ pub fn test_panic(info: &core::panic::PanicInfo) -> ! {
 
 #[cfg(test)]
 use bootloader::{entry_point, BootInfo};
-use x86_64::VirtAddr;
 
 #[cfg(test)]
 entry_point!(kernel_test_main);

@@ -6,9 +6,6 @@
 //! Timers may not all act exactly the same and their module level documentation should reflect
 //! these quirks
 
-use core::pin::Pin;
-use core::task::{Context, Poll};
-
 pub mod acpi_pm_timer;
 pub(crate) type TimerResult = Result<(), TimerError>;
 

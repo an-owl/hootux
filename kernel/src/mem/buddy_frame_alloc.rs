@@ -718,6 +718,7 @@ impl BuddyFrameAlloc {
     /// power of two. If `size` is above [ORDER_MAX_SIZE] allocations will be aligned to [ORDER_MAX_SIZE]
     pub fn allocate(&self, layout: core::alloc::Layout, mut region: MemRegion) -> Option<usize> {
         let mut alloc = self.alloc.lock();
+        let limit = layout.size().max(layout.align());
 
         match alloc.is_fully_init {
             Some(MemRegion::Mem64) => {}
@@ -744,7 +745,6 @@ impl BuddyFrameAlloc {
             }
         }
 
-        let limit = layout.size().max(layout.align());
 
         if limit > ORDER_MAX_SIZE {
             self.alloc_huge(layout, region)
@@ -882,6 +882,7 @@ pub struct FrameAllocRef<'a> {
 use x86_64::structures::paging::{
     FrameAllocator, FrameDeallocator, PhysFrame, Size1GiB, Size2MiB, Size4KiB,
 };
+use crate::serial_println;
 
 unsafe impl<'a> FrameAllocator<Size4KiB> for FrameAllocRef<'a> {
     fn allocate_frame(&mut self) -> Option<PhysFrame<Size4KiB>> {

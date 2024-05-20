@@ -378,7 +378,7 @@ impl DeviceControl {
         use capabilities::msi;
         assert!(override_count.unwrap_or(0) < 2048);
 
-        let mut msi = {
+        let msi = {
             match capabilities::msi::MessageSignaledIntX::try_from(self) {
                 Ok(r) => r,
                 Err(_) => return (CfgIntResult::Failed, None),

@@ -1,7 +1,4 @@
 use crate::graphics::pixel::{PixBgr3Byte, PixBgr4Byte, Pixel};
-use crate::mem;
-use core::slice::from_raw_parts;
-use x86_64::structures::paging::Mapper;
 
 pub mod basic_output;
 
@@ -44,93 +41,6 @@ impl PixelFormat {
             PixelFormat::Grey1Byte => 1,
         }
     }
-}
-
-/// Copies `origin` into `dst` while converting the pixel format from `org_fmt` into `new_fmt`.
-/// Err(()) will be returned if `new_fmt` is Greyscale and `org_fmt` is **not** Greyscale. Info on
-/// why is in source.
-///
-/// # Panics
-///
-/// This fn will panic if origin and dst do not have the same length in pixels.
-///
-/// This fn cannot currently do most conversions,Greyscale can be converted into BGR formats and
-/// that's it, all other formats are planned.
-fn reformat_px_buff(
-    origin: &[u8],
-    dst: &mut [u8],
-    org_fmt: PixelFormat,
-    new_fmt: PixelFormat,
-) -> Result<(), ()> {
-    assert_eq!(
-        origin.len() / org_fmt.bytes_per_pixel() as usize,
-        dst.len() / new_fmt.bytes_per_pixel() as usize
-    );
-    match (org_fmt, new_fmt) {
-        (o, d) if o == d => {
-            dst.copy_from_slice(&origin[..dst.len()]);
-        }
-
-        (PixelFormat::Grey1Byte, PixelFormat::Bgr3Byte) => {
-            for (i, p) in unsafe {
-                core::mem::transmute::<&[u8], &[pixel::PixGrey1Byte]>(origin)
-                    .iter()
-                    .enumerate()
-            } {
-                let bs_start = i * PixelFormat::Bgr3Byte.bytes_per_pixel() as usize;
-                let px: pixel::PixBgr3Byte = p.clone().into();
-                unsafe {
-                    px.copy_to_buff(
-                        &mut dst
-                            [bs_start..bs_start + PixelFormat::Bgr3Byte.bytes_per_pixel() as usize],
-                    )
-                }
-            }
-        }
-
-        (PixelFormat::Grey1Byte, PixelFormat::Bgr4Byte) => {
-            for (i, p) in unsafe {
-                core::mem::transmute::<&[u8], &[pixel::PixGrey1Byte]>(origin)
-                    .iter()
-                    .enumerate()
-            } {
-                let bs_start = i * PixelFormat::Bgr4Byte.bytes_per_pixel() as usize;
-                let px: pixel::PixBgr4Byte = p.clone().into();
-                unsafe {
-                    px.copy_to_buff(
-                        &mut dst
-                            [bs_start..bs_start + PixelFormat::Bgr4Byte.bytes_per_pixel() as usize],
-                    )
-                }
-            }
-        }
-
-        (PixelFormat::Bgr3Byte, PixelFormat::Bgr4Byte) => {
-            let arr = unsafe {
-                from_raw_parts(
-                    origin.as_ptr().cast::<pixel::PixBgr3Byte>(),
-                    origin.len() / PixelFormat::Bgr3Byte.bytes_per_pixel() as usize,
-                )
-            };
-            for (i, p) in arr.iter().enumerate() {
-                let bs_start = i * PixelFormat::Bgr4Byte.bytes_per_pixel() as usize;
-                let px: pixel::PixBgr4Byte = p.clone().into();
-                unsafe {
-                    px.copy_to_buff(
-                        &mut dst
-                            [bs_start..bs_start + PixelFormat::Bgr4Byte.bytes_per_pixel() as usize],
-                    )
-                }
-            }
-        }
-
-        // grayscale isn't just (r+g+b)/3 it needs floating point to do properly/easily
-        // see https://goodcalculators.com/rgb-to-grayscale-conversion-calculator/
-        (_, PixelFormat::Grey1Byte) => return Err(()),
-
-        (_, _) => todo!(),
-    }
-    return Ok(());
 }
 
 pub struct FrameBuffer {

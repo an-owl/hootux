@@ -34,6 +34,7 @@ kernel_proc_macro::multiboot2_header! {
 struct Pad(u32);
 
 impl Pad {
+    #[allow(dead_code)] // This absolutely is used
     const fn new() -> Pad {
         Pad(0)
     }

@@ -3,7 +3,7 @@ use core::alloc::{AllocError, Layout};
 use core::ptr::NonNull;
 use mem::mem_map::*;
 use x86_64::structures::paging::{
-    mapper::MapToError, FrameAllocator, Mapper, Page, PageTableFlags, Size4KiB,
+    Page, Size4KiB,
 };
 use x86_64::VirtAddr;
 

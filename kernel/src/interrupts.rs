@@ -1,7 +1,6 @@
 use crate::gdt;
 use crate::interrupts::apic::LOCAL_APIC;
 use crate::println;
-use lazy_static::lazy_static;
 use log::{error, warn};
 use x86_64::structures::idt::{InterruptDescriptorTable, InterruptStackFrame, PageFaultErrorCode};
 
@@ -51,7 +50,7 @@ lazy_static! {
  */
 
 pub fn init_exceptions() {
-    let idt = unsafe {&mut IDT};
+    let mut idt = InterruptDescriptorTable::new();
     idt.breakpoint.set_handler_fn(except_breakpoint);
     // these unsafe blocks set alternate stack addresses ofr interrupts
     unsafe {
@@ -71,8 +70,11 @@ pub fn init_exceptions() {
     idt.segment_not_present.set_handler_fn(except_seg_not_present);
     idt[32].set_handler_fn(crate::mem::tlb::int_shootdown_wrapper);
     idt[33].set_handler_fn(apic_error);
-    bind_stubs(idt);
+    bind_stubs(&mut idt);
     idt[255].set_handler_fn(spurious);
+
+    // SAFETY: This is the only write to `IDT` and it occurs before multiprocessing is initialized
+    unsafe { core::ptr::addr_of_mut!(IDT).write(idt); }
     unsafe { IDT.load() }
 }
 
@@ -86,10 +88,6 @@ extern "x86-interrupt" fn except_double(stack: InterruptStackFrame, _err: u64) -
     panic!("EXCEPTION: DOUBLE FAULT\n{:#?}\n", stack);
 }
 
-extern "x86-interrupt" fn timer_interrupt_handler(_sf: InterruptStackFrame) {
-    // SAFETY: This is safe because declare_eoi does not violate data safety
-    unsafe { LOCAL_APIC.force_get_mut().declare_eoi() }
-}
 extern "x86-interrupt" fn keyboard_interrupt_handler(_sf: InterruptStackFrame) {
     use x86_64::instructions::port::Port;
 

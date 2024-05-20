@@ -54,7 +54,7 @@ fn main() {
     let mut children = Vec::new();
 
     let mut run = || {
-        let mut qemu_child = qemu.spawn().unwrap();
+        let qemu_child = qemu.spawn().unwrap();
         if let Some(mut c) = opts.run_debug(&toml, &kernel) {
             children.push(c.spawn().unwrap());
         }
@@ -66,10 +66,11 @@ fn main() {
             .user(&*std::env::var("USER").expect("Who are you people!?: No user"))
             .working_directory(&*std::env::current_dir().unwrap());
         if d.execute().is_child() {
-            run().wait();
+            // idc what it returns
+            let _ = run().wait();
         }
     } else {
-        run().wait();
+        let _ = run().wait();
     };
 }
 
@@ -111,7 +112,10 @@ struct Options {
     d_int: bool,
     serial: Option<String>,
     launch_debug: Option<Debugger>,
+    // these will probably be re-used at some point
+    #[allow(dead_code)]
     export: bool,
+    #[allow(dead_code)]
     export_path: Option<String>,
     confg_path: String,
     native_dbg_shell: bool,

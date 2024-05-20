@@ -1,10 +1,12 @@
-use core::ops::Neg;
 
 /// This is basically just a fat pointer with a negative len
+#[derive(Debug)]
 pub struct StackPointer {
     // Points to the new stack pointer
     // This may be the top of the stack, dereferencing `ptr` is unsafe because it may not be accessible
     ptr: *mut (),
+    // This will be needed at some point
+    #[allow(dead_code)]
     len: usize
 }
 
@@ -23,13 +25,6 @@ impl StackPointer {
         Self {
             ptr: unsafe { ptr.byte_offset(len.try_into().expect("Failed to locate stack pointer, len too large")) },
             len,
-        }
-    }
-
-    pub fn get_slice<'a>(&'a self) -> &'static mut [u8] {
-        unsafe {
-            let bottom = self.ptr.offset((self.len as isize).neg());
-            core::slice::from_raw_parts_mut(bottom.cast(), self.len)
         }
     }
 

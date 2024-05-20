@@ -14,7 +14,7 @@ impl<T: MessageCfg> IntMessageQueue<T> {
     /// Creates a new instance of self
     ///
     /// call [super::new_int_queue] to create a queue
-    fn new(
+    pub fn new(
         queue: super::InterruptQueue,
         irqs: alloc::vec::Vec<crate::interrupts::InterruptIndex>,
         cfg: T,

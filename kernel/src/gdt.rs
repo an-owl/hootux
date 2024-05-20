@@ -14,7 +14,8 @@ lazy_static! {
         tss.interrupt_stack_table[DOUBLE_FAULT_IST_INDEX as usize] = {
             static mut STACK: [u8; STACK_SIZE] = [0; STACK_SIZE];
 
-            let stack_start = VirtAddr::from_ptr(unsafe { &STACK });
+            // SAFETY: This is safe STACK is only accessed by the bsp
+            let stack_start = unsafe {VirtAddr::from_ptr(core::ptr::addr_of!(STACK)) };
             let stack_end = stack_start + STACK_SIZE;
             stack_end
         };

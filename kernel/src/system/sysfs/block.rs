@@ -210,7 +210,7 @@ impl IoBuffer {
         Self { inner: t }
     }
 
-    pub fn try_extract(mut self) -> Result<Box<[u8]>, Self> {
+    pub fn try_extract(self) -> Result<Box<[u8]>, Self> {
         // SAFETY: This is safe because it points to valid data and only accesses an atomic
         if unsafe { self.inner.as_ref().count.load(atomic::Ordering::Relaxed) } == 1 {
             // SAFETY: This is save because the data is not referenced anywhere else
