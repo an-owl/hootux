@@ -76,9 +76,6 @@ fn kernel_main(b: *mut libboot::boot_info::BootInfo) -> ! {
         }
     }
 
-    let foo: &dyn core::fmt::Display = &"Hello world";
-    serial_println!("{}",foo);
-
     interrupts::apic::load_apic();
     // SAFETY: prob safe but i dont want to think rn
     unsafe { interrupts::apic::get_apic().set_enable(true) }
