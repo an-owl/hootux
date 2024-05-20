@@ -726,8 +726,13 @@ impl BuddyFrameAlloc {
                 assert_eq!(layout.size(), 0x1000);
                 if let Some(ret) = MEM_MAP.get().alloc(region) {
                     return Some(ret);
-                } else {
-                    if r < region {
+                } else if r == MemRegion::Mem16 {
+                    // This is a hack fix to prevent my single frame of free mem16 memory from being
+                    // used while initializing the allocator
+                    // This alloc() call hasn't yet modified the inner state machine so this shouldn't do anything bad
+                    if let Some(r) = alloc.allocate(limit,MemRegion::Mem32) {
+                        return Some(r)
+                    } else if r < region {
                         region = r
                     }
                 }
