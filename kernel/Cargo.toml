@@ -34,6 +34,7 @@ atomic = "0.5.1"
 bitmap-fontgen = { git = "https://github.com/an-owl/bitmap-fontgen", default-features = false }
 modular-bitfield = "0.11.2"
 cfg-if = "1.0.0"
+async-lock = { version =  "3.3.0", default-features = false }
 
 libboot = { path = "../lib/libboot", features = ["uefi","multiboot2"] }
 
