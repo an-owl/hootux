@@ -35,6 +35,7 @@ pub mod task;
 pub mod time;
 mod util;
 pub mod llvm;
+pub mod fs;
 
 #[thread_local]
 static WHO_AM_I: util::UnlockedStatic<u32> = util::UnlockedStatic::new();
