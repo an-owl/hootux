@@ -4,6 +4,7 @@
 //! This module also contains internal filesystem implementations
 
 pub mod file;
+pub mod device;
 pub mod tmpfs;
 
 type IoResult<'a,T> = futures_util::future::BoxFuture<'a, Result<T,IoError>>;
@@ -20,7 +21,7 @@ pub enum IoError {
     /// This may be because the device has failed or is no longer attached to the system.
     MediaError,
 
-    /// The device indicated that it encountered an error and could not be accessed
+    /// The device indicated that it encountered an error and could not be accessed.
     DeviceError,
 
     /// Returned when a file is requested to do something it does not support.
