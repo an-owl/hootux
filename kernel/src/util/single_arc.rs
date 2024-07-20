@@ -123,6 +123,9 @@ impl<T: ?Sized> Drop for Weak<T> {
     }
 }
 
+unsafe impl<T: Sync + ?Sync> Sync for Weak<T> {}
+unsafe impl<T: Send + ?Send> Send for Weak<T> {}
+
 impl<T: ?Sized> Weak<T> {
     pub fn get(&self) -> Option<*mut T> {
         // Absolute abomination
@@ -146,6 +149,17 @@ impl<T: ?Sized> Weak<T> {
     /// Sets self to point to the data contained within `strong`.
     pub fn set(&mut self, strong: &SingleArc<T>){
         *self = strong.downgrade()
+    }
+
+    /// Compares the inner value with `other` if they have the same address then this returns true.
+    /// If `other` and the inner value of `self` do not have the same address, or `self` does not
+    /// contain any data then returns false.
+    pub fn cmp_t(&self,other: *const T) -> bool {
+        if let Some(inner) = self.get() {
+            core::ptr::eq(inner, other)
+        } else {
+            false
+        }
     }
 }
 
