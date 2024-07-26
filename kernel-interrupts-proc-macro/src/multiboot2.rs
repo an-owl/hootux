@@ -173,7 +173,7 @@ mod test {
     #[test]
     fn test_parser() {
         let q = quote::quote!(I386, FramebufferHeaderTag::new(Required,1920,1080,8));
-        let p: super::MultiBootHeaderParser = syn::parse2(q).unwrap();
+        let _: super::MultiBootHeaderParser = syn::parse2(q).unwrap();
     }
 
 
