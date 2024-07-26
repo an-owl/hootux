@@ -15,7 +15,7 @@ impl UpcastImpl {
             parse_quote!(file::Directory),
             parse_quote!(file::FileSystem),
             parse_quote!(device::Fifo<u8>),
-            parse_quote!(file::DeviceFile),
+            parse_quote!(device::DeviceFile),
         ]
     }
 }
@@ -49,10 +49,10 @@ impl Into<proc_macro::TokenStream> for UpcastImpl {
             #(#yes_cast)*
 
             #(
-                impl TryInto<alloc::boxed::Box<dyn #crate_name ::fs:: #no_cast>> for #ty {
+                impl TryFrom<alloc::boxed::Box< #ty >> for alloc::boxed::Box< dyn #crate_name ::fs:: #no_cast > {
                     type Error = alloc::boxed::Box<dyn #crate_name ::fs::file::File>;
-                    fn try_into(self: alloc::boxed::Box<Self>) -> Result<alloc::boxed::Box<dyn #crate_name ::fs:: #no_cast>, Error> {
-                        Err(self)
+                    fn try_from(value: alloc::boxed::Box< #ty > ) -> Result<alloc::boxed::Box<dyn #crate_name ::fs:: #no_cast>, Self::Error> {
+                        Err(value)
                     }
                 }
             )*
@@ -91,11 +91,11 @@ struct YesCast {
 impl YesCast {
     fn tokens(&self, ident: &syn::Path, crate_name: &TokenStream ) -> TokenStream {
         let name = &self.name;
-        let code = self.code.clone().unwrap_or(syn::parse2(quote::quote!{{Ok(self)}}).unwrap());
+        let code = self.code.clone().unwrap_or(syn::parse2(quote::quote!{{Ok(value)}}).unwrap());
         quote::quote! {
-            impl TryInto<alloc::boxed::Box<dyn #crate_name ::fs:: #name>> for #ident {
+            impl TryFrom<alloc::boxed::Box< #ident >> for alloc::boxed::Box< dyn #crate_name ::fs:: #name > {
                 type Error = alloc::boxed::Box<dyn #crate_name ::fs::file::File>;
-                fn try_into(self: alloc::boxed::Box::<Self>) -> Result<alloc::boxed::Box<dyn #crate_name ::fs:: #name>,Error> #code
+                fn try_from(value: alloc::boxed::Box< #ident >) -> Result<alloc::boxed::Box< dyn #crate_name :: fs:: #name>, Self::Error> #code
             }
         }
     }
