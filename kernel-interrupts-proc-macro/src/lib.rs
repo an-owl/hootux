@@ -55,23 +55,3 @@ pub fn multiboot2_header(input: TokenStream) -> TokenStream {
     let p: multiboot2::MultiBootHeaderParser = syn::parse_macro_input!(input);
     p.into()
 }
-
-mod file;
-
-/// Implements the [TryInto] for all major filetypes within the hootux kernel.
-/// The syntax is `( $crate:ident $ty:path $($trait:path $($impl:block)?)*)`.
-///
-/// - `$crate` Unfortunately because a lib cannot use an absolute path to itself. This must be either `crate` or `hootux`
-/// must be specified. When used within the kernel library this should be "crate" otherwise it should be "hootux"
-/// - `$ty` is the type name that the traits will be implemented for.
-/// - `$trait` is the output target for the `TryInto` implementation. This must match one of the
-/// major file traits. Any number of these may be provided.
-/// - `$impl` is an optional argument which can be provided as the implementation for the trait
-/// preceding otherwise `{Ok(self)}` will be used.
-///
-/// All traits which are not specified will be defined as `{Err(self)}`
-#[proc_macro]
-pub fn file_impl_upcast(input: TokenStream) -> TokenStream {
-    let p: file::UpcastImpl = syn::parse_macro_input!(input);
-    p.into()
-}
