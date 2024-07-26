@@ -123,8 +123,8 @@ impl<T: ?Sized> Drop for Weak<T> {
     }
 }
 
-unsafe impl<T: Sync + ?Sync> Sync for Weak<T> {}
-unsafe impl<T: Send + ?Send> Send for Weak<T> {}
+unsafe impl<T: Sync + ?Sized> Sync for Weak<T> {}
+unsafe impl<T: Send + ?Sized> Send for Weak<T> {}
 
 impl<T: ?Sized> Weak<T> {
     pub fn get(&self) -> Option<*mut T> {
