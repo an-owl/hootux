@@ -89,12 +89,12 @@ pub enum IoError {
 /// Generic test for a FileSystem implementation.
 ///
 /// This might panic on fail, it might throw an error.
-//#[cfg(test)]
+#[cfg(test)]
 pub async fn test_fs<F: device::FileSystem + ?Sized>(fs: alloc::boxed::Box<F>) -> crate::task::TaskResult {
     use crate::fs::file::*;
 
     fs.root().new_file("file", None).await.unwrap();
-    let file = cast_file!(NormalFile<u8>:fs.root().get_file("file").await.unwrap().unwrap()).ok().expect("Expected NormalFile did not get one");
+    let file = cast_file!(NormalFile<u8>:fs.root().get_file("file").await.unwrap()).ok().expect("Expected NormalFile did not get one");
 
     let mut file = match NormalFile::file_lock( file ).await {
         Ok(f) => f,

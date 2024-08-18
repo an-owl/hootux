@@ -15,6 +15,7 @@ use core::any::TypeId;
 use cast_trait_object::DynCastExt;
 use futures_util::FutureExt;
 use lazy_static::lazy_static;
+use crate::fs::IoError::NotPresent;
 
 lazy_static! {
     pub static ref DRIVER_MAJOR: MajorNum = MajorNum::new();
@@ -232,7 +233,7 @@ impl DirAccessor {
 impl TmpFsFile for DirAccessor {
     fn get_file_obj(self: Arc<Self>, fs: Weak<TmpFsRootInner>) -> Box<dyn File> {
         Box::new(Dir {
-            accessor: Arc::downgrade(&self),
+            accessor: self.clone(),
             fs,
             serial: self.serial
         })
@@ -247,7 +248,7 @@ impl TmpFsFile for DirAccessor {
 #[cast_trait_object::dyn_cast(File => NormalFile<u8>, Directory, super::device::FileSystem, super::device::Fifo<u8>, super::device::DeviceFile )]
 #[cast_trait_object::dyn_upcast(File)]
 struct Dir {
-    accessor: Weak<DirAccessor>,
+    accessor: Arc<DirAccessor>,
     fs: Weak<TmpFsRootInner>,
     serial: u64,
 }
@@ -277,8 +278,7 @@ impl File for Dir {
 
     fn len(&self) -> IoResult<u64> {
         async {
-            let acc = self.accessor.upgrade().ok_or(IoError::NotPresent)?;
-            let b = acc.map.read();
+            let b = self.accessor.map.read();
             Ok(b.len() as u64)
         }.boxed()
     }
@@ -287,17 +287,15 @@ impl File for Dir {
 impl Directory for Dir {
     fn entries(&self) -> IoResult<usize> {
         async  {
-            let accessor = self.accessor.upgrade().ok_or(IoError::NotPresent)?;
-            let l = accessor.map.read();
+            let l = self.accessor.map.read();
             Ok(l.len())
         }.boxed()
     }
 
     fn new_file<'s, 'a:'s>(&'s self, name: &'a str, file: Option<&'a mut dyn NormalFile<u8>>) -> BoxFuture<Result<(), (Option<IoError>, Option<IoError>)>> {
         async {
-            let accessor = self.accessor.upgrade().ok_or((Some(IoError::NotPresent), None))?;
 
-            let mut l = accessor.map.write();
+            let mut l = self.accessor.map.write();
             if let alloc::collections::btree_map::Entry::Vacant(entry) = l.entry(name.to_string()) {
 
                 let fs = self.fs.upgrade().ok_or((Some(IoError::NotPresent),None))?;
@@ -335,11 +333,11 @@ impl Directory for Dir {
 
     fn new_dir<'a>(&'a self, name: &'a str) -> IoResult<Box<dyn Directory>> {
         async {
-            let accessor = self.accessor.upgrade().ok_or(IoError::NotPresent)?;
-            let mut l = accessor.map.write();
+
+            let mut l = self.accessor.map.write();
             if let alloc::collections::btree_map::Entry::Vacant(entry) = l.entry(name.to_string()) {
                 let fs = self.fs.upgrade().ok_or(IoError::NotPresent)?;
-                let dir = fs.new_dir(&accessor).ok_or(IoError::DeviceError)?;
+                let dir = fs.new_dir(&self.accessor).ok_or(IoError::DeviceError)?;
                 entry.insert(dir.serial);
                 //let t = cast_file!(Directory: dir.get_file_obj(self.fs.clone()).try_into()).unwrap();
                 let f = dir.get_file_obj(self.fs.clone());
@@ -353,8 +351,7 @@ impl Directory for Dir {
 
     fn store<'a>(&'a self, name: &'a str, file: Box<dyn File>) -> IoResult<()> {
         async {
-            let accessor = self.accessor.upgrade().ok_or(IoError::NotPresent)?;
-            let mut l = accessor.map.write();
+            let mut l = self.accessor.map.write();
             if let alloc::collections::btree_map::Entry::Vacant(entry) = l.entry(name.to_string()) {
 
                 match cast_file!(device::DeviceFile: file) {
@@ -373,38 +370,32 @@ impl Directory for Dir {
         }.boxed()
     }
 
-    fn get_file<'a>(&'a self, name: &'a str) -> IoResult<Option<Box<dyn File>>> {
+    fn get_file<'a>(&'a self, name: &'a str) -> IoResult<Box<dyn File>> {
         async move {
-            let accessor = self.accessor.upgrade().ok_or(IoError::NotPresent)?;
 
-            if name == PARENT_DIR && accessor.is_root() {
+            if name == PARENT_DIR && self.accessor.is_root() {
                 return Err(IoError::IsDevice)
             }
 
-            let id = *accessor.map.read().get(name).ok_or(IoError::NotPresent)?;
-            Ok(self.fs.upgrade().unwrap().fetch(id))
+            let id = *self.accessor.map.read().get(name).ok_or(IoError::NotPresent)?;
+            Ok(self.fs.upgrade().unwrap().fetch(id).ok_or_else(
+                || {
+                    log::error!("tmpfs bug: Directory contained file entry but filesystem did cont contain the requested file");
+                    IoError::NotPresent
+                }
+            )?)
+
         }.boxed()
     }
 
-    fn get_file_meta<'a>(&'a self, name: &'a str) -> IoResult<Option<FileMetadata>> {
-        async {
-            if let Some(file) = self.get_file(name).await? {
-                Ok(Some(FileMetadata::new_from_file(&*file).await.unwrap()))
-            } else {
-                Ok(None)
-            }
-        }.boxed()
-    }
-
-    fn get_file_with_meta<'a>(&'a self, name: &'a str) -> IoResult<Option<file::FileHandle>> {
+    fn get_file_with_meta<'a>(&'a self, name: &'a str) -> IoResult<FileHandle> {
         async move {
-            let accessor = self.accessor.upgrade().ok_or(IoError::NotPresent)?;
 
-            if name == PARENT_DIR && accessor.is_root() {
-                return Ok(Some(FileHandle::new_dev(FileMetadata::new_unknown())))
+            if name == PARENT_DIR && self.accessor.is_root() {
+                return Ok(FileHandle::new_dev(FileMetadata::new_unknown()))
             }
 
-            let id = *accessor.map.read().get(name).ok_or(IoError::NotPresent)?;
+            let id = *self.accessor.map.read().get(name).ok_or(IoError::NotPresent)?;
             if let Some(f) = self.fs.upgrade().unwrap().fetch_raw(id) {
                 let mut dev_hint = false;
                 if TmpFsFile::type_id(&*f) == TypeId::of::<DeviceFileObj>() {
@@ -413,28 +404,22 @@ impl Directory for Dir {
                 let file = f.get_file_obj(self.fs.clone()) as Box<dyn File>;
                 let meta = FileMetadata::new_from_file(&*file).await?;
 
-                Ok(Some(FileHandle::new(file,dev_hint,meta)))
-
+                Ok(FileHandle::new(file, dev_hint, meta))
             } else {
-                Ok(None)
+                Err(NotPresent)
             }
         }.boxed()
     }
 
     fn file_list(&self) -> IoResult<Vec<String>> {
         async {
-            if let Some(acc) = self.accessor.upgrade() {
-                Ok(acc.map.read().keys().map(|s| s.clone()).collect())
-            } else {
-                Err(IoError::NotPresent)
-            }
+            Ok(self.accessor.map.read().keys().map(|s| s.clone()).collect())
         }.boxed()
     }
 
     fn remove<'a>(&'a self, name: &'a str) -> IoResult<()> {
         async {
-            let acc = self.accessor.upgrade().ok_or(IoError::NotPresent)?;
-            let id = *acc.map.read().get(name).ok_or(IoError::NotPresent)?;
+            let id = *self.accessor.map.read().get(name).ok_or(IoError::NotPresent)?;
             let fs = self.fs.upgrade().ok_or(IoError::NotPresent)?;
             let file = fs.fetch(id).ok_or(IoError::NotPresent)?;
 
@@ -466,7 +451,7 @@ impl FileAccessor {
 impl TmpFsFile for FileAccessor{
     fn get_file_obj(self: Arc<Self>, fs: Weak<TmpFsRootInner>) -> Box<dyn File> {
         Box::new(TmpFsNormalFile{
-            accessor: Arc::downgrade(&self),
+            accessor: self.clone(),
             fs,
             serial: self.serial,
             cursor: 0,
@@ -483,7 +468,7 @@ impl TmpFsFile for FileAccessor{
 #[cast_trait_object::dyn_cast(File => NormalFile<u8>, Directory, super::device::FileSystem, super::device::Fifo<u8>, super::device::DeviceFile )]
 #[cast_trait_object::dyn_upcast(File)]
 struct TmpFsNormalFile {
-    accessor: Weak<FileAccessor>,
+    accessor: Arc<FileAccessor>,
     fs: Weak<TmpFsRootInner>,
     serial: u64,
     // this is usize because the data is in a vec with a max size of usize::MAX.
@@ -494,13 +479,14 @@ struct TmpFsNormalFile {
 
 impl NormalFile<u8> for TmpFsNormalFile {
     fn len_chars(&self) -> IoResult<u64> {
-        async { Ok(self.accessor.upgrade().unwrap().data.read().await.len() as u64) }.boxed()
+        async { Ok(self.accessor.data.read().await.len() as u64) }.boxed()
     }
 
     fn file_lock<'a>(self: Box<Self>) -> BoxFuture<'a, Result<LockedFile<u8>, (IoError, Box<dyn NormalFile<u8>>)>> {
         async {
-            let acc = self.accessor.upgrade().unwrap();
-            let mut l = acc.lock.lock();
+
+            let b = self.accessor.clone();
+            let mut l = b.lock.lock();
             if let None = l.get() {
                 let s = crate::util::SingleArc::new(self as Box<dyn NormalFile<u8>>);
                 l.set(&s);
@@ -514,7 +500,7 @@ impl NormalFile<u8> for TmpFsNormalFile {
     }
 
     unsafe fn unlock_unsafe(&self) -> IoResult<()> {
-        async { Ok(self.accessor.upgrade().unwrap().lock.lock().clear()) }.boxed()
+        async { Ok(self.accessor.lock.lock().clear()) }.boxed()
     }
 }
 
@@ -541,8 +527,7 @@ impl File for TmpFsNormalFile {
 
     fn len(&self) -> IoResult<u64> {
         async {
-            let acc = self.accessor.upgrade().ok_or(IoError::NotPresent)?;
-            let l = acc.data.read().await;
+            let l = self.accessor.data.read().await;
             Ok(l.len() as u64)
         }.boxed()
     }
@@ -572,11 +557,11 @@ impl Seek for TmpFsNormalFile {
 impl Read<u8> for TmpFsNormalFile {
     fn read<'a>(&'a mut self, buff: &'a mut [u8]) -> BoxFuture<Result<&'a mut [u8], (IoError, usize)>> {
         async {
-            let acc = self.accessor.upgrade().ok_or((IoError::NotPresent,0))?;
-            if !acc.lock.lock().cmp_t(self) {
+
+            if !self.accessor.lock.lock().cmp_t(self) {
                 return Err((IoError::Exclusive,0));
             }
-            let file = acc.data.read().await;
+            let file = self.accessor.data.read().await;
             if self.cursor >= file.len() {
                 return Err((IoError::EndOfFile, 0))
             }
@@ -591,11 +576,11 @@ impl Read<u8> for TmpFsNormalFile {
 impl Write<u8> for TmpFsNormalFile {
     fn write<'a>(&'a mut self, buff: &'a [u8]) -> BoxFuture<Result<usize, (IoError,usize)>> {
         async {
-            let acc = self.accessor.upgrade().ok_or((IoError::NotPresent,0usize))?;
-            if !acc.lock.lock().cmp_t(self) {
+
+            if !self.accessor.lock.lock().cmp_t(self) {
                 return Err((IoError::Exclusive,0))
             }
-            let mut file = acc.data.write().await;
+            let mut file = self.accessor.data.write().await;
             // extend file if necessary
             if buff.len() + self.cursor > file.len() {
                 // SAFETY: new len is valid & u8 does not have an invalid state

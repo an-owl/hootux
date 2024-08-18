@@ -160,7 +160,6 @@ fn kernel_main(b: *mut libboot::boot_info::BootInfo) -> ! {
         }
     }
 
-    task::run_task(Box::pin(test_vfs()));
     task::run_task(Box::pin(keyboard::print_key()));
     task::run_exec(); //executor.run();
 }

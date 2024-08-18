@@ -32,6 +32,8 @@ use core::future::Future;
 use futures_util::FutureExt;
 use crate::fs::{IoError, IoResult};
 
+self::file_derive_debug!(File);
+
 /// Represents a file. This trait should not actually be implemented on filesystem "file" primitives,
 /// instead implementors should act more like a file descriptor where the implementor is
 /// used to access the actual file within a filesystem.
@@ -43,10 +45,6 @@ use crate::fs::{IoError, IoResult};
 /// All files must act *in a way* the same. They must all *act* as a normal file when being used by user software.
 /// Kernel defined file types all have blanket impls for [`NormalFile<u8>`],
 /// so files may only implement one major file type trait.
-// todo normal file blanket impls
-
-self::file_derive_debug!(File);
-
 #[cast_trait_object::dyn_upcast]
 #[cast_trait_object::dyn_cast(NormalFile<u8>, Directory, super::device::FileSystem, super::device::Fifo<u8>, super::device::DeviceFile )]
 pub trait File: Send + Sync {
@@ -263,7 +261,7 @@ pub trait Directory: File {
     ///
     /// The VFS implementation prevents a filename from ever containing the file separator character '/'.
     /// A filesystem may use this character internally to denote internally used files like "/journal"
-    fn get_file<'a>(&'a self, name: &'a str) -> IoResult<Option<alloc::boxed::Box<dyn File>>>;
+    fn get_file<'a>(&'a self, name: &'a str) -> IoResult<alloc::boxed::Box<dyn File>>;
 
     /// Returns a files metadata.
     ///
@@ -271,7 +269,11 @@ pub trait Directory: File {
     ///
     /// If `name` is a device file where the driver does not know the state of the device then the
     /// may assume its metadata. This method should never return [IoError::IsDevice].
-    fn get_file_meta<'a>(&'a self, name: &'a str) -> IoResult<Option<FileMetadata>>;
+    fn get_file_meta<'a>(&'a self, name: &'a str) -> IoResult<FileMetadata> {
+        async {
+            FileMetadata::new_from_file(&*self.get_file(name).await?).await
+        }.boxed()
+    }
 
     /// Returns information alongside the requested file.
     ///
@@ -284,7 +286,7 @@ pub trait Directory: File {
     /// The default implementation should not be used. It is very poorly optimized.
     ///
     /// See [Directory::get_file] for more info.
-    fn get_file_with_meta<'a>(&'a self, name: &'a str) -> IoResult<Option<FileHandle>> {
+    fn get_file_with_meta<'a>(&'a self, name: &'a str) -> IoResult<FileHandle> {
 
         async {
 
@@ -293,15 +295,12 @@ pub trait Directory: File {
             let file = {
                 match self.get_file(name).await {
                     Ok(f) => f,
-                    Err(IoError::IsDevice) => return Ok(Some(FileHandle::new_dev(FileMetadata::new_unknown()))),
+                    Err(IoError::IsDevice) => return Ok(FileHandle::new_dev(FileMetadata::new_unknown())),
                     Err(e) => return Err(e)
                 }
             };
 
-            if file.is_none() || meta.is_none() {
-                return Ok(None)
-            }
-            Ok(Some(FileHandle::new(file.unwrap(),true,meta.unwrap())))
+            Ok(FileHandle::new(file,true,meta))
         }.boxed()
     }
 
@@ -348,7 +347,6 @@ pub(crate) use file_derive_debug;
 
 /// Casts a file into a directory regardless of whether it is a filesystem or a directory
 // todo integrate this into cast_file
-// todo roll into `cast_file`
 macro_rules! cast_dir {
     ($file:expr) => {
         match cast_file!($crate::fs::file::Directory: $file) {

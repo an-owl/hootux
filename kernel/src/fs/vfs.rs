@@ -10,13 +10,11 @@
 use alloc::boxed::Box;
 use alloc::collections::BTreeMap;
 use alloc::string::{String, ToString};
-use alloc::vec::Vec;
 use core::fmt::{Display, Formatter};
 use cast_trait_object::DynCastExt;
 use futures_util::FutureExt as _;
 use crate::fs::IoError;
 use crate::fs::device::{DeviceFile, FileSystem};
-use crate::{fs, print, println, task};
 use super::file::*;
 
 pub type VfsFuture<'a, T> = futures_util::future::BoxFuture<'a, Result<T, VfsError>>;
@@ -67,7 +65,12 @@ impl VirtualFileSystem {
                     }
                 })?;
 
-                let file_handle = dir.get_file_with_meta(filename).await.map_err(|e| VfsError::LowerLevel(e))?.ok_or(VfsError::DoesNotExist(i))?;
+                let file_handle = dir.get_file_with_meta(filename).await.map_err(|e|
+                    if let IoError::NotPresent = e {
+                        VfsError::DoesNotExist(i)
+                    } else {
+                        VfsError::LowerLevel(e)
+                    })?;
 
                 // This is only a hint and may not actually be a dev file
                 if file_handle.vfs_device_hint() {
@@ -135,15 +138,15 @@ impl VirtualFileSystem {
                 return Ok(dir.clone_file())
             }
 
-            match dir.get_file_with_meta(name).await.map_err(|e| VfsError::LowerLevel(e))? {
+            match dir.get_file_with_meta(name).await {
                 // file is a device
-                Some(FileHandle{file: None, device_hint: true, .. } ) => {
+                Ok(FileHandle{file: None, device_hint: true, .. } ) => {
                     let id = self.device_ctl.read().dev_override.lookup((dir.device(),dir.id()),name).expect("Filesystem returned device hind with no file and the VFS found no corresponding device");
                     Ok(self.device_ctl.read().mounts.get_dev(id).expect("Dev override found device but found no such device").file.clone_file())
                 }
 
                 // file may be device
-                Some(FileHandle{file: Some(file),device_hint: true, .. } ) => {
+                Ok(FileHandle{file: Some(file),device_hint: true, .. } ) => {
                     // gibberish. Performs a lookup in self, if there is no suck device uses `file` instead
                     let dcl =  self.device_ctl.read();
                     let f = self.device_ctl.read().dev_override.lookup((dir.device(),dir.id()),name).and_then(|dev| dcl.mounts.get_dev(dev)).and_then(|d| Some(d.file.clone_file())).unwrap_or(file);
@@ -151,11 +154,12 @@ impl VirtualFileSystem {
                 }
 
                 // file is not device
-                Some(FileHandle{file: Some(file), device_hint: false, .. }) => {
+                Ok(FileHandle{file: Some(file), device_hint: false, .. }) => {
                     // skip the file check here, it just adds extra ops
                     Ok(file)
                 }
-                None => Err(VfsError::DoesNotExist(usize::MAX))?,
+                Err(IoError::NotPresent) => Err(VfsError::DoesNotExist(usize::MAX))?,
+                Err(e) => Err(VfsError::LowerLevel(e)),
                 _ => unreachable!() // buggy drivers may reach this
             }
         }.boxed()
@@ -367,6 +371,7 @@ trait FilePath {
 
     /// See [Self::is_absolute] but for relative paths instead.
     #[inline]
+    #[allow(dead_code)]
     fn is_relative(&self) -> Result<(),VfsError> {
         if self.is_absolute().is_ok() {
             Err(VfsError::PathFrameError)
