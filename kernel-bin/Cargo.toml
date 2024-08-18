@@ -14,6 +14,6 @@ acpi = "5.0.0"
 multiboot2-header = "0.4.0"
 libboot = { path = "../lib/libboot", features = ["uefi","multiboot2","debug-bits"] }
 kernel-proc-macro = { path = "../kernel-interrupts-proc-macro"}
-
+cast_trait_object = "0.1.3"
 futures-util = { version = "0.3.28", default-features = false, features = ["alloc","sink"] }
 ahci = { path = "../drivers/ahci" }

@@ -104,3 +104,6 @@ achieve them.
      - Things like running hardware tests
  - Add USB support
  - Create tooling to parse and interpret QEMU `-d` and trace outputs
+ - Swanky async optimization using union to contain future on the stack when the future is smaller than or the same sizes as the return type.
+   - This allows for maybe-async functions by just returning the completed result and polling it to return Ready(_)
+   - Will this even work?

@@ -2,29 +2,34 @@
 //! The filesystem is intended to be posix compatible at the user level which guides the design of
 //! traits within this module.
 //!
+//! ## File traits
+//!
 //! Within the kernel files are represented as "file objects" (`dyn File`).
 //! These file objects should actually be references to the drivers "file accessor" which should be
 //! unique for each opened file on the system. File accessors must be owned by driver.
 //! File accessors have few limits imposed for them, namely that only one file accessor can exist for any unique file.
 //! Apart from this they may do whatever they like as long as they act as expected when accessed by the file object.
 //!
-//! Normally UNIX systems uniquely identify each file in the filesystem with an "inode" number,
-//! in Hootux this number is not strongly defined. A filesystem is free to completely omit inode
-//! numbers and generate them on the fly with a few restrictions.
+//! Unlike within a normal Unix-like filesystem which must explicitly open a file.
+//! The Hootux filesystem within the kernel implicitly opens files when they are accessed from their parents.
 //!
-//! * The inode numbers in a directory must be unique for each "uinique" file within a directory.
-//! * Hard links would be considered not unique and must have the same inode number.
-//! * A file and a reflink to that file would be considered unique files.
+//! ## Device files
 //!
-//! Inode numbers do not need to be unique within a filesystem, just a directory as long as the file accessor is open.
+//! Special files must have an associated [DevID]. This is used by the kernel to uniquely identify device files.
+//! A [DevID] can be combined by to identify a file within a filesystem.
+//! These capabilities are used by the VFS to enable cache lookups, and to provide capabilities to
+//! drivers which they may not be able to implement themselves.
 //!
-//! Normally unix systems use a major and minor number to uniquely identify each filesystem.
-//! While this does need to be implemented for compatibility reasons I'll probably emulate this
-//! behaviour somehow to prevent the filesystem driver from needing to use this.
-//! With all our modern technology we better ways of uniquely identifying a filesystem.
+//! ## File casting
+//!
+//! Files are normally as a [File] however this is not necessarily a useful type files mut be
+//! downcast into other types for this. This module provides the macro [cast_file], which is the
+//! preferred method for casting files.
 
+use alloc::string::ToString;
 use core::fmt::Formatter;
 use core::future::Future;
+use futures_util::FutureExt;
 use crate::fs::{IoError, IoResult};
 
 /// Represents a file. This trait should not actually be implemented on filesystem "file" primitives,
@@ -39,19 +44,32 @@ use crate::fs::{IoError, IoResult};
 /// Kernel defined file types all have blanket impls for [`NormalFile<u8>`],
 /// so files may only implement one major file type trait.
 // todo normal file blanket impls
+
+self::file_derive_debug!(File);
+
+#[cast_trait_object::dyn_upcast]
+#[cast_trait_object::dyn_cast(NormalFile<u8>, Directory, super::device::FileSystem, super::device::Fifo<u8>, super::device::DeviceFile )]
 pub trait File: Send + Sync {
+    /*
     /// Upcasts `self` into either a [NormalFile] or [Directory].
     ///
     /// If a filesystem implementation defines a file which is not otherwise defined by the kernel it should
     /// return [FileTypeWrapper::NativeFile]. This may be used to provide special implemented by the filesystem.
     /// A private File impl may leak into the kernel however they may not leak into user mode.
     /// A filesystem may also [FileTypeWrapper::NativeFile] this to return public custom File impls with unique APIs.
-    fn downcast(self: alloc::boxed::Box<Self>) -> FileTypeWrapper;
+    fn upcast(self: alloc::boxed::Box<Self>) -> FileTypeWrapper;
 
-    fn file_type(&self) -> IoResult<FileType>;
+     */
+
+    fn file_type(&self) -> FileType;
 
     /// Returns the optimal block size for this
     fn block_size(&self) -> u64;
+
+    /// Returns the device ID owner for the file.
+    ///
+    /// Device files may never return Err(_)
+    fn device(&self) -> DevID;
 
     /// Creates a new file object accessing the same file accessor.
     ///
@@ -59,7 +77,36 @@ pub trait File: Send + Sync {
     /// If `self` holds a file lock the returned file will not be able to perform file operations
     /// until the lock is freed.
     fn clone_file(&self) -> alloc::boxed::Box<dyn File>;
+
+    /// Returns a file ID.
+    ///
+    /// This ID is used by the VFS for looking up cached data.
+    ///
+    /// - When this filesystem does not support caching or device files the return value of this is undefined.
+    /// - When this filesystem supports caching all files within the filesystem must have a unique ID
+    /// - When this filesystem does not support caching but supports device files all directories must have a unique ID, other files are undefined.
+    /// - When `self` is a device file then the value of ID is undefined.
+    fn id(&self) -> u64;
+
+    /*
+    /// Attempts to upcast `self` into a `dyn DeviceFile`.
+    /// Returns `Err` if this file is not a device file.
+    fn to_device(self: alloc::boxed::Box<Self>) -> Result<alloc::boxed::Box<dyn super::device::DeviceFile>,alloc::boxed::Box<dyn File>> {
+        Err(self)
+    }
+
+     */
+
+    /// Returns the size of a file.
+    ///
+    /// - If `self` is a [NormalFile] this must return the same value as the result of [NormalFile::len_chars].
+    /// - If `self` is a [Directory] then this should return the number of directories contained within self.
+    /// - If `self` is any other type then this fn should hint the number of characters expected to be read.
+    /// - If the implementation cannot provide any hint then this may return any non-zero value.
+    fn len(&self) -> IoResult<u64>;
 }
+
+self::file_derive_debug!(NormalFile<u8>);
 
 /// Represents a normal file which can be read and written has a cursor which is kept by the file object.
 /// A normal file
@@ -67,7 +114,7 @@ pub trait NormalFile<T>: Read<T> + Write<T> + Seek + File + Send + Sync {
     /// Returns the size of the file in chars
     ///
     /// Using `core::mem::size_of::<T>() * NormalFile::len(file)` as usize will return the size in bytes
-    fn len(&self) -> IoResult<u64>;
+    fn len_chars(&self) -> IoResult<u64>;
 
     /// Exclusively locks the file, any read or write calls must return [IoError::Exclusive]
     ///
@@ -102,7 +149,6 @@ pub trait Read<T> {
     /// This will advance the cursor by the `len()` of the returned buffer.
     ///
     /// This method takes a `&mut self` because the cursor may need to be modified.
-    /// Between when this fn is called and when it returns the state of the cursor is not defined.
     ///
     /// # Errors
     ///
@@ -117,13 +163,28 @@ pub trait Write<T> {
     /// Advances the cursor by the returned value.
     ///
     /// We can return a `usize` here because a single op cannot reasonably write more than `usize::MAX` bytes
-    fn write<'a>(&'a mut self, buff: &'a [T]) -> IoResult<usize>;
+    fn write<'a>(&'a mut self, buff: &'a [T]) -> futures_util::future::BoxFuture<Result<usize, (IoError,usize)>>;
 }
 
-
+/// This trait allows manipulation of a cursor allowing a user to manipulate where a file is read.
+///
+/// All methods in this trait return the new cursor position on success.
+/// All methods except for [Self::set_cursor] are required to return `Ok(_)` when `pos` is `0`. This can be used to get the
+/// current position of the cursor.
+///
+/// This trait is not permitted to affect the state of a "file accessor".
+///
+/// # Errors
+///
+/// Attempting to move the cursor to an invalid position as defined at the driver level must return [IoError::EndOfFile].
+/// If other errors are encountered then they may be propagated.
+///
+/// All methods must return Ok(_) when the cursor argument is 0
 pub trait Seek {
 
     /// Moves the cursor by `seek`. Returns the new cursor position.
+    ///
+    /// `move_cursor(0)` will return the current cursor position.
     fn move_cursor(&mut self, seek: i64) -> Result<u64, IoError> {
         if seek.is_positive() {
             self.seek(seek.abs() as u64)
@@ -143,6 +204,8 @@ pub trait Seek {
     fn seek(&mut self, pos: u64) -> Result<u64,IoError>;
 }
 
+self::file_derive_debug!(Directory);
+
 /// Represents a directory in a filesystem containing files and other directories.
 ///
 /// A directory must be able to be mutably aliased, and any functions using this must expect the
@@ -152,11 +215,13 @@ pub trait Seek {
 /// an error immediately. Because of this the type `T` in file doesn't matter.
 ///
 /// A directory must always contain an identifier for its parent (the file "..").
+///
+/// When a directory is the filesystem root both "." and ".." should be the same file.
 pub trait Directory: File {
 
     /// Returns the number of entries in this directory.
     /// Because `self` may be aliased this may change without warning.
-    fn len(&self) -> IoResult<usize>;
+    fn entries(&self) -> IoResult<usize>;
 
     /// Adds a new file entry into `self`.
     ///
@@ -165,18 +230,80 @@ pub trait Directory: File {
     ///
     /// This may fail as a result of an error with `self` of `file` the `Err` variant this may
     /// return may contain 1 or 2 errors. Each tuple field representing `self` and `file` respectively.
-    fn new_file<'a>(&'a self, name: &'a str, file: Option<&'a mut dyn NormalFile<u8>>) -> futures_util::future::BoxFuture<Result<(), (Option<IoError>, Option<IoError>)>>;
+    ///
+    /// If `file` needs to be read to be added to the directory the driver must attempt to restore the cursor.
+    /// If restoring th cursor throws an error then the cursor should be set to 0
+    fn new_file<'s, 'a:'s>(&'s self, name: &'a str, file: Option<&'a mut dyn NormalFile<u8>>) -> futures_util::future::BoxFuture<Result<(), (Option<IoError>, Option<IoError>)>>;
 
     /// Constructs a new directory, automatically returns a file object for the new directory.
     // If we are making a new dir we probably also want to use it. This optimizes out the extra fetch.
     fn new_dir<'a>(&'a self, name: &'a str) -> IoResult<alloc::boxed::Box<dyn Directory>>;
 
+    /// Stores a file, without modifying its primitive type in the current filesystem.
+    /// If a file of the type already exists with `name` it must be shadowed and restored when `file` is removed.
+    ///
+    /// This method is intended to be used by the VFS when attaching device files to the filesystem
+    /// and should not be used for normal files or directories.
+    ///
+    /// If the filesystem is not capable of storing its own device files then it must return [IoError::NotSupported].
+    /// If the filesystem allows caching then the VFS will cache the directory and handle device
+    /// files transparently to the filesystem.
+    #[allow(unused_variables)]
+    fn store<'a>(&'a self, name: &'a str, file: alloc::boxed::Box<dyn File>) -> IoResult<()> {
+        async {
+            Err(IoError::NotSupported)
+        }.boxed()
+    }
+
     /// Requests a file handle from the directory.
     ///
     /// Returns `None` if no file matching `name` exists.
     ///
-    /// If self is the root of the filesystem and `name` is `..` then the returned file should contain self.
+    /// If `self` is the root of the filesystem and `name` is `..` then this must return [IoError::IsDevice].
+    ///
+    /// The VFS implementation prevents a filename from ever containing the file separator character '/'.
+    /// A filesystem may use this character internally to denote internally used files like "/journal"
     fn get_file<'a>(&'a self, name: &'a str) -> IoResult<Option<alloc::boxed::Box<dyn File>>>;
+
+    /// Returns a files metadata.
+    ///
+    /// See [Directory::get_file] for info
+    ///
+    /// If `name` is a device file where the driver does not know the state of the device then the
+    /// may assume its metadata. This method should never return [IoError::IsDevice].
+    fn get_file_meta<'a>(&'a self, name: &'a str) -> IoResult<Option<FileMetadata>>;
+
+    /// Returns information alongside the requested file.
+    ///
+    /// This is intended to be an optimization over other methods for getting file information,
+    /// to prevent multiple lookups when accessing a directory entry.
+    ///
+    /// When `self` is the root of the filesystem and `name` is ".." then the returned handle must
+    /// not contain an accessible file and must indicate that the file is a device.
+    ///
+    /// The default implementation should not be used. It is very poorly optimized.
+    ///
+    /// See [Directory::get_file] for more info.
+    fn get_file_with_meta<'a>(&'a self, name: &'a str) -> IoResult<Option<FileHandle>> {
+
+        async {
+
+            let meta = self.get_file_meta(name).await?;
+
+            let file = {
+                match self.get_file(name).await {
+                    Ok(f) => f,
+                    Err(IoError::IsDevice) => return Ok(Some(FileHandle::new_dev(FileMetadata::new_unknown()))),
+                    Err(e) => return Err(e)
+                }
+            };
+
+            if file.is_none() || meta.is_none() {
+                return Ok(None)
+            }
+            Ok(Some(FileHandle::new(file.unwrap(),true,meta.unwrap())))
+        }.boxed()
+    }
 
     /// Returns a vec containing all entries within the directory.
     ///
@@ -187,50 +314,73 @@ pub trait Directory: File {
     // In theory the FS should cache the dir, but it may not so thi needs to be a future
     // todo optimize this to return a single buffer
     fn file_list(&self) -> IoResult<alloc::vec::Vec<alloc::string::String>>;
+
+    /// Removes the file `name` from the directory.
+    ///
+    /// If `name` is a directory which is not empty, this fn must return [IoError::NotEmpty].
+    ///
+    /// If `name` is a VFS-managed device file then this fn must remove the entry from the directory
+    /// and return [IoError::IsDevice] to inform the VFS to remove the device entry from the device-override list.
+    fn remove<'a>(&'a self, name: &'a str) -> IoResult<()>;
 }
 
-/// Trait for a base filesystem. A filesystem must implement this to be included in the VFS.
-pub trait Filesystem {
-    /// Return the root directory of the filesystem.
-    fn root(&self) -> alloc::boxed::Box<dyn Directory>;
-}
-
-/// Downcasts a [File] object into its lower level implementation.
-/// This returns the resulting type in a `Result`, this allows the caller to handle the file not
-/// being the expected type, instead of just panicking.
-///
-/// This is intended to be used for a cloned file object.
-///
-/// ``` ignore
-/// extern crate alloc;
-///
-/// fn example(file: &alloc::boxed::Box<dyn hootux::fs::file::NormalFile<u8>>) -> alloc::boxed::Box<dyn hootux::fs::file::NormalFile<u8>> {
-///     hootux::fs::file::downcast_file!(file.clone_file(),Normal).unwrap()
-/// }
-/// ```
-///
-/// Note that the second argument is a [FileTypeWrapper] variant not the trait name.
 #[macro_export]
-macro_rules! downcast_file {
-    ($obj:expr, $ty:ident) => {
-        match $crate::fs::file::File::downcast($obj) {
-            $crate::fs::file::FileTypeWrapper::$ty(file) => Ok(file),
-            other => Err(other)
+macro_rules! cast_file {
+    ($ty:path: $id:expr) => { { let t: ::core::result::Result< ::alloc::boxed::Box< dyn $ty >, alloc::boxed::Box<dyn $crate::fs::file::File> >= cast_trait_object::DynCastExt::dyn_cast( $id ); t } };
+    (& $ty:path: $id:expr) => { {let t:  ::core::result::Result< & dyn $ty , & dyn $crate::fs::file::File >= cast_trait_object::DynCastExt::dyn_cast( $id ); t} };
+    (mut $ty:path: $id:expr) => { { let t: ::core::result::Result< &mut dyn $ty, &mut dyn $crate::fs::file::File >= cast_trait_object::DynCastExt::dyn_cast( $id ); t } };
+}
+
+pub use cast_file;
+
+/// Derives debug for `dyn $tra` when it is wrapped in a Box or Arc
+macro_rules! file_derive_debug {
+    ($tra:path) => {
+        impl ::core::fmt::Debug for ::alloc::boxed::Box< dyn $tra > {
+            fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
+                write!(f,"Box(File:{:?}({}))",self.file_type(),self.device())
+            }
         }
     };
 }
 
-pub use downcast_file;
+pub(crate) use file_derive_debug;
 
-#[derive(Copy, Clone, Debug)]
+/// Casts a file into a directory regardless of whether it is a filesystem or a directory
+// todo integrate this into cast_file
+// todo roll into `cast_file`
+macro_rules! cast_dir {
+    ($file:expr) => {
+        match cast_file!($crate::fs::file::Directory: $file) {
+            Ok(dir) => Ok(dir),
+            Err(file) => {
+                match cast_file!($crate::fs::device::FileSystem: file) {
+                    Ok(fs) => Ok(fs.root()),
+                    Err(e) => Err(e),
+                }
+            }
+        }
+    };
+}
+
+pub(crate) use cast_dir;
+
+use crate::fs::vfs::DevID;
+
+#[derive(Clone, Debug)]
 pub struct FileMetadata {
-    /// File size in bytes
-    ///
-    /// For directories this may always read `0` but should *try* to contain the actual size of the dir
+    unknown: bool,
+
     size: u64,
-    /// Recommended block size. For optimal performance blocks should use this
-    /// size and alignment to access the file
+
     block_size: core::num::NonZeroU64,
+
+    id: u64,
+
+    /// Each filesystem has a unique [super::vfs::DevID], this field must contain the ID of the owner of this file.
+    /// Normally files are owned by the same filesystem as the directory that contains it,
+    /// if the file is a mountpoint or special file this may not be the case.
+    device: super::vfs::DevID,
     f_type: FileType,
 }
 
@@ -241,18 +391,39 @@ impl FileMetadata {
     /// # Panics
     ///
     /// This fn will panic if `block_size` is zero.
-    pub fn new(size: u64, block_size: u64, file_type: FileType) -> Self {
+    pub fn new(size: u64, block_size: u64, id: u64, device: super::vfs::DevID, file_type: FileType) -> Self {
         Self {
+            unknown: false,
             size,
             block_size: block_size.try_into().expect("Tried to create a FileMetadata with block size of `0`"),
-            f_type: file_type
+            id,
+            device,
+            f_type: file_type,
         }
     }
 
+
+    /// Constructs an instance of self using the information provided by `file`
+    pub async fn new_from_file(file: &dyn File) -> Result<Self,IoError> {
+        Ok(Self {
+            unknown: false,
+            size: file.len().await?,
+            block_size: file.block_size().try_into().unwrap(),
+            id: file.id(),
+            device: file.device(),
+            f_type: file.file_type(),
+        })
+    }
+
+    /// File size in bytes
+    ///
+    /// For directories this may always read `0` but should *try* to contain the actual size of the dir
     pub fn size(&self) -> u64 {
         self.size
     }
 
+    /// Recommended block size. For optimal performance blocks should use this
+    /// size and alignment to access the file
     pub fn block_size(&self) -> u64 {
         self.block_size.get()
     }
@@ -260,39 +431,246 @@ impl FileMetadata {
     pub fn file_type(&self) -> FileType {
         self.f_type
     }
+
+
+    /// The file must be given an ID. This ID is used by the kernel for cache lookups.
+    ///
+    /// For filesystems where caching is allowed the ID for each file in the filesystem must be unique.
+    // todo the rest of this
+    pub fn id(&self) -> u64 {
+        self.id
+    }
+
+    /// The device ID of the file. Noted the owner of the file.
+    /// When the file is owned by the same system as the filesystem then they must have the same ID.
+    /// If the file is a device file then the ID must be the owner of that file, not the directory it was contained within.
+    pub fn min_maj(&self) -> DevID {
+        self.device
+    }
+
+    pub fn new_unknown() -> Self {
+        Self {
+            unknown: true,
+            size: 0,
+            block_size: unsafe { core::num::NonZeroU64::new(u64::MAX).unwrap_unchecked() }, // u64::MAX is definitely not 0
+            id: 0,
+            device: DevID::NULL,
+            f_type: FileType::NormalFile,
+        }
+    }
+
+    pub fn is_unknown(&self) -> bool {
+        self.unknown
+    }
 }
 
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum FileType {
     NormalFile,
+    MountPoint,
     Directory,
     CharDev,
     BlkDev,
 }
 
-
-/// Returned by [File::downcast], Contains a downcast file.
+/// Contains a number of filesystem options that can be queried at runtime.
 ///
-/// This implements [core::fmt::Debug] and will print the variant name.
-pub enum FileTypeWrapper {
-    Normal(alloc::boxed::Box<dyn NormalFile<u8>>),
-    Dir(alloc::boxed::Box<dyn Directory>),
-
-    /// This file type is native to this particular filesystem and provides its own interface for
-    /// interacting with it.
-    ///
-    /// This type of file *may* not have a public interface at all,
-    /// If this is the case then this file may not be intended to be publicly accessible.
-    NativeFile(alloc::boxed::Box<dyn File>),
+/// Options are given as key-value pairs. The values are passed as a [FsOptionVariant] this allows
+/// storing integers, booleans or strings.
+/// Strings must be copied onto the heap when fetched so the other variants are preferred.
+///
+/// The value variant for any key be constant, any value that is a bool must always be a bool,
+/// it may never switch to an integer.
+/// Except for the above rule a driver may define its options however it wants. It the driver wants
+/// to use [FsOptionVariant::Int] to store a [char] it may as long as the driver can distinguish between actual values.
+/// If the driver wants to store an array it must use [FsOptionVariant::String] instead.
+///
+/// This struct defines some pre-defined option names. For forward-compatibility reasons drivers
+/// **must** use the se const's to access these defined variables. If a driver chooses to not use
+/// [FsOpts] to store its options then these options must still be defined by these definitions.
+///
+/// # Panics
+///
+/// Attempting to set a predefined option to the incorrect value variant will result in a panic.
+#[derive(Debug)]
+pub struct FsOpts {
+    dir_cache: bool,
+    dev_allowed: bool,
+    extra: alloc::collections::BTreeMap<alloc::string::String,FsOptionVariant>,
 }
 
-impl core::fmt::Debug for FileTypeWrapper {
+impl FsOpts {
+    pub const TRUE: FsOptionVariant = FsOptionVariant::Bool(true);
+    pub const FALSE: FsOptionVariant = FsOptionVariant::Bool(false);
+
+    /// Indicates whether directories may be cached by the kernel.
+    /// A filesystem must disable this is cache synchronization cannot be guaranteed by the driver (i.e. shared filesystems).
+    pub const DIR_CACHE: &'static str = "dir_cache";
+
+    /// Indicates that this filesystem may store device files such as pipes, FIFOs or mount points.
+    ///
+    /// If `dev_allowed` is true the filesystem may implement device file handling natively or via the VFS.
+    /// Native device file handling is likely to be faster than VFS device lookups.
+    pub const DEV_ALLOWED: &'static str = "dev_allowed";
+
+    /// Constructs a new instance of self.
+    ///
+    /// This fn is non-exhaustive, other properties may be added in the future.
+    pub fn new(dir_cache: bool, dev_allowed: bool) -> Self {
+        Self {
+            dir_cache,
+            dev_allowed,
+            extra: Default::default(),
+        }
+    }
+
+    /// Set a filesystem property.
+    ///
+    /// This is intended to be used while the filesystem is initialized, not used at runtime.
+    #[cold]
+    pub fn set<T: Into<FsOptionVariant>>(&mut self, property: alloc::string::String, value: T) -> &mut Self {
+        let value = value.into();
+        match &*property {
+            Self::DEV_ALLOWED => {
+                self.dev_allowed = value.try_into().unwrap()
+            }
+
+            Self::DIR_CACHE => {
+                if let FsOptionVariant::Bool(b) = value {
+                    self.dir_cache = b
+                }
+            }
+            _ => self.extra.insert(property,value.into()).ok_or(()).expect_err("Failed to insert property"),
+        }
+
+        self
+    }
+
+    /// Returns the value of the requested property if it exists.
+    ///
+    /// A number of predefined options exist, the names of these are defined as associated constants
+    /// these are guaranteed to be present and accessible in O(1).
+    /// [Self::TRUE] and [Self::FALSE] which may use for comparisons ([core::ptr::eq] should not be used for comparisons)
+    pub fn get(&self, property: &str) -> Option<FsOptionVariant> {
+        match property {
+            Self::DIR_CACHE => {
+                if self.dir_cache {
+                    Some(Self::TRUE)
+                } else {
+                    Some(Self::FALSE)
+                }
+            }
+
+            Self::DEV_ALLOWED => {
+                if self.dev_allowed {
+                    Some(Self::TRUE)
+                } else {
+                    Some(Self::FALSE)
+                }
+            }
+
+            property => {
+                Some(self.extra.get(property)?.clone()) // I hate that this needs `?`
+            }
+        }
+    }
+}
+
+/// Helper for wrapping data that may be included within FsOptions
+#[derive(Clone,Eq,PartialEq,Debug)]
+pub enum FsOptionVariant {
+    Int(usize),
+    Bool(bool),
+    String(alloc::string::String),
+}
+
+impl core::str::FromStr for FsOptionVariant {
+    type Err = core::convert::Infallible;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        if let Ok(e) = s.parse() {
+            Ok(Self::Bool(e))
+        } else if let Ok(e) = s.parse() {
+            Ok(Self::Int(e))
+        } else {
+            Ok(Self::String(s.to_string()))
+        }
+    }
+}
+
+
+impl core::fmt::Display for FsOptionVariant {
     fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
         match self {
-            FileTypeWrapper::Normal(_) => f.write_str("Normal"),
-            FileTypeWrapper::Dir(_) => f.write_str("Dir"),
-            FileTypeWrapper::NativeFile(_) => f.write_str("NativeFile"),
+            FsOptionVariant::Int(i) => core::write!(f,"{i}"),
+            FsOptionVariant::Bool(b) => core::write!(f,"{b}"),
+            FsOptionVariant::String(s) => core::write!(f,"{s}"),
+        }
+    }
+}
+
+impl From<usize> for FsOptionVariant {
+    fn from(value: usize) -> Self {
+        Self::Int(value.into())
+    }
+}
+
+impl From<bool> for FsOptionVariant {
+    fn from(value: bool) -> Self {
+        Self::Bool(value)
+    }
+}
+
+impl From<alloc::string::String> for FsOptionVariant {
+    fn from(value: alloc::string::String) -> Self {
+        Self::String(value)
+    }
+}
+
+impl TryFrom<FsOptionVariant> for usize {
+    type Error = FsOptionVariant;
+
+    fn try_from(value: FsOptionVariant) -> Result<Self, Self::Error> {
+        if let FsOptionVariant::Int(i) = value {
+            Ok(i)
+        } else {
+            Err(value)
+        }
+    }
+}
+
+impl TryFrom<FsOptionVariant> for bool {
+    type Error = FsOptionVariant;
+
+    fn try_from(value: FsOptionVariant) -> Result<Self, Self::Error> {
+        if let FsOptionVariant::Bool(i) = value {
+            Ok(i)
+        } else {
+            Err(value)
+        }
+    }
+}
+
+impl TryFrom<FsOptionVariant> for alloc::string::String {
+    type Error = FsOptionVariant;
+
+    fn try_from(value: FsOptionVariant) -> Result<Self, Self::Error> {
+        if let FsOptionVariant::String(i) = value {
+            Ok(i)
+        } else {
+            Err(value)
+        }
+    }
+}
+
+impl<'a> TryFrom<&'a FsOptionVariant> for &'a str {
+    type Error = &'a FsOptionVariant;
+
+    fn try_from(value: &'a FsOptionVariant) -> Result<Self, Self::Error> {
+        if let FsOptionVariant::String(i) = value {
+            Ok(&*i)
+        } else {
+            Err(value)
         }
     }
 }
@@ -354,5 +732,62 @@ impl<T> core::ops::Deref for LockedFile<T> {
 impl<T> core::ops::DerefMut for LockedFile<T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut *self.file
+    }
+}
+
+#[derive(Ord, PartialOrd, Eq, PartialEq)]
+pub struct DirId(u64);
+
+impl DirId {
+    pub fn new(id: u64) -> Self {
+        Self(id)
+    }
+}
+
+/// Required for filesystem file lookup optimization.
+/// This is returned when both the file and metadata is required.
+pub struct FileHandle {
+    pub file_metadata: FileMetadata,
+    pub device_hint: bool,
+    pub file: Option<alloc::boxed::Box<dyn File>>,
+}
+
+impl FileHandle {
+    pub fn new(file: alloc::boxed::Box<dyn File>, dev_hint: bool, meta: FileMetadata) -> Self {
+        Self {
+            file_metadata: meta,
+            device_hint: dev_hint,
+            file: Some(file),
+        }
+    }
+
+    /// Returns an instance of self that returns a "device hint" and does not return a file object.
+    pub fn new_dev(meta: FileMetadata) -> Self {
+        Self {
+            file_metadata: meta,
+            device_hint: true,
+            file: None,
+        }
+    }
+
+    /// Returns the file contained within self.
+    ///
+    /// The returned value must always be `Some(_)` if [Self::vfs_device_hint] returns `false`
+    pub fn file(self) -> Option<alloc::boxed::Box<dyn File>> {
+        self.file
+    }
+
+    /// Returns whether this file may be a device file.
+    ///
+    /// - This **must** return `true` when the file is a device file managed by the kernel VFS.
+    /// - This *should* return `true` when the file is a device file managed natively by the filesystem.
+    /// - This *may* be `true` when the file is not a device file.
+    /// A filesystem much as FAT may always return this as `true`.
+    pub fn vfs_device_hint(&self) -> bool {
+        self.device_hint
+    }
+
+    pub fn metadata(&self) -> FileMetadata {
+        self.file_metadata.clone()
     }
 }

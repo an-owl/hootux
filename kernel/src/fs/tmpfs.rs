@@ -1,340 +1,635 @@
-use alloc::boxed::Box;
-use alloc::string::{String, ToString};
-use alloc::sync::{Arc, Weak};
+use super::*;
+use super::file::*;
+use alloc::{
+    collections::BTreeMap,
+    string::String,
+    boxed::Box,
+    sync::Weak,
+    sync::Arc,
+};
 use alloc::vec::Vec;
 use futures_util::future::BoxFuture;
+use super::vfs::*;
+use alloc::string::ToString;
+use core::any::TypeId;
+use cast_trait_object::DynCastExt;
 use futures_util::FutureExt;
-use crate::fs::file::*;
-use super::*;
+use lazy_static::lazy_static;
 
-// fixme make this a warning
-#[cfg(target_pointer_width = "32")]
-compile_error!("tmpfs can only store 4GiB files on 32bit systems");
-
-pub struct TmpFs {
-    root: Arc<Dir>
+lazy_static! {
+    pub static ref DRIVER_MAJOR: MajorNum = MajorNum::new();
 }
 
-impl TmpFs {
-    pub fn new() -> Self {
-        // Null Weak causes get_file("..") to return self
-        Self {
-            root: Arc::new(Dir {
-                map: Default::default(),
-                parent: Weak::new(),
-            })
-        }
+static MINOR: atomic::Atomic<usize> = atomic::Atomic::new(0);
+
+trait TmpFsFile: Sync + Send {
+    fn get_file_obj(self: Arc<Self>, fs: Weak<TmpFsRootInner>) -> Box<dyn File>;
+
+    fn link_count(&self) -> u64 {
+        1
     }
+
+    fn set_link(&self, _count: u64) {}
+
+    fn type_id(&self) -> core::any::TypeId;
 }
 
-impl Filesystem for TmpFs {
-    fn root(&self) -> Box<dyn Directory> {
-        if let FileTypeWrapper::Dir(f) = self.root.clone().get_file_obj().downcast() {
-            f
+struct TmpFsRootInner {
+    f_map: spin::RwLock<BTreeMap<u64, Arc<dyn TmpFsFile>>>,
+    fs_opts: spin::RwLock<FsOpts>,
+    dev_id: DevID,
+    serial_count: atomic::Atomic<u64>,
+}
+
+impl TmpFsRootInner {
+    fn new_file(&self) -> Option<Arc<FileAccessor>> {
+        let serial = self.serial_count.fetch_add(1,atomic::Ordering::Relaxed);
+        let file = Arc::new(FileAccessor::new(serial));
+        if self.f_map.write().insert(serial,file.clone()).is_some() {
+            None
         } else {
-            unreachable!()
+            Some(file)
         }
     }
-}
 
-struct Dir {
-    // This will only be locked while its traversed, so this will never spin too long.
-    // Performance overhead will likely be smaller this way, it can always be changed later.
-    map: spin::RwLock<alloc::collections::BTreeMap<String, Arc<dyn TmpFsFile>>>,
-    parent: Weak<Self>,
-}
+    fn new_dir(&self,parent: &DirAccessor) -> Option<Arc<DirAccessor>> {
+        let serial = self.serial_count.fetch_add(1,atomic::Ordering::Relaxed);
+        let file = Arc::new(DirAccessor::new(serial,parent.serial));
+        if self.f_map.write().insert(serial,file.clone()).is_some() {
+            None
+        } else {
+            Some(file)
+        }
+    }
 
-trait TmpFsFile {
-    fn get_file_obj(self: Arc<Self>) -> Box<dyn File>;
-}
+    /// Attempts to remove the file with the ID `serial`. If the file has multiple links to id then
+    /// the link count is decremented.
+    fn remove_file(&self, serial: u64) -> Result<(),IoError> {
+        let mut l = self.f_map.write();
+        if let Some(t) = l.get_mut(&serial) {
+            let count = t.link_count();
+            if t.link_count() > 1 {
+                t.set_link(count - 1);
+                Ok(())
+            } else {
+                let f = l.remove(&serial);
+                // Explicitly set drop order.
+                // if `f` is a directory, when it is dropped it recursively calls this fn
+                // so the lock ust be dropped to prevent deadlocks.
+                drop(l);
+                drop(f);
+                Ok(())
 
-impl TmpFsFile for Dir {
-    fn get_file_obj(self: Arc<Self>) -> Box<dyn File> {
-        Box::new(DirRef { inner: Arc::downgrade(&self) })
+            }
+        } else {
+            Err(IoError::NotPresent)
+        }
+    }
+
+    fn store_dev(&self, dev: Box<dyn device::DeviceFile>) -> u64 {
+        let id = self.serial_count.fetch_add(1, atomic::Ordering::Relaxed);
+        let dev = Arc::new(DeviceFileObj {
+            inner: dev,
+            _serial: id,
+            link_count: atomic::Atomic::new(1),
+        });
+
+        // map drops the returned file because it does not implement Debug which is required by expect_err::<Result<Debug,_>>()
+        let _ = self.f_map.write().insert(id,dev).map(|_|()).ok_or(()).expect_err("Duplicate file serial number");
+        id
+    }
+
+    fn fetch(self: &Arc<Self>, id: u64) -> Option<Box<dyn File>> {
+        self.f_map.read().get(&id).map(|d| d.clone().get_file_obj(Arc::downgrade(&self)))
+    }
+
+    /// Fetches the raw `dyn TmpFsFile` This should be dropped or downgraded as soon as possible.
+    fn fetch_raw(&self, id: u64) -> Option<Arc<dyn TmpFsFile>> {
+        self.f_map.read().get(&id).map(|d| d.clone())
     }
 }
-
-// SAFETY: Everything inside Dir is within some kind of wrapper
-unsafe impl Send for Dir {}
-unsafe impl Sync for Dir {}
 
 #[derive(Clone)]
-struct DirRef {
-    inner: Weak<Dir>
+#[cast_trait_object::dyn_cast(File => NormalFile<u8>, Directory, super::device::FileSystem, super::device::Fifo<u8>, super::device::DeviceFile )]
+#[cast_trait_object::dyn_upcast(File)]
+pub struct TmpFsRoot {
+    inner: Arc<TmpFsRootInner>
 }
 
-impl File for DirRef {
-    fn downcast(self: Box<Self>) -> FileTypeWrapper {
-        FileTypeWrapper::Dir(self)
+impl TmpFsRoot {
+    pub fn new() -> Box<dyn device::FileSystem> {
+
+        let this = Box::new( Self {
+            inner: Arc::new(TmpFsRootInner{
+                f_map: spin::RwLock::new(BTreeMap::new()),
+                fs_opts: spin::RwLock::new(FsOpts::new(true,true)),
+                dev_id: DevID::new(*DRIVER_MAJOR, MINOR.fetch_add(1,atomic::Ordering::Relaxed)),
+                serial_count: atomic::Atomic::new(1), // this file is 0
+            })
+        });
+        let mut l = this.inner.f_map.write();
+        let root = DirAccessor::new(0,0); // special exception parent of root has itself as parent
+        l.insert(0,Arc::new(root));
+        drop(l);
+
+        this
+    }
+}
+
+impl File for TmpFsRoot {
+    fn file_type(&self) -> FileType {
+        FileType::Directory
     }
 
-    fn file_type(&self) -> IoResult<FileType> {
-        async { Ok(FileType::Directory) }.boxed()
-    }
+    /* todo should the block size be
+     - 1
+     - cache line size
+     - memory data width
+     - usize
+     - page size (not huge)
+     */
 
     fn block_size(&self) -> u64 {
-        1
+        crate::mem::PAGE_SIZE as u64 // Page flipping can be used when block size is 4K
+    }
+
+    fn device(&self) -> DevID {
+        self.inner.dev_id
     }
 
     fn clone_file(&self) -> Box<dyn File> {
         Box::new(self.clone())
     }
+
+    fn id(&self) -> u64 {
+        0
+    }
+
+    fn len(&self) -> IoResult<u64> {
+
+        async {
+            let t = self.inner.fetch(0).unwrap(); // 0 is always present
+            t.len().await
+        }.boxed()
+    }
 }
 
-impl Directory for DirRef {
-    fn len(&self) -> IoResult<usize> {
+impl device::DeviceFile for TmpFsRoot {}
+
+impl device::FileSystem for TmpFsRoot {
+    fn root(&self) -> Box<dyn Directory> {
+        cast_file!(Directory: self.inner.fetch(0).unwrap()).ok().unwrap() // root will always be a file
+    }
+
+    fn get_opt(&self, option: &str) -> Option<FsOptionVariant> {
+        let l = self.inner.fs_opts.read();
+        l.get(option)
+    }
+
+    fn set_opts(&mut self, options: &str) {
+        let mut new_opts = FsOpts::new(false,true);
+        for i in options.split_whitespace() {
+            match i {
+                "NODEV" => { new_opts.set(FsOpts::DEV_ALLOWED.to_string(), FsOpts::FALSE.to_string()); }
+                "NOCACHE" => log::trace!("NOCACHE passed to tmpfs, ignoring"),
+                e => log::warn!(r#"Unknown option "{e}" will be ignored"#)
+            }
+        }
+
+        *self.inner.fs_opts.write() = new_opts;
+    }
+
+    fn driver_name(&self) -> &'static str {
+        "tmpfs"
+    }
+
+    fn raw_file(&self) -> Option<&str> {
+        None
+    }
+}
+
+struct DirAccessor {
+    map: spin::RwLock<BTreeMap<String,u64>>,
+    parent: u64,
+    serial: u64
+}
+
+impl DirAccessor {
+
+    fn new(serial: u64, parent: u64) -> Self {
+        Self {
+            map: Default::default(),
+            parent,
+            serial,
+        }
+    }
+
+    fn is_root(&self) -> bool {
+        self.parent == self.serial
+    }
+}
+
+impl TmpFsFile for DirAccessor {
+    fn get_file_obj(self: Arc<Self>, fs: Weak<TmpFsRootInner>) -> Box<dyn File> {
+        Box::new(Dir {
+            accessor: Arc::downgrade(&self),
+            fs,
+            serial: self.serial
+        })
+    }
+
+    fn type_id(&self) -> TypeId {
+        TypeId::of::<Self>()
+    }
+}
+
+#[derive(Clone)]
+#[cast_trait_object::dyn_cast(File => NormalFile<u8>, Directory, super::device::FileSystem, super::device::Fifo<u8>, super::device::DeviceFile )]
+#[cast_trait_object::dyn_upcast(File)]
+struct Dir {
+    accessor: Weak<DirAccessor>,
+    fs: Weak<TmpFsRootInner>,
+    serial: u64,
+}
+
+impl File for Dir {
+    fn file_type(&self) -> FileType {
+        FileType::Directory
+    }
+
+    fn block_size(&self) -> u64 {
+        crate::mem::PAGE_SIZE as u64
+    }
+
+    fn device(&self) -> DevID {
+        let fs = self.fs.upgrade().unwrap();
+        fs.dev_id
+
+    }
+
+    fn clone_file(&self) -> Box<dyn File> {
+        Box::new(self.clone())
+    }
+
+    fn id(&self) -> u64 {
+        self.serial
+    }
+
+    fn len(&self) -> IoResult<u64> {
         async {
-            let inner = self.inner.upgrade().ok_or(IoError::NotPresent)?;
-            let len = inner.map.read().len();
-            Ok(len)
+            let acc = self.accessor.upgrade().ok_or(IoError::NotPresent)?;
+            let b = acc.map.read();
+            Ok(b.len() as u64)
+        }.boxed()
+    }
+}
+
+impl Directory for Dir {
+    fn entries(&self) -> IoResult<usize> {
+        async  {
+            let accessor = self.accessor.upgrade().ok_or(IoError::NotPresent)?;
+            let l = accessor.map.read();
+            Ok(l.len())
         }.boxed()
     }
 
-    fn new_file<'a>(&'a self, name: &'a str, file: Option<&'a mut dyn NormalFile<u8>>) -> BoxFuture<Result<(), (Option<IoError>, Option<IoError>)>> {
+    fn new_file<'s, 'a:'s>(&'s self, name: &'a str, file: Option<&'a mut dyn NormalFile<u8>>) -> BoxFuture<Result<(), (Option<IoError>, Option<IoError>)>> {
         async {
-            let inner = self.inner.upgrade().ok_or((Some(IoError::NotPresent), None))?;
-            if let Some(file) = file {
-                // Lock the things
+            let accessor = self.accessor.upgrade().ok_or((Some(IoError::NotPresent), None))?;
 
-                let len = file.len().await.map_err(|e| (None, Some(e)))?;
-                let mut vec = Vec::with_capacity(len.try_into().unwrap());
+            let mut l = accessor.map.write();
+            if let alloc::collections::btree_map::Entry::Vacant(entry) = l.entry(name.to_string()) {
 
-                // Extends the buffer without initializing memory
-                // SAFETY: This is safe because we set the size above & u8 is always valid to read.
-                unsafe { vec.set_len(len.try_into().unwrap()) };
-                let _: &mut [u8] = file.read(&mut vec).await.map_err(|(e, _)| (None, Some(e)))?;
+                let fs = self.fs.upgrade().ok_or((Some(IoError::NotPresent),None))?;
+                let new_file = fs.new_file().unwrap(); // im really not sure what to do if this occurs
 
-                inner.map.write().insert(
-                    name.to_string(),
-                    Arc::new(NormalFileNode {
-                        data: async_lock::RwLock::new(vec),
-                        lock: spin::Mutex::new(Default::default())
+                if let Some(file) = file {
+                    let len = file.len_chars().await.map_err(|e| (None, Some(e)))?;
+                    // fixme if another file appends to the file before reading then we do not capture the entire file.
+                    let mut vec = Vec::with_capacity(len.try_into().unwrap());
+
+                    // Extends the buffer without initializing memory
+                    // SAFETY: This is safe because we set the size above & u8 is always valid to read.
+                    unsafe { vec.set_len(len.try_into().unwrap()) };
+                    let cursor = file.move_cursor(0).unwrap();
+                    file.set_cursor(0).unwrap();
+
+                    let b: &mut [u8] = file.read(&mut vec).await.map_err(|(e, _)| (None, Some(e)))?;
+                    let b_len = b.len();
+                    vec.truncate(b_len); // If the file shrinks between getting len and reading then we truncate garbage data.
+
+                    // restore cursor set it to 0 if we cant
+                    if let Err(_) = file.set_cursor(cursor) {
+                        file.set_cursor(0).unwrap();
                     }
-                    )
-                ).ok_or((Some(IoError::NotPresent), None))?;
+                    *new_file.data.write().await = vec;
+                }
+                entry.insert(new_file.serial);
                 Ok(())
+
             } else {
-                inner.map.write().insert(name.to_string(), Arc::new(NormalFileNode::new()));
-                Ok(())
+                Err((Some(IoError::AlreadyExists),None))
             }
         }.boxed()
     }
 
     fn new_dir<'a>(&'a self, name: &'a str) -> IoResult<Box<dyn Directory>> {
         async {
-            let inner = self.inner.upgrade().ok_or(IoError::NotPresent)?;
-            let dir = Arc::new(Dir { map: Default::default(), parent: self.inner.clone() });
-            inner.map.write().insert(name.to_string(), dir.clone());
+            let accessor = self.accessor.upgrade().ok_or(IoError::NotPresent)?;
+            let mut l = accessor.map.write();
+            if let alloc::collections::btree_map::Entry::Vacant(entry) = l.entry(name.to_string()) {
+                let fs = self.fs.upgrade().ok_or(IoError::NotPresent)?;
+                let dir = fs.new_dir(&accessor).ok_or(IoError::DeviceError)?;
+                entry.insert(dir.serial);
+                //let t = cast_file!(Directory: dir.get_file_obj(self.fs.clone()).try_into()).unwrap();
+                let f = dir.get_file_obj(self.fs.clone());
+                let t: Box<dyn Directory> = f.dyn_cast().ok().unwrap(); // will never fail
+                Ok(t) // Cast will always succeed
+            } else {
+                Err(IoError::AlreadyExists)
+            }
+        }.boxed()
+    }
 
-            let w = Arc::downgrade(&inner);
-            Ok(Box::new( DirRef{inner: w}) as Box<dyn Directory>)
+    fn store<'a>(&'a self, name: &'a str, file: Box<dyn File>) -> IoResult<()> {
+        async {
+            let accessor = self.accessor.upgrade().ok_or(IoError::NotPresent)?;
+            let mut l = accessor.map.write();
+            if let alloc::collections::btree_map::Entry::Vacant(entry) = l.entry(name.to_string()) {
+
+                match cast_file!(device::DeviceFile: file) {
+                    Ok(device) => {
+                        let id = self.fs.upgrade().unwrap().store_dev(device);
+                        entry.insert(id);
+                    }
+                    Err(_) => {
+                        log::warn!("Attempted to store() non device file");
+                    }
+                }
+                Ok(())
+            } else {
+                Err(IoError::AlreadyExists)
+            }
         }.boxed()
     }
 
     fn get_file<'a>(&'a self, name: &'a str) -> IoResult<Option<Box<dyn File>>> {
         async move {
-            let inner = self.inner.upgrade().ok_or(IoError::NotPresent)?;
-            let r = match name {
-                "."  => {
-                    self.inner.upgrade().ok_or(IoError::NotPresent)?;
-                    Ok(Some(self.clone_file()))
-                },
-                ".." => {
-                    let inner = self.inner.upgrade().ok_or(IoError::NotPresent)?;
-                    if let Some(parent) = inner.parent.upgrade() {
-                        Ok(Some(Box::new(DirRef{inner: Arc::downgrade(&parent)}) as Box<dyn File>))
-                    } else {
-                        self.inner.upgrade().ok_or(IoError::NotPresent)?;
-                        Ok(Some(self.clone_file()))
-                    }
+            let accessor = self.accessor.upgrade().ok_or(IoError::NotPresent)?;
+
+            if name == PARENT_DIR && accessor.is_root() {
+                return Err(IoError::IsDevice)
+            }
+
+            let id = *accessor.map.read().get(name).ok_or(IoError::NotPresent)?;
+            Ok(self.fs.upgrade().unwrap().fetch(id))
+        }.boxed()
+    }
+
+    fn get_file_meta<'a>(&'a self, name: &'a str) -> IoResult<Option<FileMetadata>> {
+        async {
+            if let Some(file) = self.get_file(name).await? {
+                Ok(Some(FileMetadata::new_from_file(&*file).await.unwrap()))
+            } else {
+                Ok(None)
+            }
+        }.boxed()
+    }
+
+    fn get_file_with_meta<'a>(&'a self, name: &'a str) -> IoResult<Option<file::FileHandle>> {
+        async move {
+            let accessor = self.accessor.upgrade().ok_or(IoError::NotPresent)?;
+
+            if name == PARENT_DIR && accessor.is_root() {
+                return Ok(Some(FileHandle::new_dev(FileMetadata::new_unknown())))
+            }
+
+            let id = *accessor.map.read().get(name).ok_or(IoError::NotPresent)?;
+            if let Some(f) = self.fs.upgrade().unwrap().fetch_raw(id) {
+                let mut dev_hint = false;
+                if TmpFsFile::type_id(&*f) == TypeId::of::<DeviceFileObj>() {
+                    dev_hint = true;
                 }
-                f_name => {
-                    if let Some(f) = inner.map.read().get(f_name) {
-                        let fo = f.clone().get_file_obj();
-                        Ok(Some(fo))
-                    } else {
-                        Ok(None)
-                    }
-                }
-            };
-            r
+                let file = f.get_file_obj(self.fs.clone()) as Box<dyn File>;
+                let meta = FileMetadata::new_from_file(&*file).await?;
+
+                Ok(Some(FileHandle::new(file,dev_hint,meta)))
+
+            } else {
+                Ok(None)
+            }
         }.boxed()
     }
 
     fn file_list(&self) -> IoResult<Vec<String>> {
         async {
-            let inner = self.inner.upgrade().ok_or(IoError::NotPresent)?;
-            let map = inner.map.read();
-            let mut keys: Vec<String> = map.keys().map(|s| s.clone()).collect();
-            keys.push("..".into());
-            keys.push(".".into());
-            Ok(keys)
+            if let Some(acc) = self.accessor.upgrade() {
+                Ok(acc.map.read().keys().map(|s| s.clone()).collect())
+            } else {
+                Err(IoError::NotPresent)
+            }
         }.boxed()
     }
-}
 
-
-struct FileRef {
-    file: Weak<NormalFileNode>,
-    cursor: atomic::Atomic<u64>,
-}
-
-impl File for FileRef {
-    fn downcast(self: Box<Self>) -> FileTypeWrapper {
-        FileTypeWrapper::Normal(self)
-    }
-
-    fn file_type(&self) -> IoResult<FileType> {
+    fn remove<'a>(&'a self, name: &'a str) -> IoResult<()> {
         async {
-            Ok(FileType::NormalFile)
+            let acc = self.accessor.upgrade().ok_or(IoError::NotPresent)?;
+            let id = *acc.map.read().get(name).ok_or(IoError::NotPresent)?;
+            let fs = self.fs.upgrade().ok_or(IoError::NotPresent)?;
+            let file = fs.fetch(id).ok_or(IoError::NotPresent)?;
+
+            if file.file_type() == FileType::Directory && file.len().await? > 0 {
+                return Err(IoError::NotEmpty)
+            }
+            fs.remove_file(id)?;
+            Ok(())
         }.boxed()
+    }
+}
+
+struct FileAccessor {
+    data: async_lock::RwLock<Vec<u8>>,
+    lock: spin::Mutex<crate::util::Weak<dyn NormalFile<u8>>>,
+    serial: u64
+}
+
+impl FileAccessor {
+    fn new(serial: u64) -> Self {
+        Self {
+            data: async_lock::RwLock::new(Vec::new()),
+            lock: spin::Mutex::new(crate::util::Weak::default()),
+            serial
+        }
+    }
+}
+
+impl TmpFsFile for FileAccessor{
+    fn get_file_obj(self: Arc<Self>, fs: Weak<TmpFsRootInner>) -> Box<dyn File> {
+        Box::new(TmpFsNormalFile{
+            accessor: Arc::downgrade(&self),
+            fs,
+            serial: self.serial,
+            cursor: 0,
+        })
+    }
+
+    fn type_id(&self) -> TypeId {
+        <Self as core::any::Any>::type_id(self)
+    }
+}
+
+
+#[derive(Clone)]
+#[cast_trait_object::dyn_cast(File => NormalFile<u8>, Directory, super::device::FileSystem, super::device::Fifo<u8>, super::device::DeviceFile )]
+#[cast_trait_object::dyn_upcast(File)]
+struct TmpFsNormalFile {
+    accessor: Weak<FileAccessor>,
+    fs: Weak<TmpFsRootInner>,
+    serial: u64,
+    // this is usize because the data is in a vec with a max size of usize::MAX.
+    // If I ever reimplement this as a Physical Region Description then I should change this to u64
+    // ^^ unlikely
+    cursor: usize,
+}
+
+impl NormalFile<u8> for TmpFsNormalFile {
+    fn len_chars(&self) -> IoResult<u64> {
+        async { Ok(self.accessor.upgrade().unwrap().data.read().await.len() as u64) }.boxed()
+    }
+
+    fn file_lock<'a>(self: Box<Self>) -> BoxFuture<'a, Result<LockedFile<u8>, (IoError, Box<dyn NormalFile<u8>>)>> {
+        async {
+            let acc = self.accessor.upgrade().unwrap();
+            let mut l = acc.lock.lock();
+            if let None = l.get() {
+                let s = crate::util::SingleArc::new(self as Box<dyn NormalFile<u8>>);
+                l.set(&s);
+
+                Ok(LockedFile::new_from_lock(s))
+            } else {
+                Err((IoError::Exclusive,self as Box<dyn NormalFile<u8>>))
+            }
+
+        }.boxed()
+    }
+
+    unsafe fn unlock_unsafe(&self) -> IoResult<()> {
+        async { Ok(self.accessor.upgrade().unwrap().lock.lock().clear()) }.boxed()
+    }
+}
+
+impl File for TmpFsNormalFile {
+    fn file_type(&self) -> FileType {
+        FileType::Directory
     }
 
     fn block_size(&self) -> u64 {
-        1
+        crate::mem::PAGE_SIZE as u64
+    }
+
+    fn device(&self) -> DevID {
+        self.fs.upgrade().unwrap().dev_id
     }
 
     fn clone_file(&self) -> Box<dyn File> {
-        Box::new(
-            Self {
-                file: self.file.clone(),
-                cursor: atomic::Atomic::new(0),
-            }
-        )
+        Box::new(self.clone())
     }
-}
 
-impl Read<u8> for FileRef {
-    fn read<'a>(&'a mut self, buff: &'a mut [u8]) -> BoxFuture<Result<&'a mut [u8], (IoError, usize)>> {
+    fn id(&self) -> u64 {
+        self.serial
+    }
+
+    fn len(&self) -> IoResult<u64> {
         async {
-            let inner = self.file.upgrade().ok_or((IoError::NotPresent,0))?;
-            inner.is_lock(self).map_err(|e| (e,0))?;
-
-            let file = inner.data.read().await;
-            let read_start = self.cursor.load(atomic::Ordering::Relaxed) as usize;
-            let len = buff.len().min(file.len() - read_start);
-
-            buff[..len].copy_from_slice(&file[read_start..read_start+len]);
-            drop(file);
-            self.cursor.store(len as u64, atomic::Ordering::Release);
-            Ok(&mut buff[..len])
+            let acc = self.accessor.upgrade().ok_or(IoError::NotPresent)?;
+            let l = acc.data.read().await;
+            Ok(l.len() as u64)
         }.boxed()
     }
 }
 
-impl Write<u8> for FileRef {
-    fn write<'a>(&'a mut self, buff: &'a [u8]) -> IoResult<usize> {
-        async {
-            let inner = self.file.upgrade().ok_or(IoError::NotPresent)?;
-            inner.is_lock(self)?;
+impl Seek for TmpFsNormalFile {
+    fn set_cursor(&mut self, pos: u64) -> Result<u64, IoError> {
+        self.cursor = pos.try_into().map_err(|_| IoError::EndOfFile)?;
+        Ok(self.cursor as u64)
+    }
 
-            let mut file = inner.data.write().await;
-            let last_write = self.cursor.load(atomic::Ordering::Relaxed) as usize + buff.len();
-            if last_write > file.len() {
-                file.reserve(last_write);
-                // SAFETY: Space for this len is reserved above.
-                unsafe { file.set_len(last_write) }
-            };
-            file[self.cursor.load(atomic::Ordering::Relaxed) as usize..last_write].copy_from_slice(buff);
-            drop(file);
-            self.cursor.fetch_add(buff.len() as u64,atomic::Ordering::Release);
+    fn rewind(&mut self, pos: u64) -> Result<u64, IoError> {
+        let mut c = self.cursor as u64;
+        c = c.checked_sub(pos).ok_or(IoError::EndOfFile)?;
+        self.cursor = c as usize; // Truncation cannot occur here.
+        Ok(c)
+    }
+
+    fn seek(&mut self, pos: u64) -> Result<u64, IoError> {
+        let mut c = self.cursor as u64;
+        c = c.checked_add(pos).ok_or(IoError::EndOfFile)?;
+        self.cursor = c.try_into().map_err(|_| IoError::EndOfFile)?;
+        Ok(c)
+    }
+}
+
+impl Read<u8> for TmpFsNormalFile {
+    fn read<'a>(&'a mut self, buff: &'a mut [u8]) -> BoxFuture<Result<&'a mut [u8], (IoError, usize)>> {
+        async {
+            let acc = self.accessor.upgrade().ok_or((IoError::NotPresent,0))?;
+            if !acc.lock.lock().cmp_t(self) {
+                return Err((IoError::Exclusive,0));
+            }
+            let file = acc.data.read().await;
+            if self.cursor >= file.len() {
+                return Err((IoError::EndOfFile, 0))
+            }
+            let count = buff.len().min(file.len() - self.cursor); // either selects the remaining `file` length or the entire `buff` length
+            buff[..count].copy_from_slice(&file[self.cursor..self.cursor + count]);
+            self.cursor += count;
+            Ok(&mut buff[..count])
+        }.boxed()
+    }
+}
+
+impl Write<u8> for TmpFsNormalFile {
+    fn write<'a>(&'a mut self, buff: &'a [u8]) -> BoxFuture<Result<usize, (IoError,usize)>> {
+        async {
+            let acc = self.accessor.upgrade().ok_or((IoError::NotPresent,0usize))?;
+            if !acc.lock.lock().cmp_t(self) {
+                return Err((IoError::Exclusive,0))
+            }
+            let mut file = acc.data.write().await;
+            // extend file if necessary
+            if buff.len() + self.cursor > file.len() {
+                // SAFETY: new len is valid & u8 does not have an invalid state
+                file.reserve_exact(buff.len() + self.cursor);
+                unsafe { file.set_len(buff.len() + self.cursor) };
+            }
+            file[self.cursor..self.cursor + buff.len()].copy_from_slice(buff);
 
             Ok(buff.len())
         }.boxed()
     }
 }
 
-impl Seek for FileRef {
-    fn set_cursor(&mut self, pos: u64) -> Result<u64, IoError> {
-        self.cursor.store(pos, atomic::Ordering::Relaxed);
-        Ok(pos)
-    }
-
-    fn rewind(&mut self, pos: u64) -> Result<u64, IoError> {
-        self.cursor.fetch_sub(pos,atomic::Ordering::Relaxed);
-        Ok(pos)
-    }
-
-    fn seek(&mut self, pos: u64) -> Result<u64, IoError> {
-        self.cursor.fetch_add(pos,atomic::Ordering::Relaxed);
-        Ok(pos)
-    }
+/// This is a file accessor for a device file.
+struct DeviceFileObj {
+    inner: Box<dyn super::device::DeviceFile>,
+    _serial: u64,
+    link_count: atomic::Atomic<u64>
 }
 
-impl NormalFile<u8> for FileRef {
-    fn len(&self) -> IoResult<u64> {
-        async {
-            // tasty one-liner
-            Ok(self.file.upgrade().ok_or(IoError::NotPresent)?.data.read().await.len() as u64)
-        }.boxed()
+impl TmpFsFile for DeviceFileObj {
+    fn get_file_obj(self: Arc<Self>, _fs: Weak<TmpFsRootInner>) -> Box<dyn File> {
+        self.inner.clone_file()
     }
 
-    fn file_lock<'a>(self: Box<Self>) -> BoxFuture<'a, Result<LockedFile<u8>,(IoError,Box<dyn NormalFile<u8>>)>> {
-        async {
-            let file = if let Some(file) = self.file.upgrade() {
-                file
-            } else {
-                return Err((IoError::Exclusive,self as Box<dyn NormalFile<u8>>))
-            };
-
-            let mut l = file.lock.lock();
-            let this = crate::util::SingleArc::new(self as Box<dyn NormalFile<u8>>);
-            if let None = l.get() {
-                 *l = this.downgrade();
-                Ok(LockedFile::new_from_lock(this))
-            } else {
-                return Err((IoError::Exclusive, this.take()))
-            }
-
-
-        }.boxed()
+    fn link_count(&self) -> u64 {
+        self.link_count.load(atomic::Ordering::Relaxed)
     }
 
-    unsafe fn unlock_unsafe(&self) -> IoResult<()> {
-        async {
-            let accessor = self.file.upgrade().ok_or(IoError::NotPresent)?;
-            let mut lock = accessor.lock.lock();
-            lock.clear();
-            Ok(())
-        }.boxed()
+    fn set_link(&self, count: u64) {
+        self.link_count.store(count,atomic::Ordering::Relaxed)
+    }
+
+    fn type_id(&self) -> TypeId {
+        TypeId::of::<Self>()
     }
 }
-
-
-/// NormalFile accessor
-struct NormalFileNode {
-    data: async_lock::RwLock<Vec<u8>>,
-    lock: spin::Mutex<crate::util::Weak<dyn NormalFile<u8>>>,
-}
-
-impl TmpFsFile for NormalFileNode {
-    fn get_file_obj(self: Arc<Self>) -> Box<dyn File> {
-        Box::new( FileRef{ file: Arc::downgrade(&self), cursor: Default::default() } )
-    }
-}
-
-impl NormalFileNode {
-
-    fn new() -> Self {
-        Self {
-            data: Default::default(),
-            lock: spin::Mutex::new(crate::util::Weak::default())
-        }
-    }
-    /// Checks if `file` is the one that currently locks self,
-    /// returns `Ok(())` if it is returns `Err(IoError::Exclusive)` if it isn't
-    fn is_lock(&self, file: &dyn NormalFile<u8>) -> Result<(),IoError> {
-        let mut l = self.lock.lock();
-        if let Some(ptr) = l.get() {
-            if !core::ptr::eq(ptr, file) {
-                return Err(IoError::Exclusive)
-            }
-        } else {
-            l.clear();
-        }
-        Ok(())
-    }
-}
-
-unsafe impl Send for NormalFileNode {}
-unsafe impl Sync for NormalFileNode {}

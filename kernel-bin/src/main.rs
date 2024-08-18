@@ -9,6 +9,7 @@
 extern crate alloc;
 
 use alloc::boxed::Box;
+use alloc::vec::Vec;
 use core::ptr::NonNull;
 use hootux::exit_qemu;
 use hootux::graphics::basic_output::BasicTTY;
@@ -142,6 +143,11 @@ fn kernel_main(b: *mut libboot::boot_info::BootInfo) -> ! {
 
     init_static_drivers();
 
+    {
+        let tmpfs = fs::tmpfs::TmpFsRoot::new();
+        fs::init_fs(tmpfs);
+    }
+
     // Should this be started before or after init_static_drivers()?
     {
         let tls = b.get_tls_template().unwrap();
@@ -154,6 +160,7 @@ fn kernel_main(b: *mut libboot::boot_info::BootInfo) -> ! {
         }
     }
 
+    task::run_task(Box::pin(test_vfs()));
     task::run_task(Box::pin(keyboard::print_key()));
     task::run_exec(); //executor.run();
 }
@@ -164,6 +171,8 @@ libboot::kernel_entry!(_libboot_entry);
 pub extern "C" fn _libboot_entry(bi: *mut libboot::boot_info::BootInfo) -> ! {
     kernel_main(bi)
 }
+
+
 
 fn say_hi() {
     println!("Starting Hootux");

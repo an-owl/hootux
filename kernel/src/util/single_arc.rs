@@ -153,12 +153,12 @@ impl<T: ?Sized> Weak<T> {
 
     /// Compares the inner value with `other` if they have the same address then this returns true.
     /// If `other` and the inner value of `self` do not have the same address, or `self` does not
-    /// contain any data then returns false.
+    /// contain any data then returns true.
     pub fn cmp_t(&self,other: *const T) -> bool {
         if let Some(inner) = self.get() {
             core::ptr::eq(inner, other)
         } else {
-            false
+            true
         }
     }
 }

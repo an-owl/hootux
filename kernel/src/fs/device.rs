@@ -1,3 +1,4 @@
+use core::fmt::Formatter;
 use super::file::*;
 
 /// This is a marker trait for files which act as special device (character/block) files.
@@ -16,13 +17,31 @@ use super::file::*;
 ///
 /// Because a device file may need to be accessed from within the kernel it may not be locked.
 /// Attempting to call [NormalFile::file_lock] on a device file must return [super::IoError::NotSupported].
-trait DeviceFile<T>: NormalFile<T> {}
+pub trait DeviceFile: File {}
 
-enum OpenMode {
+file_derive_debug!(DeviceFile);
+
+pub enum DeviceWrapper {
+    Fifo(alloc::boxed::Box<dyn Fifo<u8>>),
+    FileSystem(alloc::boxed::Box<dyn FileSystem>)
+}
+
+impl core::fmt::Debug for DeviceWrapper {
+    fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::Fifo(_) => core::write!(f, "Fifo"),
+            Self::FileSystem(_) => core::write!(f, "FileSystem"),
+        }
+    }
+}
+
+pub enum OpenMode {
     Read,
     Write,
     ReadWrite,
 }
+
+file_derive_debug!(Fifo<u8>);
 
 /// Represents a FIFO file (First In First Out), these files may be read from or written to.
 ///
@@ -39,7 +58,7 @@ enum OpenMode {
 /// A FIFO may support mastering, where a particular file object has more control over the device
 /// than other file objects. Only one file object may be master for any file accessor at a time.
 /// If no master is currently present when the FIFO is opened a new master may be chosen arbitrarily.
-trait Fifo<T>: File + Read<T> + Write<T> {
+pub trait Fifo<T>: File + Read<T> + Write<T> {
 
     /// Locks this file accessor with the requested mode.
     fn open(&mut self, mode: OpenMode) -> Result<(), super::IoError>;
@@ -63,20 +82,52 @@ trait Fifo<T>: File + Read<T> + Write<T> {
     fn is_master(&self) -> Option<usize>;
 }
 
-impl<T> Seek for T where T: Fifo<_> {
-    fn move_cursor(&mut self, _seek: i64) -> Result<u64, super::IoError> {
-        Err (super::IoError::NotSupported)
-    }
+file_derive_debug!(FileSystem);
+/// Trait for a base filesystem. A filesystem must implement this to be included in the VFS.
+///
+/// When the filesystem uses reference counting for referencing file accessors,
+/// when [File::clone_file] is called on an implementor of this, it should use a strong reference and not a weak one.
+/// This is because the VFS keeps `Box<dyn FileSystem>`'s to access the filesystem, using weak
+/// references may cause the filesystem hierarchy to be dropped prematurely.
+pub trait FileSystem: DeviceFile {
+    /// Return the root directory of the filesystem.
+    fn root(&self) -> alloc::boxed::Box<dyn Directory>;
 
-    fn set_cursor(&mut self, _pos: u64) -> Result<u64, super::IoError> {
-        Err (super::IoError::NotSupported)
-    }
+    /// Returns the options the filesystem is configured with.
+    /// These options may not change while the filesystem is mounted.
+    ///
+    /// See [FsOpts] for more info.
+    fn get_opt(&self, option: &str) -> Option<FsOptionVariant>;
 
-    fn rewind(&mut self, _pos: u64) -> Result<u64, super::IoError> {
-        Err (super::IoError::NotSupported)
-    }
+    /// Parse the `options` str for valid settings.
+    /// `options` must be given as a whitespace seperated list of arguments.
+    /// Unrecognized arguments may emmit a message to the user and be ignored,
+    /// the filesystem is permitted to store unknown options.
+    ///
+    /// Any options which have been defined previously must be discarded when this function is called.
+    ///
+    /// This fn should only be called once when the filesystem is mounted to the VFS.
+    /// If this fn is called multiple times the previous configuration should be discarded.
+    ///
+    /// ## Predefined options
+    ///
+    /// - NODEV: Disallows deice files
+    /// - NOCACHE: Disables filesystem caching.
+    ///
+    /// Any extra options and their effects should documented in their implementation.
+    fn set_opts(&mut self, options: &str);
 
-    fn seek(&mut self, _pos: u64) -> Result<u64, super::IoError> {
-        Err (super::IoError::NotSupported)
-    }
+    /// Return the name of the driver this filesystem is owned by.
+    fn driver_name(&self) -> &'static str;
+
+    /// If this filesystem is created from a file, return the file path.
+    fn raw_file(&self) -> Option<&str>;
+
+    /// This fn is called when the filesystem is unmounted from the VFS.
+    /// Its purpose is to performs a clean-up before handing it off, so it may be used detached within the kernel.
+    /// This fn will **not** be called when the filesystem is "remounted".
+    /// Non-volatile filesystem drivers should not need to implement this, for clean-up prefer to use [Drop] instead.
+    ///
+    /// The default implementation of this method is a no-op nothing.
+    fn unmount(&mut self) {}
 }
