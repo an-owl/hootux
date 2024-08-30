@@ -10,7 +10,7 @@ use core::fmt::{Debug, Formatter};
 /// If a struct contains references to an UnsafeBox the box should be placed in the struct lower
 /// than anything pointing to the contained data, this is because struct fields are dropped in the
 /// order they are declared.
-/// ```
+/// ``` ignore
 /// struct Foo {
 ///     dropped_first: &'static u8, // references the data owned by `dropped_second`
 ///     dropped_second: UnsafeBox<u8>
