@@ -31,4 +31,7 @@ impl StackPointer {
     pub fn get_ptr(&self) -> *mut () {
         self.ptr
     }
+    pub unsafe fn as_slice(&self) -> *mut [u8] {
+        unsafe { core::slice::from_raw_parts_mut(self.ptr.byte_offset(-(self.len as isize)).cast(), self.len) }
+    }
 }
