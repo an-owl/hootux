@@ -81,6 +81,10 @@ extern "C" fn _kernel_mb2_preload_efi64(magic: u32, mbi_ptr: *const multiboot2::
     unsafe { st.boot_services().set_image_handle(handle) }
 
     let new_stack = alloc_new_stack(&mut st);
+
+    // SAFETY: Does not dereference slice
+    #[cfg(feature = "debug-bits")]
+    let _ = unsafe { core::writeln!(st.stderr(), "New stack: {:p}, size: {:#x} top: {:p}", new_stack.get_ptr(), new_stack.as_slice().len(), new_stack.as_slice()) };
     // allocate this before own_l4 because that will map bi_ptr
     // This is not initialized, do not read
     let bi_ptr: *mut crate::boot_info::BootInfo = {
