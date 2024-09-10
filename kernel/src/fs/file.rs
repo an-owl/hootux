@@ -26,6 +26,16 @@
 //! downcast into other types for this. This module provides the macro [cast_file], which is the
 //! preferred method for casting files.
 
+/*
+    TODO: Currently this is a big important todo. The file interface has a massive use-after-free bug in it now.
+    This is because it uses &'a {mut} [T] Instead of taking ownership or being 'static
+    The caller can free memory and then the file will be using uninitialized memory for IO-ops.
+    To fix this we need to allow explicit double-frees. Do this by using a bit in the PTE to mark
+    the page as having extra metadata within a map. Any writes must be COW and frees must act as
+    reference counted.
+    Until this is done core::mem::forget()-ing any futures may cause UB.
+*/
+
 use alloc::string::ToString;
 use core::fmt::Formatter;
 use core::future::Future;
@@ -42,9 +52,9 @@ self::file_derive_debug!(File);
 /// however I see no point in forcing this. Most kernel traits and structures will require that this is `u8`.
 /// When `T` is not `u8` the actual character should be allowed to be cast to `[u8]` and back.
 ///
-/// All files must act *in a way* the same. They must all *act* as a normal file when being used by user software.
-/// Kernel defined file types all have blanket impls for [`NormalFile<u8>`],
-/// so files may only implement one major file type trait.
+/// A file may require that previous asynchronous calls are polled to completion before calling a new one.
+/// If this is the case then the function should return [super::IoError::Busy].
+/// Implementations should make a best effort to avoid this behaviour where it is reasonable.
 #[cast_trait_object::dyn_upcast]
 #[cast_trait_object::dyn_cast(NormalFile<u8>, Directory, super::device::FileSystem, super::device::Fifo<u8>, super::device::DeviceFile )]
 pub trait File: Send + Sync {
@@ -86,15 +96,6 @@ pub trait File: Send + Sync {
     /// - When `self` is a device file then the value of ID is undefined.
     fn id(&self) -> u64;
 
-    /*
-    /// Attempts to upcast `self` into a `dyn DeviceFile`.
-    /// Returns `Err` if this file is not a device file.
-    fn to_device(self: alloc::boxed::Box<Self>) -> Result<alloc::boxed::Box<dyn super::device::DeviceFile>,alloc::boxed::Box<dyn File>> {
-        Err(self)
-    }
-
-     */
-
     /// Returns the size of a file.
     ///
     /// - If `self` is a [NormalFile] this must return the same value as the result of [NormalFile::len_chars].
@@ -130,8 +131,12 @@ pub trait File: Send + Sync {
 self::file_derive_debug!(NormalFile<u8>);
 
 /// Represents a normal file which can be read and written has a cursor which is kept by the file object.
-/// A normal file
-pub trait NormalFile<T>: Read<T> + Write<T> + Seek + File + Send + Sync {
+/// A normal file.
+///
+/// Implementations with characters other than [u8] are not permitted to accessible from userspace.
+///
+/// See [File::b_file] for documentation when the implementor is a B-side file
+pub trait NormalFile<T = u8>: Read<T> + Write<T> + Seek + File + Send + Sync {
     /// Returns the size of the file in chars
     ///
     /// Using `core::mem::size_of::<T>() * NormalFile::len(file)` as usize will return the size in bytes
@@ -140,6 +145,9 @@ pub trait NormalFile<T>: Read<T> + Write<T> + Seek + File + Send + Sync {
     /// Exclusively locks the file, any read or write calls must return [IoError::Exclusive]
     ///
     /// A file must be unlocked by calling [Self::unlock]
+    ///
+    /// If a file may not be locked it must return [IoError::NotSupported].
+    /// This may occur under certain circumstances such as `self` being a special file.
     ///
     /// ## Implementation notes
     ///
@@ -164,10 +172,14 @@ pub trait NormalFile<T>: Read<T> + Write<T> + Seek + File + Send + Sync {
     unsafe fn unlock_unsafe(&self) -> IoResult<()>;
 }
 
+/// This trait's methods may have side effects. Any side effects should be documented at the implementation level.
 pub trait Read<T> {
     /// Reads the data at the cursor into `buff` returning a slice containing the data read.
     /// The returned buffer will only contain data which was read, the returned slice may be smaller than `buff`
     /// This will advance the cursor by the `len()` of the returned buffer.
+    ///
+    /// The implementors may modify any part of the buffer including the trailing bytes after the
+    /// returned data
     ///
     /// This method takes a `&mut self` because the cursor may need to be modified.
     ///
@@ -179,6 +191,7 @@ pub trait Read<T> {
     fn read<'a>(&'a mut self, buff: &'a mut [T]) -> futures_util::future::BoxFuture<Result<&'a mut [T],(IoError,usize)>>;
 }
 
+/// This trait's methods may have side effects. Any side effects should be documented at the implementation level.
 pub trait Write<T> {
     /// Writes the buffer into the file, at the cursor overwriting any data present.
     /// Advances the cursor by the returned value.
@@ -385,6 +398,29 @@ macro_rules! cast_dir {
 }
 
 pub(crate) use cast_dir;
+
+#[macro_export]
+macro_rules! derive_seek_blank {
+    ($($name:ident),*) => {
+        $(
+        impl $crate::fs::file::Seek for $name {
+            fn set_cursor(&mut self, _pos: u64) -> Result<u64,IoError> {
+                Err($crate::fs::IoError::NotSupported)
+            }
+
+            fn rewind(&mut self, _pos: u64) -> Result<u64,IoError> {
+                Err($crate::fs::IoError::NotSupported)
+            }
+
+            fn seek(&mut self, _pos: u64) -> Result<u64,IoError> {
+                Err($crate::fs::IoError::NotSupported)
+            }
+        }
+        )*
+    };
+}
+
+pub use derive_seek_blank;
 
 use crate::fs::vfs::DevID;
 
