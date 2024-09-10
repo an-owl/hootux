@@ -81,7 +81,11 @@ impl VirtualFileSystem {
                 }
                 file = file_handle.file().expect("Filesystem did not return file.\nIt either hinted a device file and one was not found or did not return a file at all");
             }
-            Ok(file)
+
+            match cast_file!(FileSystem: file) {
+                Ok(fs) => Ok(fs.dyn_upcast()),
+                Err(file) => Ok(file)
+            }
         }.boxed()
     }
 
