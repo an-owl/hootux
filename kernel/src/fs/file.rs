@@ -102,6 +102,29 @@ pub trait File: Send + Sync {
     /// - If `self` is any other type then this fn should hint the number of characters expected to be read.
     /// - If the implementation cannot provide any hint then this may return any non-zero value.
     fn len(&self) -> IoResult<u64>;
+
+    /// Returns a B-side file if one exists with the given arguments.
+    /// All valid IDs should be documented in the implementation documentation.
+    ///
+    /// A file may want to return multiple B-side files with the same character (like [u8]).
+    /// For this reason the `id` argument may be given. An implementation of this function that does
+    /// not require this field may ignore it, however a caller must set it to `0` for forwards compatibility reasons.
+    ///
+    /// B-side file are allowed to omit cursors when appropriate, in this case the cursor should
+    /// remain at `0` attempting to move it should return [IoError::EndOfFile].
+    ///
+    /// Calling [File::device] on a B-side file must return the same value as the A-side file.
+    /// [File::file_type] must return [FileType::NormalFile].
+    /// All other metadata values are undefined.
+    ///
+    /// Writing to a B-side file may have side effects for the A-side as long as these effects are
+    /// transparent to the operation of the file. All other effects are not permitted,
+    ///
+    /// Calling [File::b_file] on a B-side file is not permitted
+    // todo distinguish b-files, maybe add UUID for file types to distinguish them?
+    fn b_file(&self, _id: u64) -> Option<alloc::boxed::Box<dyn File>> {
+        None
+    }
 }
 
 self::file_derive_debug!(NormalFile<u8>);
