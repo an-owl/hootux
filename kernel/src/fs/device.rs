@@ -35,10 +35,29 @@ impl core::fmt::Debug for DeviceWrapper {
     }
 }
 
+#[derive(Copy, Clone, Ord, PartialOrd, Eq, PartialEq, Debug, Default)]
 pub enum OpenMode {
+    #[default]
+    Locked,
     Read,
     Write,
     ReadWrite,
+}
+
+impl OpenMode {
+    pub fn is_read(&self) -> bool {
+        match self {
+            Self::Read | Self::ReadWrite => true,
+            _ => false
+        }
+    }
+
+    pub fn is_write(&self) -> bool {
+        match self {
+            Self::Write | Self::ReadWrite => true,
+            _ => false
+        }
+    }
 }
 
 file_derive_debug!(Fifo<u8>);
@@ -70,6 +89,8 @@ pub trait Fifo<T>: File + Read<T> + Write<T> {
     /// Returning [usize::MAX] may indicate that this file can be locked an unlimited number of times.
     fn locks_remain(&self, mode: OpenMode) -> usize;
 
+    /// Mastering is when one file object has higher permissions over others.
+    ///
     /// If [Self::open] has been called returns whether this device supports mastering and whether
     /// this file object is currently the master.
     ///
