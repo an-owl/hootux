@@ -38,7 +38,7 @@ pub fn get_vfs() -> &'static vfs::VirtualFileSystem {
     unsafe { t.unwrap_unchecked() }
 }
 
-type IoResult<'a,T> = futures_util::future::BoxFuture<'a, Result<T,IoError>>;
+pub type IoResult<'a,T> = futures_util::future::BoxFuture<'a, Result<T,IoError>>;
 
 #[derive(Debug)]
 #[derive(PartialEq)]
@@ -82,8 +82,15 @@ pub enum IoError {
     /// Attempted to modify a read only file.
     ReadOnly,
 
-    /// Returned when attempting to remove a mount point.
-    FileInUse,
+    /// Indicates that an action could not be completed because the file is in use by something else.
+    Busy,
+
+    /// Indicates that the file was not able to complete the operation because some prior
+    /// requirements have not been met
+    NotReady,
+
+    /// Returned by [file::Write::write] when the input is an invalid variant of the character
+    InvalidData
 }
 
 /// Generic test for a FileSystem implementation.
