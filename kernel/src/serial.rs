@@ -323,13 +323,17 @@ impl Serial {
 
                         while let Some(b) = self.receive() {
                             if let Some((buf,ref mut i)) = *l {
-                                // short-circuits loop to drain the fifo
-                                if *i >= buf.len() {
-                                    continue
-                                }
                                 let buff = unsafe { &mut *buf };
                                 buff[*i] = b;
                                 *i += 1;
+
+                                // Clear the interrupt and break. This allows the caller to hand
+                                // over a new buffer without loosing data in between unless there is an overrun
+                                if *i >= buff.len() { // should never be greater
+                                    // SAFETY: This is safe because we are disabling an interrupt.
+                                    unsafe { self.set_int_enable(InterruptEnable::TRANSMIT_HOLDING_REGISTER_EMPTY); }
+                                    break
+                                }
                             }
                         }
                     }
@@ -369,7 +373,6 @@ impl Serial {
     /// This fn is unsafe because it modifies interrupt behaviour. The caller must ensure that
     /// interrupts are correctly handled
     unsafe fn set_int_enable(&self, mode: InterruptEnable) {
-        log::debug!("serial int enable: {mode:#x}");
         x86_64::instructions::port::Port::new(self.base + Self::INT_ENABLE).write(mode.bits());
     }
 

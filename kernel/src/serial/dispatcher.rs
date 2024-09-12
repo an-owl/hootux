@@ -216,6 +216,17 @@ impl crate::fs::device::Fifo<u8> for SerialDispatcher {
     }
 }
 
+/// This trait's methods must check and configure beforehand the controller to receive data.
+/// This may result in the buffer being partially or fully read before the future is returned.
+///
+/// When this function is called the read is initialized. Data will be read between when a generator
+/// function is called until this returns [Poll::Ready]. The future returned by this function will
+/// be woken once data has been received not when the buffer has been filled. A caller may wish to
+/// call [Read::read] and wait on a timeout instead.
+///
+/// QEMU uses an 8250 implementation however due to host file handling Rx is buffered regardless.
+///
+/// Note: At the time of writing timers are only accurate to 4ms.
 impl Read<u8> for SerialDispatcher {
     fn read<'a>(&'a mut self, buff: &'a mut [u8]) -> BoxFuture<Result<&'a mut [u8], (IoError, usize)>> {
         if self.fifo_lock.is_read() {
@@ -226,12 +237,33 @@ impl Read<u8> for SerialDispatcher {
                 return async {Err((IoError::MediaError,0)) }.boxed()
             };
 
-            let mut l = real.rx_tgt.lock();
+            // Interrupts must be blocked here to prevent deadlocks.
+            let r = without_interrupts( || {
+                let mut l = real.rx_tgt.lock();
 
-            if l.is_some() {
-                return async { Err((IoError::Busy, 0)) }.boxed();
+                if l.is_some() {
+                    return Some( async { Err((IoError::Busy, 0)) }.boxed());
+                }
+
+                let mut count = 0;
+                while let Some(b) = real.receive() {
+                    buff[count] = b;
+                    count += 1;
+                    if count >= buff.len() {
+                        return Some( async { Ok(buff) }.boxed());
+                    }
+                }
+
+                *l = Some((buff as *mut [u8], count));
+                drop(l);
+                return None
+            });
+            if let Some(r) = r {
+                return r;
             }
-            *l = Some((buff as *mut [u8],0));
+
+            // SAFETY: Tx-ready is always set, we set Rx-ready here, we are configured and ready to receive these interrupts
+            unsafe { real.set_int_enable(super::InterruptEnable::TRANSMIT_HOLDING_REGISTER_EMPTY | super::InterruptEnable::DATA_RECEIVED); }
             ReadFut {
                 dispatch: self,
                 phantom_buffer: PhantomData,
