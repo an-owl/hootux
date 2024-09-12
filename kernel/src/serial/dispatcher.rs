@@ -112,7 +112,11 @@ impl SerialDispatcher {
         let st = data.to_string();
         self_mut.open(OpenMode::Write).map_err(|e| (e,0))?;
 
-        crate::task::util::block_on!(self_mut.write(&st.as_bytes())).map(|_| ())
+        let r = crate::task::util::block_on!(self_mut.write(&st.as_bytes())).map(|_| ());
+        if let Err((e,i)) = &r {
+            x86_64::instructions::nop()
+        }
+        r
     }
 }
 
@@ -179,7 +183,7 @@ impl crate::fs::device::Fifo<u8> for SerialDispatcher {
     fn open(&mut self, mode: OpenMode) -> Result<(), IoError> {
         let _ = self.inner.real.upgrade().ok_or(IoError::MediaError)?; // assert that controller is still there
 
-        if mode.is_write() {
+        if mode.is_read() {
             if let Err(_) = self.inner.stream_lock.compare_exchange_weak(false,true, atomic::Ordering::Acquire, atomic::Ordering::Relaxed) {
                 return Err(IoError::Busy)
             }
