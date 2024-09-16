@@ -150,14 +150,7 @@ impl File for SerialDispatcher {
         }.boxed()
     }
 
-    /// 0. Frame control. A unicode file representing the frame control formatted as a typical UART
-    /// mode string e.g. "115200-8N1".
-    /// Reads return the current mode.
-    /// Reads will return no more than 10-bytes smaller buffers may return [IoError::EndOfFile].
-    /// Writes must are given as a unicode string which, in order, consists of
-    /// * The baud rate which must be given as an integer inclusive from "115200" and "1"
-    /// * A single character ranging from 5 to 8
-    /// * A Parity bit normally "N" (None). Accepted characters are NOMES.
+    /// 0. Frame control see [FrameCtlBFile]
     /// Definitions for these are out of the scope of this documentation
     /// * The number of stop bits either 1 or 2.
     ///
@@ -350,6 +343,22 @@ impl Write<u8> for SerialDispatcher {
     }
 }
 
+
+/// This struct is a B-File for [SerialDispatcher].
+/// This file contains a Unicode text representing the frame control formatted as a typical UART
+///
+/// mode string e.g. "115200-8N1".
+///
+/// Reads return the current mode and will return no more than 10-bytes smaller buffers may return [IoError::EndOfFile].
+/// The baud rate is given as an integer, if the baud rate is a non-standard value which is not an
+/// integer the actual value will be truncated.
+///
+/// Writes must are given as a Unicode string which, in order, consists of
+/// 1. The baud rate which must be given as an integer inclusive from "115200" and "1"
+/// 2. Hyphen separator character
+/// 2. A single character ranging from 5 to 8
+/// 3. A Parity bit normally "N" (None). Accepted characters are NOMES.
+/// 5. Number of stop bits either 1 or 2. (note: 5_2 actually uses 1.5 stop bits)
 #[derive(Clone)]
 #[cast_trait_object::dyn_upcast(File)]
 #[cast_trait_object::dyn_cast(File => NormalFile<u8>, Directory, crate::fs::device::FileSystem, crate::fs::device::Fifo<u8>, crate::fs::device::DeviceFile )]
@@ -401,7 +410,7 @@ impl Read<u8> for FrameCtlBFile {
     fn read<'a>(&'a mut self, buff: &'a mut [u8]) -> BoxFuture<Result<&'a mut [u8], (IoError, usize)>> {
         async {
             let real = self.dispatch.inner.real.upgrade().ok_or((IoError::MediaError,0))?;
-            let b_rate = ((real.divisor.load(atomic::Ordering::Relaxed) as f32)/115200f32) as u32; // use emulated float for conversion to baud-rate
+            let b_rate = (115200f32/(real.divisor.load(atomic::Ordering::Relaxed) as f32)); // use emulated float for conversion to baud-rate
             let data_bits: u8 = real.bits.load(atomic::Ordering::Relaxed).into();
             let parity: char = real.parity.load(atomic::Ordering::Relaxed).into();
             let stop = real.stop.load(atomic::Ordering::Relaxed) as u8 + 1;
@@ -410,7 +419,7 @@ impl Read<u8> for FrameCtlBFile {
             // also moves buff[0..10] into L1D
             let end = buff.len().min(10);
             buff[..end].fill(0);
-            let err = write!(buff.writable(),"{b_rate}-{data_bits}{parity}{stop}").is_err();
+            let err = write!(buff.writable(),"{b_rate:.0}-{data_bits}{parity}{stop}").is_err();
             if err {
                 return Err((IoError::EndOfFile,buff.len()))
             }
@@ -434,12 +443,27 @@ impl Write<u8> for FrameCtlBFile {
                 return Err((IoError::InvalidData,0))
             }
 
-            let divisor: u16 = ((115200f32 / baud_rate as f32) as u32).try_into().unwrap();
+            // performs rounded integer division.
+            // there's probably a better way to do this.
+            // looks more complicated than it is.
+            let divisor: u16 =
+                {
+                    let clock_rate: u64 = 115200 << 16;
+                    let tgt = baud_rate as u64;
+                    let mut div_high = clock_rate / tgt;
+                    let div;
+                    if div_high & u16::MAX as u64 > (u16::MAX/2) as u64 {
+                        div = (div_high >> 16) + 1;
+                    } else {
+                        div = div_high >> 16;
+                    };
+                    div.try_into().map_err(|_| (IoError::InvalidData, 0))?
+                };
             if frame.len() != 4 {
                 return Err((IoError::InvalidData,0))
             }
             let frame_fmt: [char;3] = {
-                let mut f = frame.bytes().map(|b| b as char);
+                let mut f = frame.chars().skip(1);
                 let r = [f.next().ok_or((IoError::InvalidData,0))?,f.next().ok_or((IoError::InvalidData,0))?,f.next().ok_or((IoError::InvalidData,0))?];
                 if let Some(_) = f.next() {
                     return Err((IoError::InvalidData,0))
