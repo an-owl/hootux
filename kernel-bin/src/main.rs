@@ -172,43 +172,6 @@ pub extern "C" fn _libboot_entry(bi: *mut libboot::boot_info::BootInfo) -> ! {
     kernel_main(bi)
 }
 
-async fn test_serial() -> task::TaskResult {
-    use fs::file::*;
-    use fs::device::*;
-    let mut serial = cast_file!(Fifo<u8>: fs::get_vfs().open("/COM0").await.unwrap()).unwrap();
-    serial.open(OpenMode::ReadWrite).unwrap();
-    let mut buff = Vec::new();
-    buff.resize(16,0);
-    log::info!("Reading UART");
-    let len = match serial.read(&mut buff).await {
-        Ok(b) => b.len(),
-        Err((err,len)) => {
-            log::debug!("err: {err:?}");
-            return task::TaskResult::Error
-        }
-    };
-    println!("Got: {len}");
-    for i in &buff[..len] {
-        print!("{}",*i as char);
-    }
-
-    log::info!("Echoing");
-
-    loop {
-        let r = serial.read(&mut buff).await.unwrap();
-        for i in r.iter() {
-            print!("{}",*i as char);
-        }
-        if let Ok(s) = core::str::from_utf8(r) {
-            if s == "break" {
-                break
-            }
-        }
-    }
-
-    task::TaskResult::ExitedNormally
-}
-
 fn say_hi() {
     println!("Starting Hootux");
     println!(r#" |   |   \---/   "#);
