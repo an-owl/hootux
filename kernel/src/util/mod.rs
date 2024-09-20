@@ -13,7 +13,7 @@ pub use static_protected::{KernelStatic, UnlockedStatic};
 pub(crate) use unsafe_box::UnsafeBox;
 pub(crate) use worm::Worm;
 pub use single_arc::*;
-pub use io_write::WritableBuffer;
+pub use io_write::{ToWritableBuffer, WriteableBuffer};
 
 /// Struct to provide !Send, !Sync traits
 #[derive(Default, Copy, Clone)]
