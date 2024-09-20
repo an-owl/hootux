@@ -23,6 +23,7 @@ pub(self) mod offset_page_table;
 pub mod thread_local_storage;
 pub mod tlb;
 pub mod write_combining;
+pub mod virt_fixup;
 
 pub const PAGE_SIZE: usize = 4096;
 

@@ -103,6 +103,11 @@ extern "x86-interrupt" fn keyboard_interrupt_handler(_sf: InterruptStackFrame) {
 
 extern "x86-interrupt" fn except_page(sf: InterruptStackFrame, e: PageFaultErrorCode) {
     use x86_64::registers::control::Cr2;
+
+    if crate::mem::virt_fixup::fixup().is_ok() {
+        return;
+    }
+
     println!("*EXCEPTION: PAGE FAULT*\n");
 
     let fault_addr = Cr2::read();
