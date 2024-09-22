@@ -11,12 +11,16 @@
 ///
 ///     let _ = write!(bytes.writable(), "{}", "Hello, World!")
 /// }
-pub trait WritableBuffer {
-    fn writable(self) -> impl core::fmt::Write;
+pub trait ToWritableBuffer {
+    fn writable(self) -> impl WriteableBuffer;
 }
 
-impl<'a> WritableBuffer for &'a mut [u8] {
-    fn writable(self) -> impl core::fmt::Write {
+pub trait WriteableBuffer: core::fmt::Write {
+    fn cursor(&self) -> usize;
+}
+
+impl<'a> ToWritableBuffer for &'a mut [u8] {
+    fn writable(self) -> impl WriteableBuffer {
         WritableByteArray{
             arr: self,
             cursor: 0,
@@ -26,7 +30,13 @@ impl<'a> WritableBuffer for &'a mut [u8] {
 
 struct WritableByteArray<'a> {
     arr: &'a mut [u8],
-    cursor: usize,
+    pub cursor: usize,
+}
+
+impl<'a> WriteableBuffer for WritableByteArray<'a> {
+    fn cursor(&self) -> usize {
+        self.cursor
+    }
 }
 
 impl core::fmt::Write for WritableByteArray<'_> {

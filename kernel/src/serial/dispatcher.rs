@@ -1,5 +1,4 @@
 use alloc::boxed::Box;
-use alloc::string::ToString;
 use core::pin::Pin;
 use core::task::{Context, Poll};
 use futures_util::future::BoxFuture;
@@ -10,7 +9,7 @@ use crate::serial::Serial;
 use crate::fs::file::*;
 use crate::fs::{IoError, IoResult};
 use crate::fs::vfs::{DevID, MajorNum};
-use crate::util::WritableBuffer;
+use crate::util::ToWritableBuffer;
 use core::fmt::Write as _;
 use core::marker::PhantomData;
 use x86_64::instructions::interrupts::without_interrupts;
@@ -107,12 +106,18 @@ impl SerialDispatcher {
     /// Don't use this if you can avoid it.
     /// It will push data to the serial buffer regardless of the quota always prefer to use the sink.
     /// This may break the ordering of the output.
+    ///
+    /// Has a limit of 128 characters.
     pub fn write_sync(&self, data: core::fmt::Arguments) -> Result<(),(IoError, usize)> {
+        use crate::util::WriteableBuffer;
         let mut self_mut = cast_file!(Fifo<u8>: self.clone_file()).unwrap();
-        let st = data.to_string();
+        let mut st = [0u8;128];
+        let mut stw = st.writable();
+        let _ = core::write!(stw,"{}",data); // idc if this fails
         self_mut.open(OpenMode::Write).map_err(|e| (e,0))?;
-
-        let r = crate::task::util::block_on!(self_mut.write(&st.as_bytes())).map(|_| ());
+        let len = stw.cursor();
+        drop(stw);
+        let r = crate::task::util::block_on!(self_mut.write(&st[..len])).map(|_| ());
         if let Err((e,i)) = &r {
             x86_64::instructions::nop()
         }
