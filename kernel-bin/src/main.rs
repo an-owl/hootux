@@ -160,8 +160,6 @@ fn kernel_main(b: *mut libboot::boot_info::BootInfo) -> ! {
         }
     }
 
-    //test_fixups();
-
     task::run_task(Box::pin(keyboard::print_key()));
     task::run_exec(); //executor.run();
 }
@@ -173,16 +171,7 @@ pub extern "C" fn _libboot_entry(bi: *mut libboot::boot_info::BootInfo) -> ! {
     kernel_main(bi)
 }
 
-/*
-fn test_fixups() {
-    let ptr = 0xFFFFFF0000000000 as *const u8;
-    mem::virt_fixup::set_fixup_region(ptr,4096,4096,false).unwrap();
-    // not safe lol
-    unsafe { ptr.read(); }
-    //println!("It worked!")
-}
 
- */
 
 fn say_hi() {
     println!("Starting Hootux");
