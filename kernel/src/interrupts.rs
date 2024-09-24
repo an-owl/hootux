@@ -104,7 +104,17 @@ extern "x86-interrupt" fn keyboard_interrupt_handler(_sf: InterruptStackFrame) {
 extern "x86-interrupt" fn except_page(sf: InterruptStackFrame, e: PageFaultErrorCode) {
     use x86_64::registers::control::Cr2;
 
-    if crate::mem::virt_fixup::fixup().is_ok() {
+    if let Some(fix) = crate::mem::virt_fixup::query_fixup() {
+        unsafe {
+            core::arch::asm!(
+            "xchg rsp,[r12]",
+            "call _page_fault_fixup_inner",
+            "xchg rsp,[r12]",
+            in("r12") &sf.stack_pointer,
+            in("rdi") &fix,
+            clobber_abi("C")
+            );
+        }
         return;
     }
 
@@ -120,6 +130,11 @@ extern "x86-interrupt" fn except_page(sf: InterruptStackFrame, e: PageFaultError
     println!("Error code {:?}\n", e);
     println!("{:#?}", sf);
     panic!("page fault");
+}
+
+#[no_mangle]
+extern "C" fn _page_fault_fixup_inner(fix: &crate::mem::virt_fixup::CachedFixup) {
+    fix.fixup();
 }
 
 extern "x86-interrupt" fn except_general_protection(sf: InterruptStackFrame, e: u64) {

@@ -33,44 +33,9 @@ pub fn remove_fixup_region<T>(address: *const T) -> Result<(),()> {
     KERNEL_FIXUP_LIST.remove(VirtAddr::from_ptr(address))
 }
 
-
-pub(crate) fn fixup() -> Result<(),()> {
+pub(crate) fn query_fixup<'a>() -> Option<CachedFixup<'a>> {
     let addr = x86_64::registers::control::Cr2::read();
-    if let Some((addr,size)) = KERNEL_FIXUP_LIST.try_fixup(addr) {
-        // Force check that this can be acquired safely again.
-        // We are just going to panic on a page fault if this fails anyway.
-        // This shouldn't panic but if it does we **need** to catch and fix it.
-        let l = super::allocator::COMBINED_ALLOCATOR.try_lock_pedantic().expect("Tried to fixup page while mm is in use");
-
-        // SAFETY: map_page() here is safe, this is intended to handle a page fault. The faulting code will expect this data to be accessible this makes it so.
-        // from_addr_unchecked() here is safe, `try_fixup` will align the address to the required value.
-        #[cfg(target_arch = "x86_64")]
-        match size {
-            0x1000 => unsafe {super::mem_map::map_page::<x86_64::structures::paging::page::Size4KiB>(x86_64::structures::paging::Page::from_start_address_unchecked(addr), super::mem_map::PROGRAM_DATA_FLAGS) },
-            0x20_0000 => unsafe {super::mem_map::map_page::<x86_64::structures::paging::page::Size2MiB>(x86_64::structures::paging::Page::from_start_address_unchecked(addr), super::mem_map::PROGRAM_DATA_FLAGS | x86_64::structures::paging::PageTableFlags::HUGE_PAGE ) }
-            0x4000_0000 => unsafe {super::mem_map::map_page::<x86_64::structures::paging::page::Size1GiB>(x86_64::structures::paging::Page::from_start_address_unchecked(addr), super::mem_map::PROGRAM_DATA_FLAGS | x86_64::structures::paging::PageTableFlags::HUGE_PAGE ) }
-            _ => unsafe { core::hint::unreachable_unchecked() } // SAFETY `size` is only defined to be ont of the above values
-        }
-
-        drop(l);
-        #[cfg(not(target_arch = "x86_64"))] {
-            compile_error!("No page sizes configured")
-        }
-
-        /*
-        Unfortunately for huge pages we may need to change the cache mode to prevent this filling up the cache.
-        Normal pages are fine. Disable cache line fills?
-        This shouldn't occupy the entire memory bus, it should be a "Fill with pattern" command
-         */
-        // SAFETY: We just allocated this
-        unsafe {core::slice::from_raw_parts_mut(addr.as_mut_ptr::<u8>(),size as usize)}.fill(0);
-
-        Ok(())
-    } else {
-        Err(())
-    }
-
-
+    KERNEL_FIXUP_LIST.try_fixup(addr)
 }
 
 pub(crate) struct FixupList {
@@ -113,12 +78,16 @@ impl FixupList {
 
     /// Resolves `address` to a fixup region and returns that region if it is present
     /// alongside the page size for the region.
-    pub(crate)fn try_fixup(&self, address: VirtAddr) -> Option<(VirtAddr, u64)> {
+    pub(crate)fn try_fixup(&self, address: VirtAddr) -> Option<(CachedFixup)> {
         let l = self.list.read();
         match l.binary_search_by(|e| address.partial_cmp(e).unwrap()) {
 
             Ok(i) => {
-                Some(l[i].fixup(address))
+                Some(CachedFixup{
+                    lock: l,
+                    index: i,
+                    address
+                })
             },
             Err(_) => None,
         }
@@ -207,3 +176,45 @@ impl Ord for FixupEntry {
     }
 }
 
+pub(crate) struct CachedFixup<'a> {
+    lock: spin::RwLockReadGuard<'a, alloc::vec::Vec<FixupEntry>>,
+    index: usize,
+    address: VirtAddr
+}
+
+
+impl<'a> CachedFixup<'a> {
+    pub fn fixup(&self) {
+        let (addr,size) = self.lock[self.index].fixup(self.address);
+
+        // Force check that this can be acquired safely again.
+        // We are just going to panic on a page fault if this fails anyway.
+        // This shouldn't panic but if it does we **need** to catch and fix it.
+        let l = super::allocator::COMBINED_ALLOCATOR.try_lock_pedantic().expect("Tried to fixup page while mm is in use");
+
+        // SAFETY: map_page() here is safe, this is intended to handle a page fault. The faulting code will expect this data to be accessible this makes it so.
+        // from_addr_unchecked() here is safe, `try_fixup` will align the address to the required value.
+        #[cfg(target_arch = "x86_64")]
+        match size {
+            0x1000 => unsafe { super::mem_map::map_page::<x86_64::structures::paging::page::Size4KiB>(x86_64::structures::paging::Page::from_start_address_unchecked(addr), super::mem_map::PROGRAM_DATA_FLAGS) },
+            0x20_0000 => unsafe { super::mem_map::map_page::<x86_64::structures::paging::page::Size2MiB>(x86_64::structures::paging::Page::from_start_address_unchecked(addr), super::mem_map::PROGRAM_DATA_FLAGS | x86_64::structures::paging::PageTableFlags::HUGE_PAGE) }
+            0x4000_0000 => unsafe { super::mem_map::map_page::<x86_64::structures::paging::page::Size1GiB>(x86_64::structures::paging::Page::from_start_address_unchecked(addr), super::mem_map::PROGRAM_DATA_FLAGS | x86_64::structures::paging::PageTableFlags::HUGE_PAGE) }
+            _ => unsafe { core::hint::unreachable_unchecked() } // SAFETY `size` is only defined to be ont of the above values
+        }
+
+        drop(l);
+        #[cfg(not(target_arch = "x86_64"))] {
+            compile_error!("No page sizes configured")
+        }
+
+
+
+        /*
+        Unfortunately for huge pages we may need to change the cache mode to prevent this filling up the cache.
+        Normal pages are fine. Disable cache line fills?
+        This shouldn't occupy the entire memory bus, it should be a "Fill with pattern" command
+         */
+        // SAFETY: We just allocated this
+        unsafe { core::slice::from_raw_parts_mut(addr.as_mut_ptr::<u8>(), size as usize) }.fill(0);
+    }
+}
