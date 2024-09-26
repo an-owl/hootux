@@ -22,6 +22,8 @@ static KERNEL_FIXUP_LIST: FixupList = FixupList::new();
 /// The fixup region will span from `address` to `address + len` in bytes. The Page size field
 /// must be a valid page size. Fixups may only use one size of frame. Only 4KiB pages should be
 /// used in kernel fixups.
+///
+/// If the requested region intersects with an existing region this will return `Err(())`
 pub fn set_fixup_region<T>(address: *const T, len: usize, page_size: usize, shrinkable: bool) -> Result<(),()> {
     KERNEL_FIXUP_LIST.insert(address,len,page_size,shrinkable)
 }
