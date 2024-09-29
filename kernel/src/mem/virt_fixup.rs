@@ -6,6 +6,7 @@
 /// Each entry contains a start address and length, the entry tracks how many fixups have occurred.
 /// If all pages have been "fixed-up" then the entry is removed from the list.
 /// Some entries are shrinkable, these entries are not removed as they may be used again.
+/// All pages which are fixed up will be filed with `0`'s.
 ///
 /// A user which *may* unmap memory from the list must set `shrinkable` to `true`. If this is not
 /// done then may result in a kernel panic.
