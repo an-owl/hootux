@@ -260,3 +260,38 @@ unsafe impl Allocator for DmaAlloc {
             .virt_deallocate(ptr, layout)
     }
 }
+
+/// Allocates virtual memory without allocating physical memory to it.
+///
+/// This implements [Allocator] however only [Allocator::allocate], [Allocator::allocate_zeroed]
+/// and [Allocator::by_ref] may be called, all other methods will panic.
+/// This is behaviour is because memory allocated by this allocator is inaccessible until it's
+/// explicitly mapped to physical memory, these methods are likely to cause page faults, which are
+/// harder to debug than a panic.
+pub struct VirtAlloc;
+
+unsafe impl Allocator for VirtAlloc {
+    fn allocate(&self, layout: Layout) -> Result<NonNull<[u8]>, AllocError> {
+        super::COMBINED_ALLOCATOR.lock().virt_allocate(layout)
+    }
+
+    fn allocate_zeroed(&self, _layout: Layout) -> Result<NonNull<[u8]>, AllocError> {
+        panic!("Not allowed")
+    }
+
+    fn deallocate(&self, ptr: NonNull<u8>, layout: Layout) {
+        super::COMBINED_ALLOCATOR.lock().virt_deallocate(ptr, layout)
+    }
+
+    unsafe fn grow(&self, _ptr: NonNull<u8>, _old_layout: Layout, _new_layout: Layout) -> Result<NonNull<[u8]>, AllocError> {
+        panic!("Not allowed")
+    }
+
+    unsafe fn grow_zeroed(&self, _ptr: NonNull<u8>, _old_layout: Layout, _new_layout: Layout) -> Result<NonNull<[u8]>, AllocError> {
+        panic!("Not allowed")
+    }
+
+    unsafe fn shrink(&self, _ptr: NonNull<u8>, _old_layout: Layout, _new_layout: Layout) -> Result<NonNull<[u8]>, AllocError> {
+        panic!("Not allowed")
+    }
+}
