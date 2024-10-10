@@ -393,6 +393,28 @@ impl OffsetPageTable {
             Err(InternalError::PageAlreadyMapped(table[index].addr()))
         }
     }
+
+    /// Returns the page table entry for the requested virtual address.
+    pub(crate) fn get_entry(&self, level: PageTableLevel, page: VirtAddr) -> Result<PageTableEntry,GetEntryErr> {
+        let page: Page<Size4KiB> = Page::containing_address(page);
+        let t = self.traverse(level,page).map_err(|e| {
+            match e {
+                InternalError::ParentEntryHugePage(_) => GetEntryErr::ParentHugePage,
+                InternalError::PageNotMapped(_) => GetEntryErr::NotMapped,
+                InternalError::PageAlreadyMapped(_) => unreachable!(), // traverse won't return this
+            }
+        })?;
+        let index = level.get_index(page);
+        Ok(*t[index])
+    }
+}
+
+#[derive(Copy, Clone, Debug)]
+pub(crate) enum GetEntryErr {
+    /// If this is returned the caller may call [OffsetPageTable::get_entry] again with a higher
+    /// level to get the entry.
+    ParentHugePage,
+    NotMapped,
 }
 
 impl Mapper<Size4KiB> for OffsetPageTable {

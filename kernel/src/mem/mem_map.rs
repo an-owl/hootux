@@ -202,6 +202,32 @@ pub(crate) fn set_flags<S>(page: Page<S>, flags: PageTableFlags) -> Result<(), U
     Ok(())
 }
 
+pub(crate) use offset_page_table::GetEntryErr;
+
+/// Retrieves the page table entry for the given page.
+/// This can be used to update the entries flags.
+pub(crate) fn get_flags<S: PageSize + core::fmt::Debug>(page: Page<S>) -> Result<x86_64::structures::paging::page_table::PageTableEntry, GetEntryErr> {
+    let l = allocator::COMBINED_ALLOCATOR.lock();
+    let level = match core::any::TypeId::of::<S>() {
+        core::any::TypeId::of::<Size4KiB>() => PageTableLevel::L1,
+        core::any::TypeId::of::<Size2MiB>() => PageTableLevel::L2,
+        core::any::TypeId::of::<Size1GiB>() => PageTableLevel::L3,
+    };
+    l.mapper().get_entry(level, page.start_address())
+}
+
+/// Maps the specified frame to the specified page, with the given flags.
+///
+/// The page-address is fetched from `addr` and will be treated as a `S` sized page.
+/// `addr` will be automatically aligned.
+///
+/// An `invdpg` is not run on the updated page. This is because if `page` is present this will return an error.
+pub(crate) fn map_frame_to_page<S: PageSize + core::fmt::Debug>(page: VirtAddr, frame: PhysFrame<S>, flags: PageTableFlags) -> Result<(),x86_64::structures::paging::mapper::MapToError<S>> {
+    let page = Page::<S>::containing_address(page);
+    let mut l = allocator::COMBINED_ALLOCATOR.lock();
+    unsafe { l.mapper_mut().map_to(page,frame, flags, &mut DummyFrameAlloc) }.map(|f| f.ignore())
+}
+
 /// Updates page table flags regardless of page size.
 /// This can be used to update one page or an iterator of pages.
 /// This has a single page form and a range form.
