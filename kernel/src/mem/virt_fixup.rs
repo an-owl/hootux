@@ -81,7 +81,7 @@ impl FixupList {
 
     /// Resolves `address` to a fixup region and returns that region if it is present
     /// alongside the page size for the region.
-    pub(crate)fn try_fixup(&self, address: VirtAddr) -> Option<(CachedFixup)> {
+    pub(crate)fn try_fixup(&self, address: VirtAddr) -> Option<CachedFixup> {
         let l = self.list.upgradeable_read();
         match l.binary_search_by(|e| address.partial_cmp(e).unwrap()) {
 
@@ -187,7 +187,7 @@ pub(crate) struct CachedFixup<'a> {
 
 
 impl<'a> CachedFixup<'a> {
-    pub fn fixup(mut self) {
+    pub fn fixup(self) {
         let (addr,size) = self.lock[self.index].fixup(self.address);
 
         // Force check that this can be acquired safely again.
