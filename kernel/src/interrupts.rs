@@ -75,6 +75,9 @@ extern "x86-interrupt" fn except_page(sf: InterruptStackFrame, e: PageFaultError
     use x86_64::registers::control::Cr2;
 
     if let Some(fix) = crate::mem::virt_fixup::query_fixup() {
+        // SAFETY: This is unsafe because _page_fault_fixup_inner will `core::ptr::read(fix)` and consume it.
+        // It is dropped immediately after.
+        let fix = core::mem::MaybeUninit::new(fix);
         unsafe {
             core::arch::asm!(
             "xchg rsp,[r12]",
@@ -85,6 +88,7 @@ extern "x86-interrupt" fn except_page(sf: InterruptStackFrame, e: PageFaultError
             clobber_abi("C")
             );
         }
+        core::mem::forget(fix);
         return;
     }
 
@@ -102,9 +106,11 @@ extern "x86-interrupt" fn except_page(sf: InterruptStackFrame, e: PageFaultError
     panic!("page fault");
 }
 
+/// This function consumes `fix` and the caller must call [core::mem::forget] on it immediately
+/// after calling it.
 #[no_mangle]
-extern "C" fn _page_fault_fixup_inner(fix: &crate::mem::virt_fixup::CachedFixup) {
-    fix.fixup();
+unsafe extern "C" fn _page_fault_fixup_inner(fix: *mut crate::mem::virt_fixup::CachedFixup) {
+    unsafe { fix.read().fixup(); }
 }
 
 extern "x86-interrupt" fn except_general_protection(sf: InterruptStackFrame, e: u64) {
