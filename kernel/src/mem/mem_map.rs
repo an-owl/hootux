@@ -206,7 +206,7 @@ pub(crate) use offset_page_table::GetEntryErr;
 
 /// Retrieves the page table entry for the given page.
 /// This can be used to update the entries flags.
-pub(crate) fn get_flags<S: PageSize + core::fmt::Debug + 'static>(page: Page<S>) -> Result<x86_64::structures::paging::page_table::PageTableEntry, GetEntryErr> {
+pub(crate) fn get_entry<S: PageSize + core::fmt::Debug + 'static>(page: Page<S>) -> Result<x86_64::structures::paging::page_table::PageTableEntry, GetEntryErr> {
     let l = allocator::COMBINED_ALLOCATOR.lock();
 
     // This can be completely removed by the compiler.

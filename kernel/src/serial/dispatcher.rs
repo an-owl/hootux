@@ -117,11 +117,7 @@ impl SerialDispatcher {
         self_mut.open(OpenMode::Write).map_err(|e| (e,0))?;
         let len = stw.cursor();
         drop(stw);
-        let r = crate::task::util::block_on!(self_mut.write(&st[..len])).map(|_| ());
-        if let Err((e,i)) = &r {
-            x86_64::instructions::nop()
-        }
-        r
+        crate::task::util::block_on!(self_mut.write(&st[..len])).map(|_| ())
     }
 }
 
@@ -415,7 +411,7 @@ impl Read<u8> for FrameCtlBFile {
     fn read<'a>(&'a mut self, buff: &'a mut [u8]) -> BoxFuture<Result<&'a mut [u8], (IoError, usize)>> {
         async {
             let real = self.dispatch.inner.real.upgrade().ok_or((IoError::MediaError,0))?;
-            let b_rate = (115200f32/(real.divisor.load(atomic::Ordering::Relaxed) as f32)); // use emulated float for conversion to baud-rate
+            let b_rate = 115200f32/(real.divisor.load(atomic::Ordering::Relaxed) as f32); // use emulated float for conversion to baud-rate
             let data_bits: u8 = real.bits.load(atomic::Ordering::Relaxed).into();
             let parity: char = real.parity.load(atomic::Ordering::Relaxed).into();
             let stop = real.stop.load(atomic::Ordering::Relaxed) as u8 + 1;
@@ -455,7 +451,7 @@ impl Write<u8> for FrameCtlBFile {
                 {
                     let clock_rate: u64 = 115200 << 16;
                     let tgt = baud_rate as u64;
-                    let mut div_high = clock_rate / tgt;
+                    let div_high = clock_rate / tgt;
                     let div;
                     if div_high & u16::MAX as u64 > (u16::MAX/2) as u64 {
                         div = (div_high >> 16) + 1;
