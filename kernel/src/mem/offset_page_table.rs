@@ -405,7 +405,7 @@ impl OffsetPageTable {
             }
         })?;
         let index = level.get_index(page);
-        Ok(*t[index])
+        Ok(t[index].clone())
     }
 }
 
