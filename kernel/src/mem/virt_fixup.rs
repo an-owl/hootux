@@ -82,7 +82,7 @@ impl FixupList {
     /// Resolves `address` to a fixup region and returns that region if it is present
     /// alongside the page size for the region.
     pub(crate)fn try_fixup(&self, address: VirtAddr) -> Option<(CachedFixup)> {
-        let l = self.list.read();
+        let l = self.list.upgradeable_read();
         match l.binary_search_by(|e| address.partial_cmp(e).unwrap()) {
 
             Ok(i) => {
@@ -180,14 +180,14 @@ impl Ord for FixupEntry {
 }
 
 pub(crate) struct CachedFixup<'a> {
-    lock: spin::RwLockReadGuard<'a, alloc::vec::Vec<FixupEntry>>,
+    lock: spin::RwLockUpgradableGuard<'a, alloc::vec::Vec<FixupEntry>>,
     index: usize,
     address: VirtAddr
 }
 
 
 impl<'a> CachedFixup<'a> {
-    pub fn fixup(&self) {
+    pub fn fixup(mut self) {
         let (addr,size) = self.lock[self.index].fixup(self.address);
 
         // Force check that this can be acquired safely again.
@@ -210,7 +210,13 @@ impl<'a> CachedFixup<'a> {
             compile_error!("No page sizes configured")
         }
 
-
+        let index = self.index;
+        let entry =  &self.lock[index];
+        entry.fixup_remain.fetch_sub(entry.page_size, atomic::Ordering::Relaxed);
+        if entry.fixup_remain.load(atomic::Ordering::Relaxed) <= 0 && entry.clear_when_fixed {
+            let mut l = self.lock.upgrade();
+            l.remove(index);
+        }
 
         /*
         Unfortunately for huge pages we may need to change the cache mode to prevent this filling up the cache.
