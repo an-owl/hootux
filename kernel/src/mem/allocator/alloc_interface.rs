@@ -279,7 +279,7 @@ unsafe impl Allocator for VirtAlloc {
         panic!("Not allowed")
     }
 
-    fn deallocate(&self, ptr: NonNull<u8>, layout: Layout) {
+    unsafe fn deallocate(&self, ptr: NonNull<u8>, layout: Layout) {
         super::COMBINED_ALLOCATOR.lock().virt_deallocate(ptr, layout)
     }
 
