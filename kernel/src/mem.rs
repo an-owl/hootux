@@ -430,13 +430,16 @@ impl PageTableLevel {
     }
 }
 
-#[derive(Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Debug)]
+#[derive(Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Debug, Default)]
 /// MemRegion represents different regions of physical memory by the number of bits they require to access.
 /// Some hardware devices can only use 32bit or more rarely 16bit addresses when accessing memory.
 /// This enum is used to differentiate between them.
 // impls are in buddy_frame_alloc.rs because they are only usd within that mod
+//
+// Defaults are not set here for other ptr sizes to avoid potential architecture weirdness
 pub enum MemRegion {
     Mem16,
     Mem32,
+    #[cfg_attr(target_pointer_width = "64",default)]
     Mem64,
 }
