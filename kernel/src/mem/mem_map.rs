@@ -5,7 +5,7 @@
 
 use super::*;
 use crate::mem::buddy_frame_alloc::FrameAllocRef;
-use x86_64::structures::paging::mapper::{FlagUpdateError, TranslateError};
+use x86_64::structures::paging::mapper::{FlagUpdateError, TranslateError, UnmapError};
 
 /// Flags for Normal data in L1 (4K) pages.
 pub const PROGRAM_DATA_FLAGS: PageTableFlags = PageTableFlags::from_bits_truncate((1 << 63) | 0b11);
@@ -53,11 +53,11 @@ pub unsafe fn map_range<'a, S: PageSize + core::fmt::Debug, I: Iterator<Item = P
 /// Unmaps pages without deallocating physical frames. Unmapped pages are skipped.
 /// Pages will always bee flushed from the tlb.
 ///
-/// #Panics
+/// # Panics
 ///
 /// This fn will panic a mapped page is not `page<S>` or the frame address is invalid
 ///
-/// #Safety
+/// # Safety
 ///
 /// This fn is unsafe because it can be used to unmap in use pages that contain in use data.
 pub unsafe fn unmap_range<'a, S: PageSize + core::fmt::Debug, I: Iterator<Item = Page<S>>>(pages: I)
@@ -82,11 +82,11 @@ where
 /// Maps a single page of memory, flushing the tlb entry for the given page. This is the preferred
 /// method if mapping a single page.
 ///
-/// #Panics
+/// # Panics
 ///
 /// This fn will panic if a page within range is already mapped
 ///
-/// #Safety
+/// # Safety
 ///
 /// see [Mapper::map_to]
 pub unsafe fn map_page<'a, S: PageSize + core::fmt::Debug>(page: Page<S>, flags: PageTableFlags)
@@ -112,16 +112,16 @@ where
 }
 
 /// Unmaps the specified page from memory without deallocating the frame. Pages will always be
-/// flushed from the tlb.
+/// flushed from the tlb. Returns the frame address.
 ///
-/// #Panics
+/// # Panics
 ///
 /// This fn will panic if an error is encountered while unmapping the page, unlike [unmap_range]
 /// this includes unmapped pages.
 ///
-/// #Safety
+/// # Safety
 ///
-/// See [unmap_range]\#Safety
+/// See [unmap_range](unmap_range#Safety)
 pub unsafe fn unmap_page<'a, S: PageSize + core::fmt::Debug>(page: Page<S>)
 where
     offset_page_table::OffsetPageTable: Mapper<S>,
@@ -133,6 +133,61 @@ where
             panic!("{:?}", err)
         }
     }
+}
+
+pub(crate) unsafe fn unmap_and_free(addr: VirtAddr) -> Result<(),()>{
+
+    let page = Page::<x86_64::structures::paging::Size4KiB>::containing_address(addr);
+
+    let free = |entry: x86_64::structures::paging::page_table::PageTableEntry,len| {
+        if entry.flags().contains(frame_attribute_table::FRAME_ATTR_ENTRY_FLAG) {
+            let op = frame_attribute_table::FatOperation::UnAlias;
+            let fae = frame_attribute_table::ATTRIBUTE_TABLE_HEAD.do_op_phys(entry.addr(),op);
+
+            let mut free = if let Some(ref fae) = fae {
+                // if not aliased
+                fae.alias_count() <= 1
+            } else {
+                // No aliases are present if no FAE is present
+                true
+            };
+
+            // if no fae is present
+            if free {
+                let l = allocator::COMBINED_ALLOCATOR.lock();
+                l.phys_alloc().dealloc(entry.addr().as_u64() as usize, len)
+            }
+        };
+
+    };
+
+    // We need to determine the size of the frame before we free it.
+    match get_entry(page) {
+        Ok(e) => {
+            unmap_page(Page::<Size4KiB>::containing_address(addr));
+            free(e,0x1000);
+        },
+        Err(GetEntryErr::NotMapped) => return Err(()),
+        Err(GetEntryErr::ParentHugePage) => {
+            let page = Page::<Size2MiB>::containing_address(addr);
+
+            match get_entry(page) {
+                Ok(e) => {
+                    unmap_page(Page::<Size2MiB>::containing_address(addr));
+                    free(e,0x200000);
+                },
+                // SAFETY: The 4K NotMapped arm will be taken not this one.
+                Err(GetEntryErr::NotMapped) => unsafe { core::hint::unreachable_unchecked() },
+                Err(GetEntryErr::ParentHugePage) => {
+                    let page = Page::<Size1GiB>::containing_address(addr);
+                    // No parent huge pages are possible. This would've returned unmapped on the 4k check. no errors are possible here.
+                    unmap_page(Page::<Size1GiB>::containing_address(addr));
+                    free(get_entry(page).unwrap(), 0x40000000);
+                }
+            }
+        }
+    };
+    Ok(())
 }
 
 pub fn translate(addr: usize) -> Option<u64> {
