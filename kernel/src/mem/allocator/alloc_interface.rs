@@ -243,21 +243,10 @@ unsafe impl Allocator for DmaAlloc {
             end: Page::containing_address(VirtAddr::new(end as u64)),
         };
 
-        let phys_addr = {
-            let l_addr = ptr.as_ptr() as usize as u64;
-            let page = Page::<Size4KiB>::containing_address(VirtAddr::new(l_addr));
-            mem::SYS_MAPPER
-                .get()
-                .translate_page(page)
-                .expect("Error getting physical address")
-        };
-        mem::mem_map::unmap_range(range);
+        for i in range.map(|p| p.start_address()) {
+            mem::mem_map::unmap_and_free(i).unwrap()
+        }
 
-        mem::allocator::COMBINED_ALLOCATOR.lock().phys_alloc()
-            .dealloc(phys_addr.start_address().as_u64() as usize, layout.size());
-        super::COMBINED_ALLOCATOR
-            .lock()
-            .virt_deallocate(ptr, layout)
     }
 }
 

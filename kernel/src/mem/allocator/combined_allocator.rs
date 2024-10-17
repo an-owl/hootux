@@ -115,7 +115,9 @@ unsafe impl<S: SuperiorAllocator, I: InferiorAllocator> core::alloc::GlobalAlloc
                 }
             };
 
-            mem::mem_map::unmap_range(pages);
+            for i in pages.map(|p| p.start_address()) {
+                super::super::mem_map::unmap_and_free(i).expect("Failed to free memory");
+            }
 
             // TODO: deallocate frames
 
