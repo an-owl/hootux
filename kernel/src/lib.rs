@@ -16,6 +16,7 @@
 #![feature(box_into_inner)]
 #![allow(internal_features)] // I need these
 #![feature(link_llvm_intrinsics)]
+#![feature(layout_for_ptr)]
 
 
 extern crate alloc;

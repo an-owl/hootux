@@ -24,7 +24,7 @@ pub mod thread_local_storage;
 pub mod tlb;
 pub mod write_combining;
 pub mod virt_fixup;
-mod frame_attribute_table;
+pub mod frame_attribute_table;
 
 pub const PAGE_SIZE: usize = 4096;
 
@@ -442,4 +442,11 @@ pub enum MemRegion {
     Mem32,
     #[cfg_attr(target_pointer_width = "64",default)]
     Mem64,
+}
+
+/// Initializes Memory Management subsystems which are required runtime operation.
+///
+/// This should be called after the TLS is initialized
+fn init_mm_subsys() {
+    frame_attribute_table::ATTRIBUTE_TABLE_HEAD.init()
 }

@@ -80,17 +80,22 @@ extern "x86-interrupt" fn except_page(sf: InterruptStackFrame, e: PageFaultError
         let fix = core::mem::MaybeUninit::new(fix);
         unsafe {
             core::arch::asm!(
-            "xchg rsp,[r12]",
-            "call _page_fault_fixup_inner",
-            "xchg rsp,[r12]",
-            in("r12") &sf.stack_pointer,
-            in("rdi") &fix,
-            clobber_abi("C")
+                "xchg rsp,[r12]",
+                "call _page_fault_fixup_inner",
+                "xchg rsp,[r12]",
+                in("r12") &sf.stack_pointer,
+                in("rdi") &fix,
+                clobber_abi("C")
             );
         }
         core::mem::forget(fix);
         return;
+    } else {
+        if let Ok(()) = crate::mem::frame_attribute_table::ATTRIBUTE_TABLE_HEAD.fixup(Cr2::read()) {
+            return
+        }
     }
+
 
     println!("*EXCEPTION: PAGE FAULT*\n");
 
