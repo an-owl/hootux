@@ -26,6 +26,7 @@ static KERNEL_FIXUP_LIST: FixupList = FixupList::new();
 ///
 /// If the requested region intersects with an existing region this will return `Err(())`
 pub fn set_fixup_region<T>(address: *const T, len: usize, page_size: usize, shrinkable: bool) -> Result<(),()> {
+    log::debug!("new fixup region at: {address:p} len: {len}");
     KERNEL_FIXUP_LIST.insert(address,len,page_size,shrinkable)
 }
 
@@ -62,7 +63,7 @@ impl FixupList {
 
         let fixup = FixupEntry {
             address: VirtAddr::from_ptr(address),
-            len,
+            len: len - 1, // len -1 is the last address in the region, address + len is the byte after
             fixup_remain: atomic::Atomic::new(0),
             page_size,
             clear_when_fixed: !shrinkable,
@@ -224,6 +225,6 @@ impl<'a> CachedFixup<'a> {
         This shouldn't occupy the entire memory bus, it should be a "Fill with pattern" command
          */
         // SAFETY: We just allocated this
-        unsafe { core::slice::from_raw_parts_mut(addr.as_mut_ptr::<u8>(), size as usize) }.fill(0);
+        unsafe { core::slice::from_raw_parts_mut(addr.align_down(0x1000u64).as_mut_ptr::<u8>(), size as usize) }.fill(0);
     }
 }
