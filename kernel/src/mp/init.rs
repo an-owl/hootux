@@ -278,7 +278,7 @@ fn long_mode_init() -> ! {
 
     unsafe {core::arch::asm!("wbinvd")};
     // SAFETY: this enables cache, cache is invalidated above
-    unsafe { x86_64::registers::control::Cr0::update(|f| f.set(Cr0Flags::CACHE_DISABLE | Cr0Flags::NOT_WRITE_THROUGH, false)); }
+    unsafe { x86_64::registers::control::Cr0::update(|f| f.set(Cr0Flags::CACHE_DISABLE | Cr0Flags::NOT_WRITE_THROUGH | Cr0Flags::WRITE_PROTECT, false)); }
     unsafe { x86_64::registers::control::Cr0::update(|f| f.set(Cr0Flags::MONITOR_COPROCESSOR | Cr0Flags::NUMERIC_ERROR , true)); }
 
     super::cpu_start();

@@ -93,14 +93,18 @@ pub fn p_pat() {
 }
 
 pub fn init() {
-    serial_println!("Called init");
     gdt::init();
     interrupts::init_exceptions();
     //unsafe { interrupts::PICS.lock().initialize() }
     unsafe { interrupts::PICS.lock().disable() }
     x86_64::instructions::interrupts::enable();
     mem::write_combining::init_wc();
-    serial_println!("Exited init")
+
+    let mut ctl = x86_64::registers::control::Cr0::read();
+    ctl.set(x86_64::registers::control::Cr0Flags::WRITE_PROTECT, true);
+    // SAFETY: This is safe, we enable the write-protect bit here.
+    // enabling this prevents erroneous writes to memory
+    unsafe { x86_64::registers::control::Cr0::write(ctl); }
 }
 
 pub fn init_logger() {
