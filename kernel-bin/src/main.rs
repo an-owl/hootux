@@ -78,6 +78,8 @@ fn kernel_main(b: *mut libboot::boot_info::BootInfo) -> ! {
         }
     }
 
+    mem::init_mm_subsys();
+
     interrupts::apic::load_apic();
     // SAFETY: prob safe but i dont want to think rn
     unsafe { interrupts::apic::get_apic().set_enable(true) }

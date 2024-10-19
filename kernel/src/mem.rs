@@ -447,6 +447,7 @@ pub enum MemRegion {
 /// Initializes Memory Management subsystems which are required runtime operation.
 ///
 /// This should be called after the TLS is initialized
-fn init_mm_subsys() {
+pub fn init_mm_subsys() {
+    log::trace!("init_mm_subsys()");
     frame_attribute_table::ATTRIBUTE_TABLE_HEAD.init()
 }
