@@ -107,3 +107,5 @@ achieve them.
  - Swanky async optimization using union to contain future on the stack when the future is smaller than or the same sizes as the return type.
    - This allows for maybe-async functions by just returning the completed result and polling it to return Ready(_)
    - Will this even work?
+ - Create arch-agnostic library to allow for architecture agnostic types instead of relying on either x86_64 or terrible design decisions
+   - I have a half-baked almost-prototype already
