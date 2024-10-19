@@ -25,10 +25,10 @@ use core::alloc::Allocator as _;
 
 // addresses here are to the last entry of the last entry int the highest level page table.
 const BITS48_TABLE_ADDRESS: usize = 0xFFFFFF8000000000;
-const BITS48_TABLE_SIZE: usize = 0x1000000000;
+const BITS48_TABLE_SIZE: usize = 0x10_0000_0000;
 
 const BITS57_TABLE_ADDRESS: usize = 0xFFFF000000000000;
-const BITS57_TABLE_SIZE: usize = 0x200000000000;
+const BITS57_TABLE_SIZE: usize = 0x2000_0000_0000;
 
 pub static ATTRIBUTE_TABLE_HEAD: FrameAttributeTable = FrameAttributeTable::new();
 
