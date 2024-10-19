@@ -10,6 +10,17 @@
 //! Because other CPUs may add or remove pages when they are no longer used by the FAT before
 //! accessing each page the CPU must perform a `invlpg` for each different page accessed.
 //! While this isn't perfect it's better than the alternatives.
+//!
+//! The FAT is initially intended for safely handling DMA operations with otherwise unsound lifetimes.
+//! Currently only options for DMA are implemented, due to this all aliased frames must be mapped to
+//! read-only pages.
+//!
+//! ## Future challenges
+//!
+//! In the future this module shoe be able to handle aliased writable pages, however this prevents
+//! usage with DMA. If multiple pages mutably alias a single frame when a DMA operation is requested
+//! we cannot set other aliases to read only. Mutably aliased frames must not be allowed to be used
+//! for DMA, we need some way to detect this and prevent it.
 
 /// Identifies the physical frame in the page table entry as using a frame attribute entry.
 ///
