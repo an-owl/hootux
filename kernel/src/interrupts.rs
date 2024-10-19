@@ -71,15 +71,42 @@ extern "x86-interrupt" fn keyboard_interrupt_handler(_sf: InterruptStackFrame) {
     }
 }
 
+// SAFETY: References to this must not escape the current CPU
+#[thread_local]
+static mut RECURSIVE: bool = false;
+struct RecursiveLock;
+impl RecursiveLock {
+    fn new() -> Option<Self> {
+        // SAFETY: This is only accessed here and in Self::drop()
+        // References are never leaked
+        if unsafe { core::mem::replace(&mut RECURSIVE, true) } {
+            None
+        } else {
+            Some(RecursiveLock)
+        }
+    }
+}
+
+impl Drop for RecursiveLock {
+    fn drop(&mut self) {
+        // SAFETY: This is only accessed here and in Self::new()
+        // References are never leaked
+        unsafe { RECURSIVE = false }; // fuck of JetBrains this ain't wrong
+    }
+}
+
+
 extern "x86-interrupt" fn except_page(sf: InterruptStackFrame, e: PageFaultErrorCode) {
     use x86_64::registers::control::Cr2;
 
-    if let Some(fix) = crate::mem::virt_fixup::query_fixup() {
-        // SAFETY: This is unsafe because _page_fault_fixup_inner will `core::ptr::read(fix)` and consume it.
-        // It is dropped immediately after.
-        let fix = core::mem::MaybeUninit::new(fix);
-        unsafe {
-            core::arch::asm!(
+    let r_l = RecursiveLock::new();
+    if r_l.is_some() {
+        if let Some(fix) = crate::mem::virt_fixup::query_fixup() {
+            // SAFETY: This is unsafe because _page_fault_fixup_inner will `core::ptr::read(fix)` and consume it.
+            // It is dropped immediately after.
+            let fix = core::mem::MaybeUninit::new(fix);
+            unsafe {
+                core::arch::asm!(
                 "xchg rsp,[r12]",
                 "call _page_fault_fixup_inner",
                 "xchg rsp,[r12]",
@@ -87,12 +114,13 @@ extern "x86-interrupt" fn except_page(sf: InterruptStackFrame, e: PageFaultError
                 in("rdi") &fix,
                 clobber_abi("C")
             );
-        }
-        core::mem::forget(fix);
-        return;
-    } else {
-        if let Ok(()) = crate::mem::frame_attribute_table::ATTRIBUTE_TABLE_HEAD.fixup(Cr2::read()) {
-            return
+            }
+            core::mem::forget(fix);
+            return;
+        } else {
+            if let Ok(()) = crate::mem::frame_attribute_table::ATTRIBUTE_TABLE_HEAD.fixup(Cr2::read()) {
+                return;
+            }
         }
     }
 
@@ -103,7 +131,10 @@ extern "x86-interrupt" fn except_page(sf: InterruptStackFrame, e: PageFaultError
     println!("At address {:?}", Cr2::read());
 
     if (fault_addr > sf.stack_pointer) && fault_addr < (sf.stack_pointer + 4096u64) {
-        println!("--->Likely Stack overflow")
+        println!("Likely Stack overflow")
+    }
+    if r_l.is_none() {
+        println!("Recursive page fault");
     }
 
     println!("Error code {:?}\n", e);
