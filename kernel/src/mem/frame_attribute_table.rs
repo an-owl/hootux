@@ -425,7 +425,7 @@ impl FatOperation {
 
     /// Predefined op to configure memory as Copy-On-Write
     // SAFETY: 6 is COPY_ON_FAULT | FIXUP_WRITABLE
-    pub const INIT_COW: Self = Self::NewAlias { attributes: unsafe { AttributeFlags::from_bits_unchecked(6) }, initial_writable: false };
+    pub const INIT_COW: Self = Self::NewAlias { attributes: AttributeFlags::from_bits_retain(6), initial_writable: false };
 
     /// Performs the requested operation for the given address.
     ///
@@ -513,6 +513,7 @@ struct FrameAttributesInner {
 
 bitflags::bitflags! {
 
+    #[derive(Copy, Clone, Debug)]
     pub struct AttributeFlags: u32 {
         /// Indicates that this entry shouldn't be dropped when the alias count is >= 1.
         /// When this flag is set this frame will never be freed. It is the responsibility of the

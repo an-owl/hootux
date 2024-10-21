@@ -208,7 +208,7 @@ impl Serial {
     pub fn modem_ctl(&self, state: ModemCtl) {
         self.modem_state.store(state, atomic::Ordering::Relaxed);
         let mut p = x86_64::instructions::port::Port::new(self.base + Self::MODEL_CTL);
-        unsafe { p.write(state.bits) }
+        unsafe { p.write(state.bits()) }
     }
 
     /// Outputs the byte over the serial line.
@@ -227,9 +227,9 @@ impl Serial {
     }
 
     fn can_send(&self) -> bool {
-        // SAFETY: Extra bits are allowed, this port addr is owned by there are no read effects
+        // SAFETY: Read is from a self owned port
         let line: LineStatus = unsafe {
-            LineStatus::from_bits_unchecked(
+            LineStatus::from_bits_retain(
                 x86_64::instructions::port::Port::new(self.base + Self::LINE_STS).read(),
             )
         };
@@ -237,9 +237,9 @@ impl Serial {
     }
 
     fn line_sate(&self) -> LineStatus {
-        // SAFETY: Extra bits are allowed
+        // SAFETY: read is from a self owned port
         unsafe {
-            LineStatus::from_bits_unchecked(
+            LineStatus::from_bits_retain(
                 x86_64::instructions::port::Port::new(self.base + Self::LINE_STS).read(),
             )
         }
@@ -378,9 +378,9 @@ impl Serial {
 
     /// Returns the modem status register
     fn get_modem_state(&self) -> ModemStatus {
-        // SAFETY: This is safe
+        // SAFETY: Port is owned by `self` the only side effects are clearing line status interrupt.
         unsafe {
-            ModemStatus::from_bits_unchecked(
+            ModemStatus::from_bits_retain(
                 x86_64::instructions::port::Port::new(self.base + Self::MODEM_STS).read(),
             )
         }
@@ -474,6 +474,7 @@ impl Into<u8> for DataBits {
 }
 
 bitflags::bitflags! {
+    #[derive(Debug, Copy, Clone)]
     struct ModemCtl: u8 {
         const DATA_TERMINAL_READY = 1;
         const REQUEST_TO_SEND = 1 << 1;
@@ -488,6 +489,7 @@ bitflags::bitflags! {
 bitflags::bitflags! {
     /// Represents the state of the serial port.
     /// Errors here should be forwarded to application software to handle.
+    #[derive(Debug, Copy, Clone)]
     struct LineStatus: u8 {
         /// Data is ready to be read.
         const DATA_READY = 1;
@@ -667,6 +669,7 @@ impl From<u8> for IntIdentification {
 }
 
 bitflags::bitflags! {
+    #[derive(Debug, Copy, Clone)]
     struct ModemStatus: u8 {
         const DELTA_CLEAR_TO_SEND = 1;
         const DELTA_DATA_SET_READY = 1 << 1;
@@ -678,6 +681,7 @@ bitflags::bitflags! {
         const CARRIER_DETECT = 1 << 7;
     }
 
+    #[derive(Debug, Copy, Clone)]
     struct InterruptEnable: u8 {
         /// Interrupt when data has been received
         const DATA_RECEIVED = 1;

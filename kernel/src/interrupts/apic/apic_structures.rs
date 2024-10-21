@@ -248,7 +248,8 @@ pub mod registers {
     }
 
     bitflags::bitflags! {
-        pub struct SpuriousVector: u32{
+        #[derive(Debug, Copy, Clone)]
+        pub struct SpuriousVector: u32 {
             const APIC_ENABLE = 1 << 8;
             const FOCOUS_PROCESSOR_CHECKING = 1 << 9;
             const EOI_BROADCAST_SUPPRESSION = 1 << 12;
@@ -259,8 +260,8 @@ pub mod registers {
         pub fn set_vector(&mut self, vector: u8) {
             assert!(vector > 15, "Invalid interrupt vector");
 
-            self.bits &= !0xff; // clear lower byte
-            self.bits |= vector as u32;
+            self.remove(Self::from_bits_retain(0xff)); // clear lower byte
+            *self = self.union(Self::from_bits_retain(vector as u32));
         }
     }
 
@@ -276,6 +277,7 @@ pub mod registers {
     }
 
     bitflags::bitflags! {
+        #[derive(Debug, Copy, Clone)]
         pub struct ApicError: u32{
             const CHECKSUM_SEND_ERROR       = 1;
             const RECIEVE_CHECKSUM_ERROR    = 1 << 1;

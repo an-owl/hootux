@@ -114,7 +114,7 @@ impl SelfTestRegister {
         if t.contains(Self::TEST_RUN) {
             return None;
         } else {
-            match t.bits & 7 {
+            match t.bits() & 7 {
                 0 => Some(Ok(0)),
                 e => Some(Err(e)),
             }
@@ -182,7 +182,7 @@ impl Into<u8> for HeaderType {
 
 impl From<u16> for CommandRegister {
     fn from(value: u16) -> Self {
-        Self { bits: value }
+        Self::from_bits_retain(value)
     }
 }
 

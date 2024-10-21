@@ -149,6 +149,7 @@ impl<'a> super::Capability<'a> for MessageSigInt<'a> {
 
 bitflags::bitflags! {
     #[repr(transparent)]
+    #[derive(Debug, Copy, Clone)]
     pub struct MsiControlBits: u16 {
         const ENABLE = 1;
         const BITS_64 = 1 << 7;
@@ -156,12 +157,14 @@ bitflags::bitflags! {
     }
 
     #[repr(transparent)]
+    #[derive(Debug, Copy, Clone)]
     pub struct MsiXControlBits: u16 {
         const ENABLE = 1 << 15;
         const MASK = 1 << 14;
     }
 
     #[repr(transparent)]
+    #[derive(Debug, Copy, Clone)]
     pub struct MsiXVectorControl: u32 {
         const MASK = 1;
     }
@@ -170,7 +173,7 @@ bitflags::bitflags! {
 impl MsiControlBits {
     /// Returns the number of requested vectors
     pub fn requested_vectors(&self) -> u8 {
-        let mut t = self.bits; // read only does not need to be volatile
+        let mut t = self.bits(); // read only does not need to be volatile
 
         t >>= 1;
         t &= 7;
@@ -181,7 +184,7 @@ impl MsiControlBits {
     }
 
     pub fn allocated_vectors(&self) -> u8 {
-        let mut t = unsafe { core::ptr::read_volatile(&self.bits) }; // does not need to be volatile
+        let mut t = unsafe { core::ptr::read_volatile(&self) }.bits(); // does not need to be volatile
 
         t >>= 4;
         t &= 7;
@@ -201,7 +204,7 @@ impl MsiControlBits {
         assert!(count.is_power_of_two());
         assert!(count <= 32);
 
-        let mut cont = unsafe { core::ptr::read_volatile(&self.bits) };
+        let mut cont = unsafe { core::ptr::read_volatile(&self) }.bits();
         cont &= !(0x70);
 
         match count {
@@ -214,7 +217,7 @@ impl MsiControlBits {
             _ => unreachable!(),
         }
 
-        unsafe { core::ptr::write_volatile(&mut self.bits, cont) };
+        unsafe { core::ptr::write_volatile(self, Self::from_bits_retain(cont)) };
         self.allocated_vectors()
     }
 }
@@ -223,7 +226,7 @@ impl MsiXControlBits {
     /// This fn will return the number of vectors that `self` uses.
     /// The returned value will be not larger than 2048
     pub fn table_size(&self) -> u16 {
-        (unsafe { core::ptr::read_volatile(&self.bits) } & 0x7f) + 1
+        (unsafe { core::ptr::read_volatile(self) }.bits() & 0x7f) + 1
     }
 }
 
