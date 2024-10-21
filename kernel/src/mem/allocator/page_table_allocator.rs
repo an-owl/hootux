@@ -173,13 +173,13 @@ impl Node {
     /// `&const self + 4096[4096]` is a valid address space
     unsafe fn autogen_next(&self) -> &'static mut Self {
         let mut self_addr = VirtAddr::from_ptr(self);
-        self_addr += PAGE_SIZE;
+        self_addr += PAGE_SIZE as u64;
         Node::new(self_addr)
     }
 
     fn next_addr(&self) -> usize {
         let mut self_addr = VirtAddr::from_ptr(self);
-        self_addr += PAGE_SIZE;
+        self_addr += PAGE_SIZE as u64;
         self_addr.as_u64() as usize
     }
 }
@@ -245,7 +245,7 @@ impl PageTableAllocator {
             | PageTableFlags::GLOBAL
             | PageTableFlags::HUGE_PAGE; // todo make const
 
-        let new_end_addr = self.end_addr + EXTEND_SIZE * PAGE_SIZE;
+        let new_end_addr = self.end_addr + (EXTEND_SIZE * PAGE_SIZE) as u64;
 
         match self.check_advance_end(new_end_addr.as_u64()) {
             Ok(_) => {}

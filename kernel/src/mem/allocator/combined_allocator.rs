@@ -85,7 +85,7 @@ unsafe impl<S: SuperiorAllocator, I: InferiorAllocator> core::alloc::GlobalAlloc
                 let start = VirtAddr::from_ptr(ret);
                 PageRangeInclusive::<Size4KiB> {
                     start: Page::containing_address(start),
-                    end: Page::containing_address(start + S::allocated_size(layout) - 1usize),
+                    end: Page::containing_address(start + S::allocated_size(layout) as u64 - 1u64),
                 }
             };
 
@@ -111,7 +111,7 @@ unsafe impl<S: SuperiorAllocator, I: InferiorAllocator> core::alloc::GlobalAlloc
                 let start = VirtAddr::from_ptr(ptr);
                 PageRangeInclusive::<Size4KiB> {
                     start: Page::containing_address(start),
-                    end: Page::containing_address(start + S::allocated_size(layout) - 1usize),
+                    end: Page::containing_address(start + S::allocated_size(layout) as u64 - 1u64),
                 }
             };
 

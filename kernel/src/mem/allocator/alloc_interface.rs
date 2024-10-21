@@ -54,7 +54,7 @@ impl MmioAlloc {
         let addr = VirtAddr::new(ptr.cast::<u8>().as_ptr() as usize as u64);
         let pages = PageRangeInclusive::<Size4KiB> {
             start: Page::containing_address(addr),
-            end: Page::containing_address(addr + layout.size() - 1u64),
+            end: Page::containing_address(addr + layout.size() as u64 - 1u64),
         };
         pages
     }

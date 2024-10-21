@@ -35,7 +35,7 @@ pub fn init_exceptions() {
             .set_stack_index(gdt::DOUBLE_FAULT_IST_INDEX);
     }
 
-    idt[InterruptIndex::Keyboard.as_usize()].set_handler_fn(keyboard_interrupt_handler);
+    idt[InterruptIndex::Keyboard.as_u8()].set_handler_fn(keyboard_interrupt_handler);
     idt.general_protection_fault.set_handler_fn(except_general_protection);
     idt.segment_not_present.set_handler_fn(except_seg_not_present);
     idt[32].set_handler_fn(crate::mem::tlb::int_shootdown_wrapper);
@@ -118,7 +118,7 @@ extern "x86-interrupt" fn except_page(sf: InterruptStackFrame, e: PageFaultError
             core::mem::forget(fix);
             return;
         } else {
-            if let Ok(()) = crate::mem::frame_attribute_table::ATTRIBUTE_TABLE_HEAD.fixup(Cr2::read()) {
+            if let Ok(()) = crate::mem::frame_attribute_table::ATTRIBUTE_TABLE_HEAD.fixup(Cr2::read().unwrap()) {
                 return;
             }
         }
@@ -127,7 +127,7 @@ extern "x86-interrupt" fn except_page(sf: InterruptStackFrame, e: PageFaultError
 
     println!("*EXCEPTION: PAGE FAULT*\n");
 
-    let fault_addr = Cr2::read();
+    let fault_addr = Cr2::read().unwrap();
     println!("At address {:?}", Cr2::read());
 
     if (fault_addr > sf.stack_pointer) && fault_addr < (sf.stack_pointer + 4096u64) {

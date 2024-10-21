@@ -16,7 +16,7 @@ lazy_static! {
 
             // SAFETY: This is safe STACK is only accessed by the bsp
             let stack_start = unsafe {VirtAddr::from_ptr(core::ptr::addr_of!(STACK)) };
-            let stack_end = stack_start + STACK_SIZE;
+            let stack_end = stack_start + STACK_SIZE as u64;
             stack_end
         };
         tss
@@ -28,11 +28,11 @@ use x86_64::structures::gdt::{Descriptor, GlobalDescriptorTable, SegmentSelector
 lazy_static! {
     static ref GDT: (GlobalDescriptorTable, Selectors) = {
         let mut gdt = GlobalDescriptorTable::new();
-        let code_selector = gdt.add_entry(Descriptor::kernel_code_segment());
-        let tss_selector = gdt.add_entry(Descriptor::tss_segment(&TSS));
+        let code_selector = gdt.append(Descriptor::kernel_code_segment());
+        let tss_selector = gdt.append(Descriptor::tss_segment(&TSS));
 
         //needed after bootloader 0.10
-        let data_selector = gdt.add_entry(Descriptor::kernel_data_segment());
+        let data_selector = gdt.append(Descriptor::kernel_data_segment());
         (
             gdt,
             Selectors {
@@ -51,7 +51,7 @@ pub(crate) fn new_tss() -> TaskStateSegment {
         let mut b: alloc::vec::Vec<u8> = alloc::vec::Vec::new();
         b.resize(STACK_SIZE,0);
         let l = b.leak();
-        VirtAddr::from_ptr(&l[0]) + STACK_SIZE
+        VirtAddr::from_ptr(&l[0]) + STACK_SIZE as u64
     };
     tss
 }

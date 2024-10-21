@@ -43,7 +43,7 @@ pub(super) unsafe fn start_mp(tls_data: *const u8, tls_file_size: usize, tls_dat
     let cache = StartupCache::new(addr);
     // This is safe, this will never be re-written
     // GDT must be in the trampoline region
-    let data_region = (init_gdt + &*tramp_box as *const _ as usize).as_mut_ptr::<TrampolineData>();
+    let data_region = (init_gdt + &*tramp_box as *const _ as u64).as_mut_ptr::<TrampolineData>();
     // clear data section
     tramp_box[init_gdt.as_u64() as usize..].fill_with(|| 0);
 
@@ -233,10 +233,10 @@ impl StartupCache {
             pm_code |= offset_code;
 
             // assertions are for my own sanity
-            let pmc = gdt.add_entry(Descriptor::UserSegment(pm_code.bits())).0;
-            let pmd = gdt.add_entry(Descriptor::UserSegment(pm_data.bits())).0;
-            let kc = gdt.add_entry(Descriptor::kernel_code_segment()).0;
-            let kd = gdt.add_entry(Descriptor::kernel_data_segment()).0;
+            let pmc = gdt.append(Descriptor::UserSegment(pm_code.bits())).0;
+            let pmd = gdt.append(Descriptor::UserSegment(pm_data.bits())).0;
+            let kc = gdt.append(Descriptor::kernel_code_segment()).0;
+            let kd = gdt.append(Descriptor::kernel_data_segment()).0;
             debug_assert_eq!(pmc, 8);
             debug_assert_eq!(pmd, 16);
             debug_assert_eq!(kc, 24);
@@ -288,11 +288,11 @@ fn long_mode_init() -> ! {
     // prevent the compiler from dropping the GDT and TSS because it must be present until the CPU is stopped.
     // ManuallyDrop keeps it static on the stack (because this frame is never dropped).
     let mut gdt = core::mem::ManuallyDrop::new(gdt::GlobalDescriptorTable::new());
-    let c = gdt.add_entry(gdt::Descriptor::kernel_code_segment());
-    let d = gdt.add_entry(gdt::Descriptor::kernel_data_segment());
+    let c = gdt.append(gdt::Descriptor::kernel_code_segment());
+    let d = gdt.append(gdt::Descriptor::kernel_data_segment());
     let tss = core::mem::ManuallyDrop::new(crate::gdt::new_tss());
     // SAFETY: tss is not dropped, before `run_exec()` therefore it is static enough.
-    let tss_entry = gdt.add_entry(gdt::Descriptor::tss_segment(unsafe { &*(&*tss as *const x86_64::structures::tss::TaskStateSegment) }));
+    let tss_entry = gdt.append(gdt::Descriptor::tss_segment(unsafe { &*(&*tss as *const x86_64::structures::tss::TaskStateSegment) }));
 
     // SAFETY: This points to a valid TSS and the data is valid
     unsafe {

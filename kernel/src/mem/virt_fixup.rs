@@ -38,7 +38,7 @@ pub fn remove_fixup_region<T>(address: *const T) -> Result<(),()> {
 }
 
 pub(crate) fn query_fixup<'a>() -> Option<CachedFixup<'a>> {
-    let addr = x86_64::registers::control::Cr2::read();
+    let addr = x86_64::registers::control::Cr2::read().unwrap();
     KERNEL_FIXUP_LIST.try_fixup(addr)
 }
 
@@ -112,13 +112,13 @@ impl FixupList {
 
 impl PartialEq<FixupEntry> for VirtAddr {
     fn eq(&self, other: &FixupEntry) -> bool {
-        *self >= other.address && *self <= other.address + other.len
+        *self >= other.address && *self <= other.address + other.len as u64
     }
 }
 
 impl PartialOrd<FixupEntry> for VirtAddr {
     fn partial_cmp(&self, other: &FixupEntry) -> Option<Ordering> {
-        if *self >= other.address + other.len {
+        if *self >= other.address + other.len as u64 {
             Some(Ordering::Greater)
         } else if *self < other.address {
             Some(Ordering::Less)
@@ -151,15 +151,15 @@ impl FixupEntry {
 
 impl PartialEq for FixupEntry {
     fn eq(&self, other: &FixupEntry) -> bool {
-        self.address <= other.address + other.len && other.address <= self.address + self.len
+        self.address <= other.address + other.len as u64 && other.address <= self.address + self.len as u64
     }
 }
 
 impl PartialOrd for FixupEntry {
     fn partial_cmp(&self, other: &FixupEntry) -> Option<Ordering> {
-        if self.address <= other.address + other.len {
+        if self.address <= other.address + other.len as u64 {
             Some(Ordering::Greater)
-        } else if other.address <= self.address + self.len {
+        } else if other.address <= self.address + self.len as u64 {
             Some(Ordering::Less)
         } else {
             Some(Ordering::Equal)
@@ -170,9 +170,9 @@ impl PartialOrd for FixupEntry {
 impl Eq for FixupEntry {}
 impl Ord for FixupEntry {
     fn cmp(&self, other: &FixupEntry) -> Ordering {
-        if self.address <= other.address + other.len {
+        if self.address <= other.address + other.len as u64 {
             Ordering::Greater
-        } else if other.address <= self.address + self.len {
+        } else if other.address <= self.address + self.len as u64 {
             Ordering::Less
         } else {
             Ordering::Equal

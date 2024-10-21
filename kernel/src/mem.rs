@@ -268,7 +268,7 @@ unsafe impl FrameAllocator<Size4KiB> for VeryUnsafeFrameAllocator {
         let frame: PhysFrame<Size4KiB> = PhysFrame::containing_address(
             self.addr
                 .expect("VeryUnsafeFrameAllocator failed addr not set")
-                + (4096 * self.advanced),
+                + (4096 * self.advanced) as u64,
         );
         self.advanced += 1;
         Some(frame)
