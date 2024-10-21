@@ -1,6 +1,5 @@
 #![no_std]
 #![cfg_attr(test, no_main)]
-#![feature(const_mut_refs)]
 #![feature(custom_test_frameworks)]
 #![test_runner(test_runner)]
 #![reexport_test_harness_main = "test_main"]
