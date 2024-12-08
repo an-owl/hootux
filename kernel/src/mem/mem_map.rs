@@ -137,7 +137,7 @@ where
 
 pub(crate) unsafe fn unmap_and_free(addr: VirtAddr) -> Result<(),()>{
 
-    let page = Page::<x86_64::structures::paging::Size4KiB>::containing_address(addr);
+    let page = Page::<Size4KiB>::containing_address(addr);
 
     let free = |entry: x86_64::structures::paging::page_table::PageTableEntry,len| {
         if entry.flags().contains(frame_attribute_table::FRAME_ATTR_ENTRY_FLAG) {
@@ -164,6 +164,10 @@ pub(crate) unsafe fn unmap_and_free(addr: VirtAddr) -> Result<(),()>{
     // We need to determine the size of the frame before we free it.
     match get_entry(page) {
         Ok(e) => {
+            // Only necessary for 4k pages higher ones will return NotMapped
+            if !e.flags().contains(PageTableFlags::PRESENT) {
+                return Err(())
+            }
             unmap_page(Page::<Size4KiB>::containing_address(addr));
             free(e,0x1000);
         },
@@ -175,6 +179,7 @@ pub(crate) unsafe fn unmap_and_free(addr: VirtAddr) -> Result<(),()>{
                 Ok(e) => {
                     unmap_page(Page::<Size2MiB>::containing_address(addr));
                     free(e,0x200000);
+
                 },
                 // SAFETY: The 4K NotMapped arm will be taken not this one.
                 Err(GetEntryErr::NotMapped) => unsafe { core::hint::unreachable_unchecked() },
@@ -186,7 +191,7 @@ pub(crate) unsafe fn unmap_and_free(addr: VirtAddr) -> Result<(),()>{
                 }
             }
         }
-    };
+    }
     Ok(())
 }
 
