@@ -80,9 +80,9 @@ impl RecursiveLock {
         // SAFETY: This is only accessed here and in Self::drop()
         // References are never leaked
         if unsafe { core::mem::replace(&mut RECURSIVE, true) } {
-            None
-        } else {
             Some(RecursiveLock)
+        } else {
+            None
         }
     }
 }
