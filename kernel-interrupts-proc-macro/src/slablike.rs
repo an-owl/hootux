@@ -1,4 +1,3 @@
-use std::str::FromStr;
 use proc_macro2::Span;
 use quote::ToTokens;
 
@@ -63,10 +62,13 @@ impl From<SlabLikeParser> for proc_macro2::TokenStream {
             );
         let pt_ident = pt.ident.clone();
 
-        #[allow(non_upper_case_globals)] // pt_ident will not be all uppercase
+
         let backing_static = quote::format_ident!("__KERNEL_PROC_MACRO_STATIC_SLABLIKE_ALLOCATOR_FOR_{}", pt_ident);
 
         quote::quote! {
+
+            #[doc(hidden)]
+            #[allow(non_upper_case_globals)] // pt_ident will not be all uppercase
             static #backing_static: ::slablike::SlabLike< #backing_alloc, #alloc_ty, #slab_size > = ::slablike::SlabLike::new( #construct );
 
             #pt
@@ -83,7 +85,11 @@ impl From<SlabLikeParser> for proc_macro2::TokenStream {
 
             impl #pt_ident {
                 fn clean(&self, size: usize) -> ::core::result::Result<usize,usize> {
-                    #backing_static.clean(size)
+                    #backing_static .free_slabs(size)
+                }
+
+                fn snaitize(&self) {
+                    #backing_static .sanitize()
                 }
             }
         }
