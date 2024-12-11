@@ -55,3 +55,26 @@ pub fn multiboot2_header(input: TokenStream) -> TokenStream {
     let p: multiboot2::MultiBootHeaderParser = syn::parse_macro_input!(input);
     p.into()
 }
+
+mod slablike;
+
+/// Uses the syntax
+/// `$st:struct_definition  $alloc_ty:path $size:literal $($backing_alloc_path:path , $backing_alloc_constructor:expr)?`
+///
+/// This defines the struct `$st` verbatim, implementing [core::alloc::Allocator] using a
+/// static SlabLike allocator. This is intended to minimize the size of smart pointers where their
+/// size is important.
+///
+/// When `$backing_alloc_path` and `$backing_alloc_constructor` are not given this will fall back to [alloc::alloc::Global]
+///
+/// `$alloc_ty` and `$size` are passed to the SlabLike allocator as the configured type and slab size.
+/// `$size` will always be [usize] regardless of the suffix given.
+///
+/// A `clean` method will be implemented for the struct which is a call wrapper to `slablike::SlabLike::clean`
+#[proc_macro]
+pub fn local_slab_allocator(input: TokenStream) -> TokenStream {
+    let p: slablike::SlabLikeParser = syn::parse_macro_input!(input);
+    let ts2: proc_macro2::TokenStream = p.into();
+    ts2.into()
+}
+
