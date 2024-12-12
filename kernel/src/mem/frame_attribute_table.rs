@@ -1,6 +1,6 @@
 //! This module handles "Frame attributes".
 //!
-//! Frame attributes are optional metadata about physical frame entries, this includes how may times
+//! Frame attributes are optional metadata about physical frame entries, this includes how many times
 //! a frame used ant what it may be used for.
 //! This is required for safely aliasing physical frames, which may be required for DMA operations.
 //!
