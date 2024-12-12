@@ -46,7 +46,7 @@ pub static ATTRIBUTE_TABLE_HEAD: FrameAttributeTable = FrameAttributeTable::new(
 pub struct FrameAttributeTable {
     // this can probably avoid spinning using rwlock but accesses should be fast as hell anyway
     // It's likely that if only 2 CPUs access this it will never spin more than once.
-    table: spin::Mutex<Option<&'static mut [Option<Arc<FrameAttributesInner>>]>>,
+    table: spin::Mutex<Option<&'static mut [Option<Arc<FrameAttributesInner,FaeAlloc>>]>>,
 }
 
 impl FrameAttributeTable {
@@ -91,7 +91,7 @@ impl FrameAttributeTable {
     }
 
     /// Performs an `invlpg` on the required index, returns the index for the address.
-    fn select(&self, frame: PhysAddr, bank: &[Option<Arc<FrameAttributesInner>>]) -> usize {
+    fn select(&self, frame: PhysAddr, bank: &[Option<Arc<FrameAttributesInner,FaeAlloc>>]) -> usize {
         let index = frame.as_u64() as usize >> 12;
 
         // This causes all accesses to be a TLB miss, however this *should* be made up for by the reduced lookup complexity
@@ -114,7 +114,7 @@ impl FrameAttributeTable {
         self.rm_frame_entry_inner(frame,table);
     }
 
-    unsafe fn rm_frame_entry_inner(&self, frame: PhysAddr, table: &mut [Option<Arc<FrameAttributesInner>>]) {
+    unsafe fn rm_frame_entry_inner(&self, frame: PhysAddr, table: &mut [Option<Arc<FrameAttributesInner,FaeAlloc>>]) {
         let i = self.select(frame, table);
 
         let _ = table[i].take();
