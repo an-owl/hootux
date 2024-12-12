@@ -134,10 +134,13 @@ impl FrameAttributeTable {
 
     /// Performs the operation specified by `op` on `tgt`. See [FatOperation] for more information.
     ///
-    /// A pointer will be returned depending on the value of `op`. If `op` is constant then the
-    /// caller may safely `unwrap()` the returned value.
-    /// This fn may return a `*const T`, the caller may choose to cast this to a `*mut T`.
-    /// This is not done automatically because this fn does not know whether the returned pointer can be mutable.
+    /// This fn is guaranteed to either return `Some(_)` or `None` depending on the value of `op`.
+    /// The `Some` variant contains a [alloc::boxed::Box] which contains the relevant data.
+    /// The allocator of this box is [crate::alloc_interface::VirtAlloc] which will safely handle
+    /// freeing memory once it is dropped.
+    ///
+    /// When this is used to alias memory the caller should make a best effort to call again using
+    /// [FatOperation::Reclaim] on the original pointer.
     ///
     /// # Safety
     ///
@@ -145,7 +148,7 @@ impl FrameAttributeTable {
     // This panics because returning Err(_) requires us to undo all changes from the op, which where not preserved.
     // having `tgt` partially updated can result in UB if other CPUs access `tgt`. This also locks
     // the inner mutex longer than I'd like.
-    pub unsafe fn do_op<T: ?Sized>(&self, tgt: *const T, op: FatOperation) -> Option<*const T> {
+    pub unsafe fn do_op<T: ?Sized>(&self, tgt: *const T, op: FatOperation) -> Option<alloc::boxed::Box<T,crate::alloc_interface::VirtAlloc>> {
         // SAFETY: This is kind of safe. If the size >isize then the slice will overflow into a non-canonical address range.
         // The kernel should not allow slices like these to exist by normal means.
         // If `tgt` does not do this that is a problem with whatever constructed `tgt`, not this.
@@ -181,12 +184,11 @@ impl FrameAttributeTable {
 
 
             if let FatOperation::NewFae{..} | FatOperation::NewAlias {..} = op {
-                use x86_64::structures::paging::Page;
-                use x86_64::structures::paging::{Size4KiB, Size2MiB, Size1GiB};
+                use x86_64::structures::paging::{Size4KiB, Size2MiB, Size1GiB, Page};
 
                 let mut new_flags = entry.flags() | FRAME_ATTR_ENTRY_FLAG;
 
-                new_flags.set(x86_64::structures::paging::PageTableFlags::WRITABLE, op.initial_virt_writable() );
+                new_flags.set(x86_64::structures::paging::PageTableFlags::WRITABLE, false);
                 // unwrap because there is no reason these can throw an error
                 match size {
                     0x1000 => crate::mem::mem_map::set_flags(Page::<Size4KiB>::containing_address(addr), new_flags).unwrap(),
@@ -204,9 +206,21 @@ impl FrameAttributeTable {
             };
             // Fetch the FAE and operate on it.
             let index = entry.addr().as_u64() as usize >> 12;
-            if op.operate(&mut table[index], entry.addr()) {
-                // SAFETY: This is safe, operate() determines if this should be called.
-                self.rm_frame_entry_inner(entry.addr(), table);
+            match op.operate(&mut table[index], entry.addr()) {
+                OperationIncomplete::Complete => {}
+                OperationIncomplete::RemoveFAE => self.rm_frame_entry_inner(entry.addr(), table), // SAFETY: This is safe, operate() determines if this should be called.
+                OperationIncomplete::ClearPageProperties => {
+                    use x86_64::structures::paging::{Size4KiB, Size2MiB, Size1GiB, Page};
+                    let mut nflags = entry.flags();
+                    nflags.set(x86_64::structures::paging::PageTableFlags::WRITABLE, true);
+                    nflags.remove(FRAME_ATTR_ENTRY_FLAG);
+                    match size {
+                        0x1000 => crate::mem::mem_map::set_flags(Page::<Size4KiB>::containing_address(addr), nflags).unwrap(),
+                        0x200000 => crate::mem::mem_map::set_flags(Page::<Size2MiB>::containing_address(addr), nflags).unwrap(),
+                        0x40000000 => crate::mem::mem_map::set_flags(Page::<Size1GiB>::containing_address(addr), nflags).unwrap(),
+                        _ => panic!("Illegal page size"),
+                    }
+                }
             }
 
             // if the op require mapping a region then that's what we do.
@@ -247,7 +261,11 @@ impl FrameAttributeTable {
         // Because T is ?Sized, this copies the metadata of `tgt` onto `addr`
         virt.map(|addr| {
             unsafe {
-                addr.as_ptr().with_metadata_of(tgt).cast_const()
+                let offset = tgt.cast::<u8>() as usize & (crate::mem::PAGE_SIZE-1);
+
+                // addr may not be aligned correctly
+                let ptr = addr.as_ptr().with_metadata_of(tgt).byte_add(offset);
+                alloc::boxed::Box::from_raw_in(ptr,crate::alloc_interface::VirtAlloc)
             }
         })
     }
@@ -262,7 +280,8 @@ impl FrameAttributeTable {
         let table = l.as_mut().unwrap();
         let index = self.select(addr, table);
 
-        op.operate(&mut table[index], addr);
+        // We cant complete incomplete ops from here
+        let _ = op.operate(&mut table[index], addr);
 
         let fae = table[index].as_ref().and_then(|e| { Some(e.clone()) });
         Some(FrameAttributes { inner: fae?, addr })
@@ -361,15 +380,12 @@ pub enum FatOperation {
     ///
     /// To enable COW set the [AttributeFlags::COPY_ON_WRITE] bit.
     ///
+    /// FatOperations should be configured with the most restrictive configuration possible for
+    /// the required operation.
+    ///
     /// This operation will return a pointer to the memory alias.
     NewAlias {
         attributes: AttributeFlags,
-
-        /// When this is true any pages this operation is used on this must have its writable bit
-        /// set to this value.
-        ///
-        /// This must be set to `true` to use as copy on write.
-        initial_writable: bool,
     },
 
     /// Constructs a new FAE with the given attributes.
@@ -383,12 +399,6 @@ pub enum FatOperation {
         /// specify the number of times this frame is used. This field is ignored when this
         /// operation is used to update FAE flags.
         alias_count: usize,
-
-        /// When this is true any pages this operation is used on this must have its writable bit
-        /// set to this value.
-        ///
-        /// This must be set to `true` to use as copy on write.
-        initial_writable: bool,
     },
 
     /// Increments the alias count by one.
@@ -425,12 +435,12 @@ impl FatOperation {
 
     /// Predefined op to configure memory as Copy-On-Write
     // SAFETY: 6 is COPY_ON_FAULT | FIXUP_WRITABLE
-    pub const INIT_COW: Self = Self::NewAlias { attributes: AttributeFlags::from_bits_retain(6), initial_writable: false };
+    pub const INIT_COW: Self = Self::NewAlias { attributes: AttributeFlags::from_bits_retain(6) };
 
     /// Performs the requested operation for the given address.
     ///
-    /// Returns whether the caller should attempt to remove the entry.
-    fn operate(&self, fae: &mut Option<Arc<FrameAttributesInner>>, phys_addr: PhysAddr) -> bool {
+    /// Returns an action that the caller should complete.
+    fn operate(&self, fae: &mut Option<Arc<FrameAttributesInner,FaeAlloc>>, phys_addr: PhysAddr) -> OperationIncomplete {
         match self {
             FatOperation::NewAlias { attributes, .. } => {
                 match fae.as_mut() {
@@ -438,7 +448,7 @@ impl FatOperation {
                         d.flags.store(*attributes, Ordering::Relaxed);
                         d.alias_count.fetch_add(1, Ordering::Relaxed);
                     }
-                    None => *fae = Some(Arc::new(FrameAttributesInner { alias_count: Atomic::new(2), flags: Atomic::new(*attributes) })),
+                    None => *fae = Some(Arc::new_in(FrameAttributesInner { alias_count: Atomic::new(2), flags: Atomic::new(*attributes) },FaeAlloc::new())),
                 }
             }
 
@@ -446,7 +456,7 @@ impl FatOperation {
                 match fae.as_mut() {
                     Some(d) if *fallible => d.flags.store(*attributes, Ordering::Relaxed),
                     Some(_) if !*fallible => panic!("New-Frame-Attribute-Entry operation failed entry for {phys_addr:?} is present operation is infallible"),
-                    None => *fae = Some(Arc::new(FrameAttributesInner { alias_count: Atomic::new(*alias_count), flags: Atomic::new(*attributes) })),
+                    None => *fae = Some(Arc::new_in(FrameAttributesInner { alias_count: Atomic::new(*alias_count), flags: Atomic::new(*attributes) },FaeAlloc::new())),
                     // SAFETY: `if true | false` seems pretty exhaustive to me.
                     _ => unsafe { core::hint::unreachable_unchecked() }
                 }
@@ -457,20 +467,24 @@ impl FatOperation {
             }
             FatOperation::UnAlias => {
                 let fae_ref = fae.as_mut().expect("No FAE present for UnAlias operation");
-                if !fae_ref.flags.load(Ordering::Relaxed).contains(AttributeFlags::NO_DROP) && fae_ref.alias_count.fetch_sub(1, Ordering::Relaxed) == 1 { // 1 - 1 == 0
+                // wierd maths here, fetch sub gets the original value.
+                // If the original value is 2 then new is 1, 2 is the highest value below 3.
+                // So if the old value is below 3 then the new count must be either 1 or 0.
+                if !fae_ref.flags.load(Ordering::Relaxed).contains(AttributeFlags::NO_DROP) && fae_ref.alias_count.fetch_sub(1, Ordering::Relaxed) < 3 {
                     FrameAttributes { inner: fae_ref.clone(), addr: phys_addr };
-                    return true
+                    return OperationIncomplete::RemoveFAE
                 }
             }
-            FatOperation::Reclaim =>  {
+            FatOperation::Reclaim => {
                 if let Some(fae_ref) = fae {
                     if fae_ref.alias_count.load(Ordering::Relaxed) <= 1 {
                         fae.take();
+                        return OperationIncomplete::ClearPageProperties
                     }
                 }
             }
         }
-        false
+        OperationIncomplete::Complete
     }
 
     /// Performs the op defined by `self` on the targeted FAE.
@@ -479,7 +493,8 @@ impl FatOperation {
     ///
     /// See safety sections for [Self] variants.
     pub unsafe fn do_op(&self, fae: FrameAttributes ) {
-        self.operate(&mut Some(fae.inner),fae.addr);
+        // we ditch the extra info here, this should not be used by anything that may need them
+        let _ = self.operate(&mut Some(fae.inner),fae.addr);
     }
 
     /// Does this operation require returning a pointer.
@@ -489,20 +504,13 @@ impl FatOperation {
             _ => false
         }
     }
+}
 
-    /// Indicates the updated value of the initial page-entry writable bit.
-    ///
-    /// # Panics
-    ///
-    /// This will panic if called when `self` is no [Self::NewAlias] or [Self::NewFae]
-    fn initial_virt_writable(&self) -> bool {
-        match self {
-            FatOperation::NewAlias { initial_writable, ..} | FatOperation::NewFae { initial_writable, .. } => {
-                *initial_writable
-            }
-            _ => panic!(),
-        }
-    }
+#[must_use]
+enum OperationIncomplete {
+    Complete,
+    RemoveFAE,
+    ClearPageProperties,
 }
 
 struct FrameAttributesInner {
@@ -564,7 +572,7 @@ impl AttributeFlags {
 }
 
 pub struct FrameAttributes {
-    inner: Arc<FrameAttributesInner>,
+    inner: Arc<FrameAttributesInner, FaeAlloc>,
     addr: PhysAddr,
 }
 
@@ -590,7 +598,12 @@ impl FrameAttributes {
         self.inner.alias_count.fetch_add(1,Ordering::Relaxed);
     }
 
-    fn de_alias(&self) {
+    /// Decrements the alias count by one.
+    ///
+    /// # Safety
+    ///
+    /// The caller must ensure that the frame is aliased by the new value of the alias count.
+    unsafe fn de_alias(&self) {
         self.inner.alias_count.fetch_sub(1,Ordering::Relaxed);
     }
 

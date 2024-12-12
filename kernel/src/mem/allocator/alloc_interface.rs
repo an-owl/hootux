@@ -252,12 +252,23 @@ unsafe impl Allocator for DmaAlloc {
 
 /// Allocates virtual memory without allocating physical memory to it.
 ///
+/// This allocator will always return page aligned addresses. When [Allocator::deallocate] is called
+/// the given pointer will be aligned down to [mem::PAGE_SIZE], and all pages within the described
+/// region will be [mem::mem_map::unmap_and_free]'d.
+///
 /// This implements [Allocator] however only [Allocator::allocate], [Allocator::allocate_zeroed]
 /// and [Allocator::by_ref] may be called, all other methods will panic.
 /// This is behaviour is because memory allocated by this allocator is inaccessible until it's
 /// explicitly mapped to physical memory, these methods are likely to cause page faults, which are
 /// harder to debug than a panic.
 pub struct VirtAlloc;
+
+impl VirtAlloc {
+    pub fn alloc_boxed<T>() -> Result<alloc::boxed::Box<core::mem::MaybeUninit<T>, Self>, AllocError> {
+        let ptr = Self.allocate(Layout::new::<T>())?;
+        Ok(unsafe { alloc::boxed::Box::from_raw_in(ptr.as_ptr().cast(), Self) })
+    }
+}
 
 unsafe impl Allocator for VirtAlloc {
     fn allocate(&self, layout: Layout) -> Result<NonNull<[u8]>, AllocError> {
@@ -268,8 +279,16 @@ unsafe impl Allocator for VirtAlloc {
         panic!("Not allowed")
     }
 
-    unsafe fn deallocate(&self, ptr: NonNull<u8>, layout: Layout) {
-        super::COMBINED_ALLOCATOR.lock().virt_deallocate(ptr, layout)
+    unsafe fn deallocate(&self, mut ptr: NonNull<u8>, layout: Layout) {
+        // pointer may not be aligned so we align it down
+        let off = ptr.as_ptr() as usize & (mem::PAGE_SIZE-1);
+        ptr = ptr.byte_sub(off);
+
+        super::COMBINED_ALLOCATOR.lock().virt_deallocate(ptr, layout);
+        for i in ptr.as_ptr() as usize .. ptr.as_ptr() as usize + layout.size() {
+            let addr = VirtAddr::from_ptr(i as *const u8);
+            let _ = mem::mem_map::unmap_and_free(addr); // this is likely to fail, we just want to ensure that the memory isn't mapped
+        }
     }
 
     unsafe fn grow(&self, _ptr: NonNull<u8>, _old_layout: Layout, _new_layout: Layout) -> Result<NonNull<[u8]>, AllocError> {
