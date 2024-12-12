@@ -607,3 +607,18 @@ impl FrameAttributes {
         self.inner.flags.load(Ordering::Relaxed)
     }
 }
+
+// _sealed prevents
+kernel_proc_macro::local_slab_allocator!(
+    #[derive(Copy, Clone)]
+    pub struct FaeAlloc {_sealed: ()} // sealed prevents this from being publicly constructed and polluting our allocator.
+    FrameAttributesInner 4096
+);
+
+impl FaeAlloc {
+    fn new() -> Self {
+        Self {
+            _sealed: (),
+        }
+    }
+}
