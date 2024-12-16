@@ -18,7 +18,8 @@
 #![feature(layout_for_ptr)]
 #![feature(set_ptr_value)]
 
-
+#![allow(incomplete_features)]
+#![feature(generic_const_exprs)] // https://github.com/rust-lang/rust/issues/134044#issuecomment-2526396815 for why this is here
 extern crate alloc;
 pub use mem::allocator::alloc_interface;
 

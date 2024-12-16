@@ -2,6 +2,15 @@ use core::cmp::Ordering;
 use core::fmt::{Debug, Display};
 use core::ops::{Add, BitAnd, BitOr, Not, Sub};
 
+
+const fn assert_wf_bool(value: bool) -> usize {
+    if value {
+        1
+    } else {
+        panic!()
+    }
+}
+
 /// Contains a free list which is used to store large regions of memory in an optimized layout.
 ///
 /// Allocations of the size which are expected to hit this struct are expected to be infrequent.
@@ -10,12 +19,17 @@ use core::ops::{Add, BitAnd, BitOr, Not, Sub};
 /// BS must always be a power of two
 // BS is u32 because u16 is too small. If (god knows why) an AllocAddressType smaller than u32 is
 // needed this entire struct sound be excluded from compilation
+#[allow(private_bounds)]
 #[derive(Debug)]
-pub(super) struct HighOrderAlloc<T: AllocAddressType, const BS: u32> {
+pub(super) struct HighOrderAlloc<T: AllocAddressType, const BS: u32>
+    where
+    [(); assert_wf_bool(BS.is_power_of_two())]:
+{
     free_list: alloc::vec::Vec<FreeMem<T, BS>>,
 }
 
-impl<T: AllocAddressType, const BS: u32> HighOrderAlloc<T, BS> {
+#[allow(private_bounds)]
+impl<T: AllocAddressType, const BS: u32> HighOrderAlloc<T, BS> where [(); assert_wf_bool(BS.is_power_of_two())]: {
     pub(super) const fn new() -> Self {
         Self {
             free_list: alloc::vec::Vec::new(),
@@ -139,7 +153,6 @@ impl<T: AllocAddressType, const BS: u32> FreeMem<T, BS> {
     pub(super) fn new(addr: T, len: T) -> Option<Self> {
         // ensures that BS is always pow2.
         // I can't really put this anywhere else.
-        const { assert!(BS.is_power_of_two()) };
         let min = T::from_u32(BS);
 
         // check size/align
