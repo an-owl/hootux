@@ -1,5 +1,6 @@
 use alloc::boxed::Box;
 use alloc::vec::Vec;
+use core::alloc::Allocator;
 use core::marker::PhantomData;
 
 pub struct DmaGuard<T,C: DmaTarget> {
@@ -14,7 +15,7 @@ impl<T,C: DmaTarget> DmaGuard<T,C> {
     }
 }
 
-impl<T> DmaGuard<T,Vec<T,_>> {
+impl<T, A: Allocator> DmaGuard<T,Vec<T, A>> {
     fn get_raw(&mut self) -> *mut [T] {
         let ptr = self.inner.as_mut_ptr();
         let elem_size = size_of::<T>();
@@ -22,8 +23,11 @@ impl<T> DmaGuard<T,Vec<T,_>> {
     }
 
     fn prd(&mut self) -> PhysicalRegionDescriber {
+        let t = &mut *self.inner;
+        let t = unsafe { core::slice::from_raw_parts_mut(t as *mut [T] as *mut u8, size_of_val(t)) as *mut [u8]};
+
         PhysicalRegionDescriber {
-            data: self.get_raw(),
+            data: t,
             next: 0,
             phantom: Default::default(),
         }
@@ -32,7 +36,7 @@ impl<T> DmaGuard<T,Vec<T,_>> {
 
 impl<T> DmaGuard<T,Box<T>> {
     pub fn get_raw(&mut self) -> *mut [u8] {
-        let ptr = self.inner.as_mut_ptr();
+        let ptr = self.inner.as_mut() as *mut T as *mut u8;
         let elem_size = size_of::<T>();
         unsafe { core::slice::from_raw_parts_mut(ptr, elem_size) }
     }
@@ -60,11 +64,11 @@ mod sealed {
 trait DmaTarget: sealed::Sealed {}
 
 
-impl sealed::Sealed for Vec<_,_> {}
-impl<T,A> DmaTarget for Vec<T,A> {}
+impl<T,A:Allocator> sealed::Sealed for Vec<T,A> {}
+impl<T,A:Allocator> DmaTarget for Vec<T,A> {}
 
-impl sealed::Sealed for Box<_,_> {}
-impl<T,A> DmaTarget for Box<T,A> {}
+impl<T,A:Allocator> sealed::Sealed for Box<T,A> {}
+impl<T,A:Allocator> DmaTarget for Box<T,A> {}
 
 pub struct PhysicalRegionDescriber<'a> {
     data: *mut [u8],
