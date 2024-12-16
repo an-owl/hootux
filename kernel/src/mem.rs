@@ -25,6 +25,7 @@ pub mod tlb;
 pub mod write_combining;
 pub mod virt_fixup;
 pub mod frame_attribute_table;
+pub mod dma;
 
 pub const PAGE_SIZE: usize = 4096;
 
