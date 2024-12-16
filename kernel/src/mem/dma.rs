@@ -113,7 +113,12 @@ impl Iterator for PhysicalRegionDescriber<'_> {
     }
 }
 
-struct PhysicalRegionDescription {
+/// Describes a contiguous region of physical memory.
+///
+/// This is used for building Scatter-Gather tables.
+pub struct PhysicalRegionDescription {
+    /// Starting physical address of the region.
     pub addr: u64,
+    /// Length in bytes.
     pub size: usize,
 }
