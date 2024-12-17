@@ -1,3 +1,7 @@
+//! # DON'T USE THIS
+//!
+//! This has bugs, there is a comment below this doc comment.
+//!
 //! This module handles "Frame attributes".
 //!
 //! Frame attributes are optional metadata about physical frame entries, this includes how many times
@@ -21,6 +25,20 @@
 //! usage with DMA. If multiple pages mutably alias a single frame when a DMA operation is requested
 //! we cannot set other aliases to read only. Mutably aliased frames must not be allowed to be used
 //! for DMA, we need some way to detect this and prevent it.
+
+/*
+ TODO: This needs a good look at to check for possible UB.
+ It contains components that initially interfered with other state machines, which cause recursive page faults.
+ I deemed these issued too difficult to fix, because it interfered at a deep enough level that
+ regressions were likely even if id did fix it.
+
+ - When a page is set as COW, to perform the COW may trigger COW again.
+ Specifically this can occur when allocating a new page.
+ As I mentioned though even if I fix this regressions are likely in the future.
+ - Write protection cannot be disabled because it can cause data races when copying.
+ - Multiple threads may attempt to COW the same page, this will cause UB.
+ This could be fixed by keeping a list of pages being copied, if yours is there then spin.
+ */
 
 /// Identifies the physical frame in the page table entry as using a frame attribute entry.
 ///
@@ -144,7 +162,12 @@ impl FrameAttributeTable {
     ///
     /// # Safety
     ///
-    /// See [FatOperation] for panic and safety information.
+    /// The caller must ensure that
+    ///
+    /// - `tgt` is owned by the caller
+    /// - `tgt` starts and ends at a page boundary. If `tgt` uses huge pages then it must be aligned to the huge page boundaries.
+    ///
+    /// See [FatOperation] for panic and safety information regarding operations.
     // This panics because returning Err(_) requires us to undo all changes from the op, which where not preserved.
     // having `tgt` partially updated can result in UB if other CPUs access `tgt`. This also locks
     // the inner mutex longer than I'd like.
@@ -273,6 +296,13 @@ impl FrameAttributeTable {
     /// Performs the given operation on the `addr` FAE. This will return the FAE for `addr` is one is present after the operation.
     ///
     /// This cannot be used to perform aliasing operations because it will not return an aliased pointer.
+    ///
+    /// # Safety
+    ///
+    /// The caller must ensure that
+    ///
+    /// - `tgt` is owned by the caller
+    /// - `tgt` starts and ends at a page boundary. If `tgt` uses huge pages then it must be aligned to the huge page boundaries.
     ///
     /// See [FatOperation] for more details.
     pub fn do_op_phys(&self, addr: PhysAddr, op: FatOperation) -> Option<FrameAttributes> {
@@ -508,8 +538,11 @@ impl FatOperation {
 
 #[must_use]
 enum OperationIncomplete {
+    /// Operation is fully competed and software may continue without any mor interaction
     Complete,
+    /// The FAE should be removed from the FAT
     RemoveFAE,
+    /// The target page should clear the FAE bit.
     ClearPageProperties,
 }
 
