@@ -3,13 +3,13 @@ use alloc::vec::Vec;
 use core::alloc::Allocator;
 use core::marker::PhantomData;
 
-pub struct DmaGuard<T,C: DmaTarget> {
+pub struct DmaGuard<T,C> {
     inner: C,
 
     _phantom: PhantomData<T>,
 }
 
-impl<T,C: DmaTarget> DmaGuard<T,C> {
+impl<T,C> DmaGuard<T,C> {
     pub fn unwrap(self) -> C {
         self.inner
     }
@@ -39,6 +39,34 @@ impl<T> DmaGuard<T,Box<T>> {
         let ptr = self.inner.as_mut() as *mut T as *mut u8;
         let elem_size = size_of::<T>();
         unsafe { core::slice::from_raw_parts_mut(ptr, elem_size) }
+    }
+
+    pub fn prd(&mut self) -> PhysicalRegionDescriber {
+        PhysicalRegionDescriber {
+            data: self.get_raw(),
+            next: 0,
+            phantom: Default::default(),
+        }
+    }
+}
+
+impl<T> DmaGuard<T, &mut T> {
+
+    /// Constructs self from a raw pointer.
+    /// This can be used to allow stack allocated buffers or buffers that are otherwise unsafe to use.
+    ///
+    /// # Safety
+    ///
+    /// The caller must ensure that DMA operations are completed before accessing the owner of `data`.
+    unsafe fn from_raw(data: &mut T) -> DmaGuard<T, &mut T> {
+        Self {
+            inner: data,
+            _phantom: Default::default(),
+        }
+    }
+
+    fn get_raw(&self) -> *mut [u8] {
+        unsafe { core::slice::from_raw_parts_mut(self.inner as *mut _, size_of_val(&*self.inner)) }
     }
 
     fn prd(&mut self) -> PhysicalRegionDescriber {
