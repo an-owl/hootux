@@ -22,7 +22,7 @@ impl<T, A: Allocator> DmaGuard<T,Vec<T, A>> {
         unsafe { core::slice::from_raw_parts_mut(ptr, elem_size * self.inner.len()) }
     }
 
-    fn prd(&mut self) -> PhysicalRegionDescriber {
+    pub fn prd(&mut self) -> PhysicalRegionDescriber {
         let t = &mut *self.inner;
         let t = unsafe { core::slice::from_raw_parts_mut(t as *mut [T] as *mut u8, size_of_val(t)) as *mut [u8]};
 
