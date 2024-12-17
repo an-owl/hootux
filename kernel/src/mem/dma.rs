@@ -183,3 +183,19 @@ struct TypedDmaGuardMetadata<T,C> {
     raw: core::mem::MaybeUninit<C>,
     _phantom: PhantomData<T>,
 }
+
+
+/// A type that implements DmaTarget can be used for DMA operations.
+///
+/// async DMA operations *must* use an implementor of DmaTarget to safely operate. The argument *must* be
+/// taken by value and not by reference, the future should return ownership of the DmaTarget when it completes.
+/// See [Embedonomicon](https://docs.rust-embedded.org/embedonomicon/dma.html) for details.
+///
+/// # Safety
+///
+/// An implementor must ensure that the DMA region returned by [Self::as_mut] is owned by `self` is treated as volatile.
+pub unsafe trait DmaTarget {
+    fn as_mut(&mut self) -> *mut [u8];
+
+    fn prd(&mut self) -> PhysicalRegionDescriber;
+}
