@@ -13,30 +13,6 @@ impl<T,C> DmaGuard<T,C> {
     pub fn unwrap(self) -> C {
         self.inner
     }
-
-
-    /// Splits self into generic metadata and untyped data which can be used for dynamic dispatch.
-    ///
-    /// The returned types can be combined using [Self::from_untyped] to recombine into self.
-    pub fn into_untyped(self) -> (UntypedDmaGuard,TypedDmaGuardMetadata<T,C>) {
-        (
-            UntypedDmaGuard {
-                data: self.get_raw(),
-            },
-            TypedDmaGuardMetadata {
-            raw: core::mem::MaybeUninit::new(self.inner),
-            _phantom: Default::default(),
-            }
-        )
-    }
-
-    /// Combines data and metadata into self, allowing the data to be unwrapped.
-    pub unsafe fn from_untyped(_ut: UntypedDmaGuard, meta: TypedDmaGuardMetadata<T,C>) -> Self {
-        Self {
-            inner: meta.raw.assume_init(),
-            _phantom: Default::default(),
-        }
-    }
 }
 
 unsafe impl<T, A: Allocator> DmaTarget for DmaGuard<T,Vec<T, A>> {
@@ -176,16 +152,6 @@ pub struct PhysicalRegionDescription {
     /// Length in bytes.
     pub size: usize,
 }
-
-struct UntypedDmaGuard {
-    data: *mut [u8],
-}
-
-struct TypedDmaGuardMetadata<T,C> {
-    raw: core::mem::MaybeUninit<C>,
-    _phantom: PhantomData<T>,
-}
-
 
 /// A type that implements DmaTarget can be used for DMA operations.
 ///
