@@ -39,14 +39,14 @@ impl<T,C> DmaGuard<T,C> {
     }
 }
 
-impl<T, A: Allocator> DmaGuard<T,Vec<T, A>> {
-    fn get_raw(&mut self) -> *mut [T] {
+unsafe impl<T, A: Allocator> DmaTarget for DmaGuard<T,Vec<T, A>> {
+    fn as_mut(&mut self) -> *mut [T] {
         let ptr = self.inner.as_mut_ptr();
         let elem_size = size_of::<T>();
         unsafe { core::slice::from_raw_parts_mut(ptr, elem_size * self.inner.len()) }
     }
 
-    pub fn prd(&mut self) -> PhysicalRegionDescriber {
+    fn prd(&mut self) -> PhysicalRegionDescriber {
         let t = &mut *self.inner;
         let t = unsafe { core::slice::from_raw_parts_mut(t as *mut [T] as *mut u8, size_of_val(t)) as *mut [u8]};
 
@@ -58,14 +58,14 @@ impl<T, A: Allocator> DmaGuard<T,Vec<T, A>> {
     }
 }
 
-impl<T> DmaGuard<T,Box<T>> {
-    pub fn get_raw(&mut self) -> *mut [u8] {
+unsafe impl<T> DmaTarget for DmaGuard<T,Box<T>> {
+    fn as_mut(&mut self) -> *mut [u8] {
         let ptr = self.inner.as_mut() as *mut T as *mut u8;
         let elem_size = size_of::<T>();
         unsafe { core::slice::from_raw_parts_mut(ptr, elem_size) }
     }
 
-    pub fn prd(&mut self) -> PhysicalRegionDescriber {
+    fn prd(&mut self) -> PhysicalRegionDescriber {
         PhysicalRegionDescriber {
             data: self.get_raw(),
             next: 0,
@@ -75,7 +75,6 @@ impl<T> DmaGuard<T,Box<T>> {
 }
 
 impl<T> DmaGuard<T, &mut T> {
-
     /// Constructs self from a raw pointer.
     /// This can be used to allow stack allocated buffers or buffers that are otherwise unsafe to use.
     ///
@@ -88,8 +87,11 @@ impl<T> DmaGuard<T, &mut T> {
             _phantom: Default::default(),
         }
     }
+}
 
-    fn get_raw(&self) -> *mut [u8] {
+unsafe impl<T> DmaTarget for DmaGuard<T, &mut T> {
+
+    fn as_mut(&self) -> *mut [u8] {
         unsafe { core::slice::from_raw_parts_mut(self.inner as *mut _, size_of_val(&*self.inner)) }
     }
 
