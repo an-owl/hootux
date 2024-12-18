@@ -84,7 +84,7 @@ impl PhysicalRegionDescriber<'_> {
     fn next_chunk(&mut self, index: usize) -> Option<u64> {
         // SAFETY: I think this is unsound
         let data = unsafe { &*self.data };
-        crate::mem::mem_map::translate_ptr(&data.get(index)?)
+        crate::mem::mem_map::translate_ptr(data.get(index)?)
     }
 }
 
