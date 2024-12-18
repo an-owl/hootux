@@ -16,48 +16,29 @@ impl<T,C> DmaGuard<T,C> {
 }
 
 unsafe impl<T, A: Allocator> DmaTarget for DmaGuard<T,Vec<T, A>> {
-    fn as_mut(&mut self) -> *mut [T] {
+    fn as_mut(&mut self) -> *mut [u8] {
         let ptr = self.inner.as_mut_ptr();
         let elem_size = size_of::<T>();
-        unsafe { core::slice::from_raw_parts_mut(ptr, elem_size * self.inner.len()) }
-    }
-
-    fn prd(&mut self) -> PhysicalRegionDescriber {
-        let t = &mut *self.inner;
-        let t = unsafe { core::slice::from_raw_parts_mut(t as *mut [T] as *mut u8, size_of_val(t)) as *mut [u8]};
-
-        PhysicalRegionDescriber {
-            data: t,
-            next: 0,
-            phantom: Default::default(),
-        }
+        unsafe { core::slice::from_raw_parts_mut(ptr as *mut _, elem_size * self.inner.len()) }
     }
 }
 
-unsafe impl<T> DmaTarget for DmaGuard<T,Box<T>> {
+unsafe impl<T, A: Allocator> DmaTarget for DmaGuard<T,Box<T,A>> {
     fn as_mut(&mut self) -> *mut [u8] {
         let ptr = self.inner.as_mut() as *mut T as *mut u8;
         let elem_size = size_of::<T>();
         unsafe { core::slice::from_raw_parts_mut(ptr, elem_size) }
     }
-
-    fn prd(&mut self) -> PhysicalRegionDescriber {
-        PhysicalRegionDescriber {
-            data: self.get_raw(),
-            next: 0,
-            phantom: Default::default(),
-        }
-    }
 }
 
-impl<T> DmaGuard<T, &mut T> {
+impl<'a, T> DmaGuard<T, &'a mut T> {
     /// Constructs self from a raw pointer.
     /// This can be used to allow stack allocated buffers or buffers that are otherwise unsafe to use.
     ///
     /// # Safety
     ///
     /// The caller must ensure that DMA operations are completed before accessing the owner of `data`.
-    unsafe fn from_raw(data: &mut T) -> DmaGuard<T, &mut T> {
+    pub unsafe fn from_raw(data: &'a mut T) -> DmaGuard<T, &'a mut T> {
         Self {
             inner: data,
             _phantom: Default::default(),
@@ -67,16 +48,8 @@ impl<T> DmaGuard<T, &mut T> {
 
 unsafe impl<T> DmaTarget for DmaGuard<T, &mut T> {
 
-    fn as_mut(&self) -> *mut [u8] {
-        unsafe { core::slice::from_raw_parts_mut(self.inner as *mut _, size_of_val(&*self.inner)) }
-    }
-
-    fn prd(&mut self) -> PhysicalRegionDescriber {
-        PhysicalRegionDescriber {
-            data: self.get_raw(),
-            next: 0,
-            phantom: Default::default(),
-        }
+    fn as_mut(&mut self) -> *mut [u8] {
+        unsafe { core::slice::from_raw_parts_mut(self.inner as *mut _ as *mut u8, size_of_val(&*self.inner)) }
     }
 }
 
@@ -165,5 +138,11 @@ pub struct PhysicalRegionDescription {
 pub unsafe trait DmaTarget {
     fn as_mut(&mut self) -> *mut [u8];
 
-    fn prd(&mut self) -> PhysicalRegionDescriber;
+    fn prd(&mut self) -> PhysicalRegionDescriber {
+        PhysicalRegionDescriber {
+            data: self.as_mut(),
+            next: 0,
+            phantom: Default::default(),
+        }
+    }
 }
