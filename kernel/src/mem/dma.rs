@@ -105,6 +105,9 @@ impl Iterator for PhysicalRegionDescriber<'_> {
             } else {
                 break
             }
+            if diff == data.len() {
+                break;
+            }
         }
 
         self.next += diff;
