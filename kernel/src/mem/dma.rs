@@ -53,7 +53,7 @@ unsafe impl<T> DmaTarget for DmaGuard<T, &mut T> {
     }
 }
 
-impl<T, C: DmaPointer> From<C> for DmaGuard<T, C> {
+impl<T, C: DmaPointer<T>> From<C> for DmaGuard<T, C> {
     fn from(inner: C) -> Self {
         DmaGuard { inner, _phantom: PhantomData }
     }
@@ -64,14 +64,14 @@ mod sealed {
     pub trait Sealed {}
 }
 
-trait DmaPointer: sealed::Sealed {}
+trait DmaPointer<T>: sealed::Sealed {}
 
 
 impl<T,A:Allocator> sealed::Sealed for Vec<T,A> {}
-impl<T,A:Allocator> DmaPointer for Vec<T,A> {}
+impl<T,A:Allocator> DmaPointer<T> for Vec<T,A> {}
 
 impl<T,A:Allocator> sealed::Sealed for Box<T,A> {}
-impl<T,A:Allocator> DmaPointer for Box<T,A> {}
+impl<T,A:Allocator> DmaPointer<T> for Box<T,A> {}
 
 pub struct PhysicalRegionDescriber<'a> {
     data: *mut [u8],
