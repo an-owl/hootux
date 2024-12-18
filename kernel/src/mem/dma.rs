@@ -138,6 +138,10 @@ pub struct PhysicalRegionDescription {
 pub unsafe trait DmaTarget {
     fn as_mut(&mut self) -> *mut [u8];
 
+    /// Returns a Physical region describer.
+    ///
+    /// This takes `self` as `&mut` but does not actually mutate `self` this is to prevent all
+    /// accesses to `self` while the PRD is alive.
     fn prd(&mut self) -> PhysicalRegionDescriber {
         PhysicalRegionDescriber {
             data: self.as_mut(),
