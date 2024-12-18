@@ -92,8 +92,8 @@ impl Iterator for PhysicalRegionDescriber<'_> {
     type Item = PhysicalRegionDescription;
 
     fn next(&mut self) -> Option<Self::Item> {
-        // SAFETY: I think this is unsound
         let base = self.next_chunk(self.next)?;
+        // SAFETY: I think this is unsound
         let data = unsafe { & *self.data };
 
         let mut diff = (base as usize & (super::PAGE_SIZE-1)).min(data.len()); // diff between next index and base
