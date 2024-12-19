@@ -21,6 +21,10 @@ unsafe impl<T, A: Allocator> DmaTarget for DmaGuard<T,Vec<T, A>> {
         let elem_size = size_of::<T>();
         unsafe { core::slice::from_raw_parts_mut(ptr as *mut _, elem_size * self.inner.len()) }
     }
+
+    fn into_any(self) -> Box<dyn core::any::Any> {
+        Box::new(self)
+    }
 }
 
 unsafe impl<T, A: Allocator> DmaTarget for DmaGuard<T,Box<T,A>> {
@@ -28,6 +32,10 @@ unsafe impl<T, A: Allocator> DmaTarget for DmaGuard<T,Box<T,A>> {
         let ptr = self.inner.as_mut() as *mut T as *mut u8;
         let elem_size = size_of::<T>();
         unsafe { core::slice::from_raw_parts_mut(ptr, elem_size) }
+    }
+
+    fn into_any(self) -> Box<dyn core::any::Any> {
+        Box::new(self)
     }
 }
 
@@ -50,6 +58,10 @@ unsafe impl<T> DmaTarget for DmaGuard<T, &mut T> {
 
     fn as_mut(&mut self) -> *mut [u8] {
         unsafe { core::slice::from_raw_parts_mut(self.inner as *mut _ as *mut u8, size_of_val(&*self.inner)) }
+    }
+
+    fn into_any(self) -> Box<dyn core::any::Any> {
+        Box::new(self)
     }
 }
 
@@ -157,4 +169,6 @@ pub unsafe trait DmaTarget {
             phantom: Default::default(),
         }
     }
+
+    fn into_any(self) -> Box<dyn core::any::Any>;
 }
