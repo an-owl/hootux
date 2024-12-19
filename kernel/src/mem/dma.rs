@@ -96,14 +96,18 @@ impl Iterator for PhysicalRegionDescriber<'_> {
         // SAFETY: I think this is unsound
         let data = unsafe { & *self.data };
 
-        let mut diff = (base as usize & (super::PAGE_SIZE-1)).min(data.len()); // diff between next index and base
+        let mut diff = super::PAGE_SIZE - (base as usize & (super::PAGE_SIZE-1)).min(data.len()); // diff between next index and base
 
         loop {
-            if self.next_chunk(diff + self.next)? - diff as u64 == diff as u64 {
-                diff += super::PAGE_SIZE;
-                diff = diff.min(data.len()); // make sure we dont overflow
-            } else {
-                break
+            match self.next_chunk(diff + self.next) {
+                // Ok(_) ensures that this is offset is valid
+                // match guard checks that addr is contiguous
+                Some(addr) if addr - base == diff as u64 => {
+                    diff += super::PAGE_SIZE;
+                    diff = diff.min(data.len()); // make sure we dont overflow
+                }
+                // When either of the above checks fail we have reached the end of the region
+                _ => break,
             }
             if diff == data.len() {
                 break;
