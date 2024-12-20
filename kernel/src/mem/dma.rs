@@ -15,7 +15,7 @@ impl<T,C> DmaGuard<T,C> {
     }
 }
 
-unsafe impl<T, A: Allocator> DmaTarget for DmaGuard<T,Vec<T, A>> {
+unsafe impl<T: 'static, A: Allocator + 'static> DmaTarget for DmaGuard<T,Vec<T, A>> {
     fn as_mut(&mut self) -> *mut [u8] {
         let ptr = self.inner.as_mut_ptr();
         let elem_size = size_of::<T>();
@@ -27,7 +27,7 @@ unsafe impl<T, A: Allocator> DmaTarget for DmaGuard<T,Vec<T, A>> {
     }
 }
 
-unsafe impl<T, A: Allocator> DmaTarget for DmaGuard<T,Box<T,A>> {
+unsafe impl<T: 'static, A: Allocator + 'static> DmaTarget for DmaGuard<T,Box<T,A>> {
     fn as_mut(&mut self) -> *mut [u8] {
         let ptr = self.inner.as_mut() as *mut T as *mut u8;
         let elem_size = size_of::<T>();
