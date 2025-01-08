@@ -246,3 +246,40 @@ pub unsafe trait DmaClaimable: DmaTarget {
     /// Returns `true` if self currently owned the buffer.
     fn query_owned(&self) -> bool;
 }
+
+
+#[test_case]
+#[cfg(test)]
+fn test_dmaguard() {
+    use crate::{alloc_interface,mem};
+    let mut b = alloc::vec::Vec::new_in(alloc_interface::DmaAlloc::new(mem::MemRegion::Mem64,4096));
+    b.resize(0x4000, 0u8);
+    let mut g = mem::dma::DmaGuard::from(b);
+
+    let g_prd = g.prd();
+    let mut prd_cmp = Vec::new();
+    for i in g_prd {
+        prd_cmp.push(alloc::format!("{:x?}", i));
+    }
+
+    let mut t = g.claim().unwrap();
+    assert!(g.claim().is_none());
+    for (p,c) in t.prd().zip(prd_cmp) {
+        assert_eq!(c,alloc::format!("{:x?}",p))
+    }
+
+    drop(t);
+    g.unwrap();
+
+    let mut b = alloc::vec::Vec::new_in(alloc_interface::DmaAlloc::new(mem::MemRegion::Mem64,4096));
+    b.resize(0x4000, 0u8);
+    let mut g = mem::dma::DmaGuard::from(b);
+    let t = g.claim();
+    let helper = g.as_mut();
+
+    drop(g);
+
+    x86_64::instructions::nop();
+
+
+}
