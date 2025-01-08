@@ -2,16 +2,33 @@ use alloc::boxed::Box;
 use alloc::vec::Vec;
 use core::alloc::Allocator;
 use core::marker::PhantomData;
+use core::ops::DerefMut;
 
 pub struct DmaGuard<T,C> {
-    inner: C,
+    inner: core::mem::ManuallyDrop<C>,
 
     _phantom: PhantomData<T>,
+    lock: Option<alloc::sync::Arc<core::sync::atomic::AtomicBool>>,
+}
+
+impl<T,C> Drop for DmaGuard<T,C> {
+    fn drop(&mut self) {
+        if !self.lock.take().is_some_and(|v| v.load(atomic::Ordering::Acquire)) {
+            // SAFETY: Well, we definitely aren't using this anymore
+            unsafe { core::mem::ManuallyDrop::drop(&mut self.inner) }
+        }
+    }
 }
 
 impl<T,C> DmaGuard<T,C> {
-    pub fn unwrap(self) -> C {
-        self.inner
+    pub fn unwrap(mut self) -> C {
+        if self.lock.take().is_some_and(|v| v.load(atomic::Ordering::Acquire)) {
+            panic!("DmaGuard::unwrap(): Called while data was locked");
+        }
+        // SAFETY: `self` is forgotten immediately after this
+        let t = unsafe { core::mem::ManuallyDrop::take(&mut self.inner) };
+        core::mem::forget(self);
+        t
     }
 }
 
@@ -21,10 +38,6 @@ unsafe impl<T: 'static, A: Allocator + 'static> DmaTarget for DmaGuard<T,Vec<T, 
         let elem_size = size_of::<T>();
         unsafe { core::slice::from_raw_parts_mut(ptr as *mut _, elem_size * self.inner.len()) }
     }
-
-    fn into_any(self) -> Box<dyn core::any::Any> {
-        Box::new(self)
-    }
 }
 
 unsafe impl<T: 'static, A: Allocator + 'static> DmaTarget for DmaGuard<T,Box<T,A>> {
@@ -32,10 +45,6 @@ unsafe impl<T: 'static, A: Allocator + 'static> DmaTarget for DmaGuard<T,Box<T,A
         let ptr = self.inner.as_mut() as *mut T as *mut u8;
         let elem_size = size_of::<T>();
         unsafe { core::slice::from_raw_parts_mut(ptr, elem_size) }
-    }
-
-    fn into_any(self) -> Box<dyn core::any::Any> {
-        Box::new(self)
     }
 }
 
@@ -48,26 +57,63 @@ impl<'a, T> DmaGuard<T, &'a mut T> {
     /// The caller must ensure that DMA operations are completed before accessing the owner of `data`.
     pub unsafe fn from_raw(data: &'a mut T) -> DmaGuard<T, &'a mut T> {
         Self {
-            inner: data,
+            inner: core::mem::ManuallyDrop::new(data),
             _phantom: Default::default(),
+            lock: None,
         }
     }
 }
 
-unsafe impl<T> DmaTarget for DmaGuard<T, &mut T> {
+unsafe impl<'a, T> DmaTarget for DmaGuard<T, &'a mut T> {
 
     fn as_mut(&mut self) -> *mut [u8] {
-        unsafe { core::slice::from_raw_parts_mut(self.inner as *mut _ as *mut u8, size_of_val(&*self.inner)) }
+        unsafe { core::slice::from_raw_parts_mut(self.inner.deref_mut() as *mut _ as *mut u8, size_of_val(&*self.inner)) }
+    }
+}
+
+unsafe impl<T,C> DmaClaimable for DmaGuard<T, C> where Self: DmaTarget {
+    fn claim<'a,'b>(&'a mut self) -> Option<Box<dyn DmaTarget + 'b>> {
+
+        // Lazily constructed, because this may not actually be used.
+        if let Some(lock) = self.lock.as_ref() {
+            lock.compare_exchange(false,true, atomic::Ordering::Acquire, atomic::Ordering::Relaxed).ok()?;
+        } else {
+            self.lock = Some(alloc::sync::Arc::new(core::sync::atomic::AtomicBool::new(true)));
+        }
+
+        Some(Box::new(BorrowedDmaGuard {
+            data: self.as_mut(),
+            lock: self.lock.as_ref().unwrap().clone(), // Guaranteed to be some
+            _phantom: PhantomData,
+        }))
     }
 
-    fn into_any(self) -> Box<dyn core::any::Any> {
-        Box::new(self)
+    fn query_owned(&self) -> bool {
+        self.lock.as_ref().is_some_and(|v| v.load(atomic::Ordering::Acquire))
+    }
+}
+
+struct BorrowedDmaGuard<'a> {
+    data: *mut [u8],
+    lock: alloc::sync::Arc<core::sync::atomic::AtomicBool>,
+    _phantom: PhantomData<&'a mut [u8]>,
+}
+
+unsafe impl DmaTarget for BorrowedDmaGuard<'_> {
+    fn as_mut(&mut self) -> *mut [u8] {
+        self.data
+    }
+}
+
+impl Drop for BorrowedDmaGuard<'_> {
+    fn drop(&mut self) {
+        self.lock.store(false, atomic::Ordering::Release);
     }
 }
 
 impl<T, C: DmaPointer<T>> From<C> for DmaGuard<T, C> {
     fn from(inner: C) -> Self {
-        DmaGuard { inner, _phantom: PhantomData }
+        DmaGuard { inner: core::mem::ManuallyDrop::new(inner), _phantom: PhantomData, lock: None }
     }
 }
 
@@ -148,7 +194,7 @@ pub struct PhysicalRegionDescription {
 
 /// A type that implements DmaTarget can be used for DMA operations.
 ///
-/// async DMA operations *must* use an implementor of DmaTarget to safely operate. The argument *must* be
+/// `async` DMA operations *must* use an implementor of DmaTarget to safely operate. The argument *must* be
 /// taken by value and not by reference, the future should return ownership of the DmaTarget when it completes.
 /// See [Embedonomicon](https://docs.rust-embedded.org/embedonomicon/dma.html) for details.
 ///
@@ -169,6 +215,34 @@ pub unsafe trait DmaTarget {
             phantom: Default::default(),
         }
     }
+}
 
-    fn into_any(self) -> Box<dyn core::any::Any>;
+/// Claimable is intended to solve a problem in [DmaGuard] where a user may want to wrap a
+/// `Vec<u64>` read a [crate::fs::file::Read] into it and unwrap back into a `Vec<u64>`.
+/// This may only be done by downcasting through [core::any::Any], this is inconvenient,
+/// because it requires declaring a type, erasing the type data then trying to re-determine our type data.
+///
+/// The intention of this trait is to provide a RAII guard similar to a mutex.
+/// `self` may not drop or access its wrapped buffer until the return value of [DmaClaimable::claim] is dropped.
+///
+/// If `self` is dropped while the data is borrowed then the data must be leaked.
+pub unsafe trait DmaClaimable: DmaTarget {
+
+    /// This fn returns a [DmaTarget] using the same target buffer as `self`.
+    ///
+    /// When this fn completes successfully then the returned type (`'b`) "owns" the target data of self (`'a`),
+    /// when the returned `'b` is dropped it must return ownership of the target buffer to `'a`.
+    /// If `'a` is dropped before `'b` then `'a` must not drop the inner data.
+    ///
+    /// The value of [Self::query_owned] indicates whether this function will succeed.
+    ///
+    /// This is intended for use with futures where the target buffer must use dynamic dispatch.
+    /// This allows a borrow to occur while passing ownership of the target data without erasing the
+    /// type of `self` thus skipping a downcast back into `Self`
+    ///
+    /// The lifetimes should be treated as `fn('a) -> 'a` by the caller but `fn('a) -> 'b` must be safe.
+    fn claim<'a, 'b>(&'a mut self) -> Option<Box<dyn DmaTarget + 'b>>;
+
+    /// Returns `true` if self currently owned the buffer.
+    fn query_owned(&self) -> bool;
 }
