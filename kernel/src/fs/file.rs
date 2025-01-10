@@ -41,6 +41,7 @@ use core::fmt::Formatter;
 use core::future::Future;
 use futures_util::FutureExt;
 use crate::fs::{IoError, IoResult};
+use crate::mem::dma::{DmaBuff, DmaTarget};
 
 self::file_derive_debug!(File);
 
@@ -175,7 +176,7 @@ pub trait NormalFile<T = u8>: Read<T> + Write<T> + Seek + File + Send + Sync {
 /// This trait's methods may have side effects. Any side effects should be documented at the implementation level.
 pub trait Read<T> {
     /// Reads the data at the cursor into `buff` returning a slice containing the data read.
-    /// The returned buffer will only contain data which was read, the returned slice may be smaller than `buff`
+    /// The returned buffer will only contain data which was read, this is not required to fill `buff`
     /// This will advance the cursor by the `len()` of the returned buffer.
     ///
     /// The implementors may modify any part of the buffer including the trailing bytes after the
@@ -188,7 +189,7 @@ pub trait Read<T> {
     /// If this fn returns `Err(_)` it will return the number of characters read before it encountered an error.
     ///
     /// [IoError::NotPresent] - Will be returned when the file no longer exists.
-    fn read<'a>(&'a mut self, buff: &'a mut [T]) -> futures_util::future::BoxFuture<Result<&'a mut [T],(IoError,usize)>>;
+    fn read<'f, 'a: 'f,'b: 'f>(&'a mut self, buff: DmaBuff<'b>) -> futures_util::future::BoxFuture<'f, Result<(DmaBuff<'b>, usize),(IoError,DmaBuff<'b>,usize)>>;
 }
 
 /// This trait's methods may have side effects. Any side effects should be documented at the implementation level.
@@ -197,7 +198,7 @@ pub trait Write<T> {
     /// Advances the cursor by the returned value.
     ///
     /// We can return a `usize` here because a single op cannot reasonably write more than `usize::MAX` bytes
-    fn write<'a>(&'a mut self, buff: &'a [T]) -> futures_util::future::BoxFuture<Result<usize, (IoError,usize)>>;
+    fn write<'f, 'a: 'f,'b: 'f>(&'a mut self, buff: DmaBuff<'b>) -> futures_util::future::BoxFuture<'f,Result<(DmaBuff<'b>, usize), (IoError,DmaBuff<'b>,usize)>>;
 }
 
 /// This trait allows manipulation of a cursor allowing a user to manipulate where a file is read.
