@@ -74,7 +74,7 @@ unsafe impl<'a, T> DmaTarget for DmaGuard<T, &'a mut T> {
 }
 
 unsafe impl<T,C> DmaClaimable for DmaGuard<T, C> where Self: DmaTarget {
-    fn claim<'a,'b>(&'a mut self) -> Option<Box<dyn DmaTarget + 'b>> {
+    fn claim<'a,'b>(mut self) -> Option<(DmaClaimed<Self>,Box<dyn DmaTarget + 'b>)> {
 
         // Lazily constructed, because this may not actually be used.
         if let Some(lock) = self.lock.as_ref() {
@@ -83,11 +83,12 @@ unsafe impl<T,C> DmaClaimable for DmaGuard<T, C> where Self: DmaTarget {
             self.lock = Some(alloc::sync::Arc::new(core::sync::atomic::AtomicBool::new(true)));
         }
 
-        Some(Box::new(BorrowedDmaGuard {
+        let b = Box::new(BorrowedDmaGuard {
             data: self.as_mut(),
             lock: self.lock.as_ref().unwrap().clone(), // Guaranteed to be some
             _phantom: PhantomData,
-        }))
+        });
+        Some((DmaClaimed{inner: self}, b))
     }
 
     fn query_owned(&self) -> bool {
@@ -242,6 +243,8 @@ pub unsafe trait DmaClaimable: DmaTarget {
     /// when the returned `'b` is dropped it must return ownership of the target buffer to `'a`.
     /// If `'a` is dropped before `'b` then `'a` must not drop the inner data.
     ///
+    /// On completion `self` will be returned as [DmaClaimed]
+    ///
     /// The value of [Self::query_owned] indicates whether this function will succeed.
     ///
     /// This is intended for use with futures where the target buffer must use dynamic dispatch.
@@ -249,12 +252,31 @@ pub unsafe trait DmaClaimable: DmaTarget {
     /// type of `self` thus skipping a downcast back into `Self`
     ///
     /// The lifetimes should be treated as `fn('a) -> 'a` by the caller but `fn('a) -> 'b` must be safe.
-    fn claim<'a, 'b>(&'a mut self) -> Option<Box<dyn DmaTarget + 'b>>;
+    fn claim<'a, 'b>(self) -> Option<(DmaClaimed<Self>, Box<dyn DmaTarget + 'b>)> where Self: Sized;
 
     /// Returns `true` if self currently owned the buffer.
     fn query_owned(&self) -> bool;
 }
 
+/// A wrapper around a claimed [DmaClaimable] to prevent accessing the buffer.
+///
+/// Calling [Self::unwrap] will attempt to extract the buffer from the wrapper.
+struct DmaClaimed<T: DmaClaimable> {
+    inner: T,
+}
+
+impl<T: DmaClaimable> DmaClaimed<T> {
+
+    /// Attempts to unwrap the buffer calling [DmaClaimable::query_owned] to determine if the inner
+    /// value has ownership of its buffer.
+    fn unwrap(self) -> Result<T,Self> {
+        if self.inner.query_owned() {
+            Ok(self.inner)
+        } else {
+            Err(self)
+        }
+    }
+}
 
 #[test_case]
 #[cfg(test)]
