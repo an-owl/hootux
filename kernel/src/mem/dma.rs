@@ -202,6 +202,12 @@ pub struct PhysicalRegionDescription {
 ///
 /// An implementor must ensure that the DMA region returned by [Self::as_mut] is owned by `self` is treated as volatile.
 pub unsafe trait DmaTarget {
+
+    /// Returns a pointer into the target buffer.
+    ///
+    /// # Safety
+    ///
+    /// The implementation must guarantee that the raw slice can be safely cast into a normal slice.
     fn as_mut(&mut self) -> *mut [u8];
 
     /// Returns a Physical region describer.
