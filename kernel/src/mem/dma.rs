@@ -4,6 +4,8 @@ use core::alloc::Allocator;
 use core::marker::PhantomData;
 use core::ops::DerefMut;
 
+pub type DmaBuff<'a> = Box<dyn DmaTarget + 'a>;
+
 pub struct DmaGuard<T,C> {
     inner: core::mem::ManuallyDrop<C>,
 
