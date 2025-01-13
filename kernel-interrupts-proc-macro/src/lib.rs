@@ -78,3 +78,13 @@ pub fn local_slab_allocator(input: TokenStream) -> TokenStream {
     ts2.into()
 }
 
+mod lazy_prop;
+
+#[proc_macro]
+pub fn ok_or_lazy(input: TokenStream) -> TokenStream {
+    let ok: lazy_prop::OkOrLazy = syn::parse_macro_input!(input);
+    let ts: proc_macro2::TokenStream = ok.into();
+    ts.into()
+}
+
+
