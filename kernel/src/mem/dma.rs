@@ -50,21 +50,6 @@ unsafe impl<T: Send + 'static, A: Send + Allocator + 'static> DmaTarget for DmaG
     }
 }
 
-impl<'a, T> DmaGuard<T, &'a mut T> {
-    /// Constructs self from a raw pointer.
-    /// This can be used to allow stack allocated buffers or buffers that are otherwise unsafe to use.
-    ///
-    /// # Safety
-    ///
-    /// The caller must ensure that DMA operations are completed before accessing the owner of `data`.
-    pub unsafe fn from_raw(data: &'a mut T) -> DmaGuard<T, &'a mut T> {
-        Self {
-            inner: core::mem::ManuallyDrop::new(data),
-            _phantom: Default::default(),
-            lock: None,
-        }
-    }
-}
 
 unsafe impl<'a, T: Send> DmaTarget for DmaGuard<T, &'a mut T> {
 
@@ -119,6 +104,33 @@ impl Drop for BorrowedDmaGuard<'_> {
 impl<T, C: DmaPointer<T>> From<C> for DmaGuard<T, C> {
     fn from(inner: C) -> Self {
         DmaGuard { inner: core::mem::ManuallyDrop::new(inner), _phantom: PhantomData, lock: None }
+    }
+}
+
+pub struct StackDmaGuard<'a, T: ?Sized + Send> {
+    data: &'a mut T,
+}
+
+impl <'a, T: ?Sized + Send> StackDmaGuard<'a, T> {
+
+    /// Constructs a StackDmaGuard for `data`.
+    ///
+    /// # Safety
+    ///
+    /// The caller must guarantee that `data` does not outlive `self` and that all futures `self`
+    /// is given to are completed.
+    pub unsafe fn new(data: &mut T) -> Self {
+        Self {
+            data
+        }
+    }
+}
+
+unsafe impl<T: ?Sized + Send> DmaTarget for StackDmaGuard<'_, T> {
+    fn as_mut(&mut self) -> *mut [u8] {
+        let count = core::mem::size_of_val(self.data);
+        let ptr = self.data as *mut _ as *mut u8;
+        unsafe { core::slice::from_raw_parts_mut(ptr, count) }
     }
 }
 
