@@ -13,6 +13,8 @@ use crate::util::ToWritableBuffer;
 use core::fmt::Write as _;
 use core::marker::PhantomData;
 use x86_64::instructions::interrupts::without_interrupts;
+use crate::mem::dma::{DmaBuff};
+use kernel_proc_macro::ok_or_lazy;
 
 // fixme there is a bug in here somewhere causing stack overflows to occur
 // I fixed it partially, it no longer panics the kernel but I'm not sure what the root cause is.
@@ -112,12 +114,23 @@ impl SerialDispatcher {
         use crate::util::WriteableBuffer;
         let mut self_mut = cast_file!(Fifo<u8>: self.clone_file()).unwrap();
         let mut st = [0u8;128];
+
         let mut stw = st.writable();
         let _ = core::write!(stw,"{}",data); // idc if this fails
         self_mut.open(OpenMode::Write).map_err(|e| (e,0))?;
         let len = stw.cursor();
         drop(stw);
-        crate::task::util::block_on!(self_mut.write(&st[..len])).map(|_| ())
+
+        // SAFETY: This thread will block waiting for this operation to complete
+        let mut dma_buff = unsafe { crate::mem::dma::StackDmaGuard::new(&mut st[..len]) };
+
+        // SAFETY: This is unsafe because this may attempt to call deallocate() on &dma_buff. Box::leak() is called below
+        let stack_box = unsafe { Box::from_raw(&mut dma_buff) };
+        let (Ok((stack_box,_)) | Err((_,stack_box,_))) = crate::task::util::block_on!(self_mut.write(stack_box));
+        // SAFETY: This must be called because of Box::from_raw above.
+        let _ = Box::leak(stack_box);
+
+        Ok(())
     }
 }
 
@@ -226,49 +239,117 @@ impl crate::fs::device::Fifo<u8> for SerialDispatcher {
 ///
 /// Note: At the time of writing timers are only accurate to 4ms.
 impl Read<u8> for SerialDispatcher {
-    fn read<'a>(&'a mut self, buff: &'a mut [u8]) -> BoxFuture<Result<&'a mut [u8], (IoError, usize)>> {
-        if self.fifo_lock.is_read() {
-            // This looks strange. ReadFut::poll() queries if any data has become available
-            let real = if let Some(real) = self.inner.real.upgrade() {
-                real
-            } else {
-                return async {Err((IoError::MediaError,0)) }.boxed()
-            };
 
-            // Interrupts must be blocked here to prevent deadlocks.
-            let r = without_interrupts( || {
-                let mut l = real.rx_tgt.lock();
+    fn read<'f, 'a: 'f,'b: 'f>(&'a mut self, mut dbuff: DmaBuff<'b>) -> BoxFuture<'f, Result<(DmaBuff<'b>, usize), (IoError, DmaBuff<'b>, usize)>> {
 
-                if l.is_some() {
-                    return Some( async { Err((IoError::Busy, 0)) }.boxed());
-                }
+        async {
+            if self.fifo_lock.is_read() {
+                // cant use ok_or(_) here because of use after free on `dbuff`
+                let real = match self.inner.real.upgrade() {
+                    Some(real) => real,
+                    None => return Err((IoError::MediaError,dbuff,0)),
+                };
 
-                let mut count = 0;
-                while let Some(b) = real.receive() {
-                    buff[count] = b;
-                    count += 1;
-                    if count >= buff.len() {
-                        return Some( async { Ok(buff) }.boxed());
+                // SAFETY: This is safe because as_mut guarantees that this can be cast safely.
+                let buff = unsafe { &mut *crate::mem::dma::DmaTarget::as_mut(&mut *dbuff) };
+
+                // Interrupts must be blocked here to prevent deadlocks.
+                // returning Some(_) here indicates early completion.
+                match without_interrupts(|| {
+                    let mut l = real.rx_tgt.lock();
+
+                    // Check that buffer isn't already present
+                    if l.is_some() {
+                        return Some(Err((IoError::Busy, 0)));
                     }
+                    let mut count = 0;
+                    while let Some(b) = real.receive() {
+                        buff[count] = b;
+                        count += 1;
+                        if count >= buff.len() {
+                            return Some(Ok(count));
+                        }
+                    }
+
+                    *l = Some((buff as *mut [u8], count));
+                    None
+                }) {
+                    // cannot move dbuff must resort to stupid shit like this
+                    Some(Ok(count)) => return Ok((dbuff, count)),
+                    Some(Err((rc,count))) => return Err((rc,dbuff,count)),
+                    _ => {}
                 }
 
-                *l = Some((buff as *mut [u8], count));
-                drop(l);
-                return None
-            });
-            if let Some(r) = r {
-                return r;
-            }
 
-            // SAFETY: Tx-ready is always set, we set Rx-ready here, we are configured and ready to receive these interrupts
-            unsafe { real.set_int_enable(super::InterruptEnable::TRANSMIT_HOLDING_REGISTER_EMPTY | super::InterruptEnable::DATA_RECEIVED); }
-            ReadFut {
-                dispatch: self,
-                phantom_buffer: PhantomData,
-            }.boxed()
-        } else {
-            async { Err((IoError::NotReady, 0)) }.boxed()
+                let rc = ReadFut {
+                    dispatch: self,
+                    phantom_buffer: PhantomData,
+                }.await;
+
+                match rc {
+                    Ok(b) => Ok((dbuff,b.len())),
+                    Err((rc,count)) => Err((rc,dbuff,count)),
+                }
+            } else {
+                Err((IoError::NotReady, dbuff, 0))
+            }
+        }.boxed()
+        /*
+        async {
+            if self.fifo_lock.is_read() {
+                // This looks strange. ReadFut::poll() queries if any data has become available
+                let real = if let Some(real) = self.inner.real.upgrade() {
+                    real
+                } else {
+                    return Err((IoError::MediaError, dbuff, 0));
+                };
+
+                // SAFETY: This is safe because as_mut guarantees that this can be cast safely.
+                let buff = unsafe { &mut *crate::mem::dma::DmaTarget::as_mut(&mut *dbuff) };
+
+                // Interrupts must be blocked here to prevent deadlocks.
+                let r = without_interrupts(|| {
+                    let mut l = real.rx_tgt.lock();
+
+                    if l.is_some() {
+                        return Some(async { Err((IoError::Busy, dbuff, 0)) }.boxed());
+                    }
+
+                    let mut count = 0;
+                    while let Some(b) = real.receive() {
+                        buff[count] = b;
+                        count += 1;
+                        if count >= buff.len() {
+                            return Some(Ok((dbuff, count)));
+                        }
+                    }
+
+                    *l = Some((buff as *mut [u8], count));
+                    drop(l);
+                    return None
+                });
+                if let Some(r) = r {
+                    return r.await;
+                }
+
+                // SAFETY: Tx-ready is always set, we set Rx-ready here, we are configured and ready to receive these interrupts
+                unsafe { real.set_int_enable(super::InterruptEnable::TRANSMIT_HOLDING_REGISTER_EMPTY | super::InterruptEnable::DATA_RECEIVED); }
+
+                let rc = ReadFut {
+                    dispatch: self,
+                    phantom_buffer: PhantomData,
+                }.await;
+
+                match rc {
+                    Ok(r) => Ok((dbuff,r.len()))
+                }
+
+            } else {
+                Err((IoError::NotReady, dbuff, 0))
+            }
         }
+
+         */
     }
 }
 
@@ -316,12 +397,13 @@ impl<'a,'b> core::future::Future for ReadFut<'a,'b> {
 }
 
 impl Write<u8> for SerialDispatcher {
-    fn write<'a>(&'a mut self, buff: &'a [u8]) -> BoxFuture<Result<usize, (IoError, usize)>> {
+    fn write<'f, 'a: 'f,'b: 'f>(&'a mut self, mut dbuff: DmaBuff<'b>) -> BoxFuture<'f, Result<(DmaBuff<'b>, usize), (IoError, DmaBuff<'b>, usize)>> {
         async {
             if self.fifo_lock.is_write() {
+                // SAFETY: as_mut guarantees that this is safe.
+                let buff = unsafe { &mut *crate::mem::dma::DmaTarget::as_mut(&mut *dbuff) };
                 // Returning here indicates that the driver has closed the controller.
-                let real = self.inner.real.upgrade().ok_or((IoError::MediaError, 0))?;
-
+                let real = ok_or_lazy!(self.inner.real.upgrade() => Err((IoError::MediaError, dbuff, 0)));
                 let run = real.run.swap(true,atomic::Ordering::Acquire);
                 let mut write_buff = real.write_buff.lock();
                 let push = write_buff.push(buff);
@@ -336,9 +418,9 @@ impl Write<u8> for SerialDispatcher {
                 }
                 push.await;
 
-                Ok(buff.len())
+                Ok((dbuff,buff.len()))
             } else {
-                Err((IoError::NotReady,0))
+                Err((IoError::NotReady,dbuff,0))
             }
         }.boxed()
     }
@@ -408,9 +490,10 @@ impl NormalFile for FrameCtlBFile {
 }
 
 impl Read<u8> for FrameCtlBFile {
-    fn read<'a>(&'a mut self, buff: &'a mut [u8]) -> BoxFuture<Result<&'a mut [u8], (IoError, usize)>> {
+    fn read<'f, 'a: 'f,'b: 'f>(&'a mut self, mut dbuff: DmaBuff<'b>) -> BoxFuture<'f, Result<(DmaBuff<'b>, usize), (IoError, DmaBuff<'b>, usize)>> {
         async {
-            let real = self.dispatch.inner.real.upgrade().ok_or((IoError::MediaError,0))?;
+            let buff = unsafe { &mut *crate::mem::dma::DmaTarget::as_mut(&mut *dbuff) };
+            let real = ok_or_lazy!(self.dispatch.inner.real.upgrade() => Err((IoError::MediaError, dbuff, 0)));
             let b_rate = 115200f32/(real.divisor.load(atomic::Ordering::Relaxed) as f32); // use emulated float for conversion to baud-rate
             let data_bits: u8 = real.bits.load(atomic::Ordering::Relaxed).into();
             let parity: char = real.parity.load(atomic::Ordering::Relaxed).into();
@@ -422,11 +505,11 @@ impl Read<u8> for FrameCtlBFile {
             buff[..end].fill(0);
             let err = write!(buff.writable(),"{b_rate:.0}-{data_bits}{parity}{stop}").is_err();
             if err {
-                return Err((IoError::EndOfFile,buff.len()))
+                return Err((IoError::EndOfFile, dbuff, buff.len()))
             }
 
             let len = buff[..10].iter().position(|c| *c == 0).unwrap_or(10);
-            Ok(&mut buff[..len])
+            Ok((dbuff,len))
         }.boxed()
     }
 }
@@ -434,14 +517,23 @@ impl Read<u8> for FrameCtlBFile {
 derive_seek_blank!(FrameCtlBFile);
 
 impl Write<u8> for FrameCtlBFile {
-    fn write<'a>(&'a mut self, buff: &'a [u8]) -> BoxFuture<Result<usize, (IoError, usize)>> {
+    fn write<'f, 'a: 'f,'b: 'f>(&'a mut self, mut dbuff: DmaBuff<'b>) -> BoxFuture<'f, Result<(DmaBuff<'b>,usize), (IoError, DmaBuff<'b>, usize)>> {
         async {
-            let s = core::str::from_utf8(buff).map_err(|_| (IoError::InvalidData, 0))?;
-            let (baud_rate, frame) = s.split_at(s.find('-').ok_or((IoError::InvalidData, 0))?);
+            let buff = unsafe { &mut *crate::mem::dma::DmaTarget::as_mut(&mut *dbuff) };
+            let s = match core::str::from_utf8(buff) {
+                Ok(s) => s,
+                Err(_) => return Err((IoError::InvalidData, dbuff, 0)),
+            };
 
-            let baud_rate: u32 = baud_rate.parse().map_err(|_| (IoError::InvalidData, 0))?;
+            let (baud_rate, frame) = s.split_at( ok_or_lazy!(s.find('-') => Err((IoError::InvalidData, dbuff, 0))));
+
+            let baud_rate: u32 =
+                match baud_rate.parse() {
+                    Ok(baud) => baud,
+                    Err(_) => return Err((IoError::InvalidData, dbuff, 0)),
+                };
             if baud_rate > 115200 {
-                return Err((IoError::InvalidData,0))
+                return Err((IoError::InvalidData, dbuff, 0))
             }
 
             // performs rounded integer division.
@@ -458,16 +550,19 @@ impl Write<u8> for FrameCtlBFile {
                     } else {
                         div = div_high >> 16;
                     };
-                    div.try_into().map_err(|_| (IoError::InvalidData, 0))?
+                    match div.try_into() {
+                        Ok(v) => v,
+                        Err(_) => return Err((IoError::InvalidData, dbuff, 0)),
+                    }
                 };
             if frame.len() != 4 {
-                return Err((IoError::InvalidData,0))
+                return Err((IoError::InvalidData, dbuff, 0))
             }
             let frame_fmt: [char;3] = {
                 let mut f = frame.chars().skip(1);
-                let r = [f.next().ok_or((IoError::InvalidData,0))?,f.next().ok_or((IoError::InvalidData,0))?,f.next().ok_or((IoError::InvalidData,0))?];
+                let r = [ok_or_lazy!(f.next() => Err((IoError::InvalidData,dbuff,0))),ok_or_lazy!(f.next() => Err((IoError::InvalidData,dbuff,0))),ok_or_lazy!(f.next() => Err((IoError::InvalidData,dbuff,0)))];
                 if let Some(_) = f.next() {
-                    return Err((IoError::InvalidData,0))
+                    return Err((IoError::InvalidData, dbuff, 0))
                 }
                 r
             };
@@ -476,7 +571,7 @@ impl Write<u8> for FrameCtlBFile {
                 '6' => super::DataBits::Six,
                 '7' => super::DataBits::Seven,
                 '8' => super::DataBits::Eight,
-                _ => return Err((IoError::InvalidData,0))
+                _ => return Err((IoError::InvalidData,dbuff,0))
             };
 
             let parity = match frame_fmt[1].to_ascii_uppercase() {
@@ -486,19 +581,19 @@ impl Write<u8> for FrameCtlBFile {
                 'M' => super::Parity::Mark,
                 'E' => super::Parity::Even,
                 'S' => super::Parity::Space,
-                _ => return Err((IoError::InvalidData,0))
+                _ => return Err((IoError::InvalidData,dbuff,0))
             };
 
             let stop_bits = match frame_fmt[2] {
                 '1' => super::StopBits::One,
                 '2' => super::StopBits::Two,
-                _ => return Err((IoError::InvalidData,0))
+                _ => return Err((IoError::InvalidData,dbuff,0))
             };
 
-            let real = self.dispatch.inner.real.upgrade().ok_or((IoError::MediaError,0))?;
+            let real = ok_or_lazy!(self.dispatch.inner.real.upgrade()  => Err((IoError::MediaError, dbuff,0)));
             real.set_char_mode(data_bits,parity,stop_bits);
             real.set_divisor(divisor);
-            Ok(buff.len())
+            Ok((dbuff, buff.len()))
         }.boxed()
     }
 }
