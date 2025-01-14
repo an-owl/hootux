@@ -34,7 +34,7 @@ impl<T,C> DmaGuard<T,C> {
     }
 }
 
-unsafe impl<T: 'static, A: Allocator + 'static> DmaTarget for DmaGuard<T,Vec<T, A>> {
+unsafe impl<T: 'static + Send, A: Allocator + Send + 'static> DmaTarget for DmaGuard<T,Vec<T, A>> {
     fn as_mut(&mut self) -> *mut [u8] {
         let ptr = self.inner.as_mut_ptr();
         let elem_size = size_of::<T>();
@@ -42,7 +42,7 @@ unsafe impl<T: 'static, A: Allocator + 'static> DmaTarget for DmaGuard<T,Vec<T, 
     }
 }
 
-unsafe impl<T: 'static, A: Allocator + 'static> DmaTarget for DmaGuard<T,Box<T,A>> {
+unsafe impl<T: Send + 'static, A: Send + Allocator + 'static> DmaTarget for DmaGuard<T,Box<T,A>> {
     fn as_mut(&mut self) -> *mut [u8] {
         let ptr = self.inner.as_mut() as *mut T as *mut u8;
         let elem_size = size_of::<T>();
@@ -66,7 +66,7 @@ impl<'a, T> DmaGuard<T, &'a mut T> {
     }
 }
 
-unsafe impl<'a, T> DmaTarget for DmaGuard<T, &'a mut T> {
+unsafe impl<'a, T: Send> DmaTarget for DmaGuard<T, &'a mut T> {
 
     fn as_mut(&mut self) -> *mut [u8] {
         unsafe { core::slice::from_raw_parts_mut(self.inner.deref_mut() as *mut _ as *mut u8, size_of_val(&*self.inner)) }
@@ -101,6 +101,8 @@ struct BorrowedDmaGuard<'a> {
     lock: alloc::sync::Arc<core::sync::atomic::AtomicBool>,
     _phantom: PhantomData<&'a mut [u8]>,
 }
+
+unsafe impl Send for BorrowedDmaGuard<'_> {}
 
 unsafe impl DmaTarget for BorrowedDmaGuard<'_> {
     fn as_mut(&mut self) -> *mut [u8] {
@@ -204,13 +206,13 @@ pub struct PhysicalRegionDescription {
 /// # Safety
 ///
 /// An implementor must ensure that the DMA region returned by [Self::as_mut] is owned by `self` is treated as volatile.
-pub unsafe trait DmaTarget {
+pub unsafe trait DmaTarget: Send {
 
     /// Returns a pointer into the target buffer.
     ///
     /// # Safety
     ///
-    /// The implementation must guarantee that the raw slice can be safely cast into a normal slice.
+    /// Except exclusive access, implementations must ensure that the returned pointer can be safely cast to a reference.
     fn as_mut(&mut self) -> *mut [u8];
 
     /// Returns a Physical region describer.
