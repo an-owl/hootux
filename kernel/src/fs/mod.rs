@@ -55,7 +55,8 @@ pub enum IoError {
 
     /// The device indicated that it encountered an error and could not be accessed.
     ///
-    /// This may also be used to indicate that an invalid configuration was used for the device
+    /// This may also be used to indicate that an invalid configuration was used for the device.
+    /// This differs from [Self::MediaError] where this is returned when the device indicates an error.
     DeviceError,
 
     /// Returned when a file is requested to do something it does not support.
