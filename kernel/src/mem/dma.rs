@@ -119,7 +119,7 @@ impl <'a, T: ?Sized + Send> StackDmaGuard<'a, T> {
     ///
     /// The caller must guarantee that `data` does not outlive `self` and that all futures `self`
     /// is given to are completed.
-    pub unsafe fn new(data: &mut T) -> Self {
+    pub unsafe fn new(data: &'a mut T) -> Self {
         Self {
             data
         }
@@ -275,7 +275,7 @@ pub unsafe trait DmaClaimable: DmaTarget {
 /// A wrapper around a claimed [DmaClaimable] to prevent accessing the buffer.
 ///
 /// Calling [Self::unwrap] will attempt to extract the buffer from the wrapper.
-struct DmaClaimed<T: DmaClaimable> {
+pub struct DmaClaimed<T: DmaClaimable> {
     inner: T,
 }
 
@@ -283,7 +283,7 @@ impl<T: DmaClaimable> DmaClaimed<T> {
 
     /// Attempts to unwrap the buffer calling [DmaClaimable::query_owned] to determine if the inner
     /// value has ownership of its buffer.
-    fn unwrap(self) -> Result<T,Self> {
+    pub fn unwrap(self) -> Result<T,Self> {
         if self.inner.query_owned() {
             Ok(self.inner)
         } else {
