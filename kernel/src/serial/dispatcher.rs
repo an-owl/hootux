@@ -111,7 +111,7 @@ impl SerialDispatcher {
     /// Has a limit of 128 characters.
     pub fn write_sync(&self, data: core::fmt::Arguments) -> Result<(),(IoError, usize)> {
         use crate::util::WriteableBuffer;
-        let mut self_mut = cast_file!(Fifo<u8>: self.clone_file()).unwrap();
+        let mut self_mut = self.clone();
         let mut st = [0u8;128];
 
         let mut stw = st.writable();
