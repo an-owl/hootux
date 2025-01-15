@@ -136,8 +136,13 @@ self::file_derive_debug!(NormalFile<u8>);
 ///
 /// Implementations with characters other than [u8] are not permitted to accessible from userspace.
 ///
+/// NormalFile requires both the [Read] and [Write] traits, these take `self` as an *immutable*
+/// reference, however these operations necessarily require mutating the data. All operations from
+/// a single file-object must be strongly ordered.
+/// Operations from different file-objects may be dynamically ordered.
+///
 /// See [File::b_file] for documentation when the implementor is a B-side file
-pub trait NormalFile<T = u8>: Read<T> + Write<T> + Seek + File + Send + Sync {
+pub trait NormalFile<T = u8>: Read<T> + Write<T> + File + Send + Sync {
     /// Returns the size of the file in chars
     ///
     /// Using `core::mem::size_of::<T>() * NormalFile::len(file)` as usize will return the size in bytes
@@ -175,68 +180,29 @@ pub trait NormalFile<T = u8>: Read<T> + Write<T> + Seek + File + Send + Sync {
 
 /// This trait's methods may have side effects. Any side effects should be documented at the implementation level.
 pub trait Read<T> {
-    /// Reads the data at the cursor into `buff` returning a slice containing the data read.
-    /// The returned buffer will only contain data which was read, this is not required to fill `buff`
-    /// This will advance the cursor by the `len()` of the returned buffer.
+    /// Reads the data at the cursor into `buff` returning the buffer and the number of bytes read,
+    /// this is not required to fill `buff`.
     ///
     /// The implementors may modify any part of the buffer including the trailing bytes after the
-    /// returned data
-    ///
-    /// This method takes a `&mut self` because the cursor may need to be modified.
+    /// returned data.
     ///
     /// # Errors
     ///
     /// If this fn returns `Err(_)` it will return the number of characters read before it encountered an error.
     ///
     /// [IoError::NotPresent] - Will be returned when the file no longer exists.
-    fn read<'f, 'a: 'f,'b: 'f>(&'a mut self, buff: DmaBuff<'b>) -> futures_util::future::BoxFuture<'f, Result<(DmaBuff<'b>, usize),(IoError,DmaBuff<'b>,usize)>>;
+    fn read<'f, 'a: 'f,'b: 'f>(&'a self, pos: u64, buff: DmaBuff<'b>) -> futures_util::future::BoxFuture<'f, Result<(DmaBuff<'b>, usize),(IoError,DmaBuff<'b>,usize)>>;
 }
 
 /// This trait's methods may have side effects. Any side effects should be documented at the implementation level.
 pub trait Write<T> {
-    /// Writes the buffer into the file, at the cursor overwriting any data present.
-    /// Advances the cursor by the returned value.
+    /// Writes the buffer into the file, at the position `pos` overwriting any data present or
+    /// appending it to the end of the file.
+    ///
+    /// The data contained in `buff` may not be modified during this operation.
     ///
     /// We can return a `usize` here because a single op cannot reasonably write more than `usize::MAX` bytes
-    fn write<'f, 'a: 'f,'b: 'f>(&'a mut self, buff: DmaBuff<'b>) -> futures_util::future::BoxFuture<'f,Result<(DmaBuff<'b>, usize), (IoError,DmaBuff<'b>,usize)>>;
-}
-
-/// This trait allows manipulation of a cursor allowing a user to manipulate where a file is read.
-///
-/// All methods in this trait return the new cursor position on success.
-/// All methods except for [Self::set_cursor] are required to return `Ok(_)` when `pos` is `0`. This can be used to get the
-/// current position of the cursor.
-///
-/// This trait is not permitted to affect the state of a "file accessor".
-///
-/// # Errors
-///
-/// Attempting to move the cursor to an invalid position as defined at the driver level must return [IoError::EndOfFile].
-/// If other errors are encountered then they may be propagated.
-///
-/// All methods must return Ok(_) when the cursor argument is 0
-pub trait Seek {
-
-    /// Moves the cursor by `seek`. Returns the new cursor position.
-    ///
-    /// `move_cursor(0)` will return the current cursor position.
-    fn move_cursor(&mut self, seek: i64) -> Result<u64, IoError> {
-        if seek.is_positive() {
-            self.seek(seek.abs() as u64)
-        } else {
-            self.rewind(seek.abs() as u64)
-        }
-    }
-
-    /// Sets the cursor to the requested position, if an error occurs then the cursor will not be moved.
-    /// Returns the new cursor position.
-    fn set_cursor(&mut self, pos: u64) -> Result<u64,IoError>;
-
-    /// Moves the cursor back by `pos` characters. Returns the new cursor position.
-    fn rewind(&mut self, pos: u64) -> Result<u64,IoError>;
-
-    /// Moves the cursor forward by `pos` chars. Returns the new cursor position.
-    fn seek(&mut self, pos: u64) -> Result<u64,IoError>;
+    fn write<'f, 'a: 'f,'b: 'f>(&'a self, pos: u64, buff: DmaBuff<'b>) -> futures_util::future::BoxFuture<'f,Result<(DmaBuff<'b>, usize), (IoError,DmaBuff<'b>,usize)>>;
 }
 
 self::file_derive_debug!(Directory);

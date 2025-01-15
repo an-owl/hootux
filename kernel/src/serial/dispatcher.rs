@@ -3,7 +3,6 @@ use core::pin::Pin;
 use core::task::{Context, Poll};
 use futures_util::future::BoxFuture;
 use futures_util::{FutureExt};
-use crate::derive_seek_blank;
 use crate::fs::device::{Fifo, OpenMode};
 use crate::serial::Serial;
 use crate::fs::file::*;
@@ -126,7 +125,8 @@ impl SerialDispatcher {
 
         // SAFETY: This is unsafe because this may attempt to call deallocate() on &dma_buff. Box::leak() is called below
         let stack_box = unsafe { Box::from_raw(&mut dma_buff) };
-        let (Ok((stack_box,_)) | Err((_,stack_box,_))) = crate::task::util::block_on!(self_mut.write(stack_box));
+        // pos=0: `pos` ignored by this module
+        let (Ok((stack_box,_)) | Err((_,stack_box,_))) = crate::task::util::block_on!(self_mut.write(0,stack_box));
         // SAFETY: This must be called because of Box::from_raw above.
         let _ = Box::leak(stack_box);
 
@@ -240,7 +240,7 @@ impl crate::fs::device::Fifo<u8> for SerialDispatcher {
 /// Note: At the time of writing timers are only accurate to 4ms.
 impl Read<u8> for SerialDispatcher {
 
-    fn read<'f, 'a: 'f,'b: 'f>(&'a mut self, mut dbuff: DmaBuff<'b>) -> BoxFuture<'f, Result<(DmaBuff<'b>, usize), (IoError, DmaBuff<'b>, usize)>> {
+    fn read<'f, 'a: 'f,'b: 'f>(&'a self, _: u64, mut dbuff: DmaBuff<'b>) -> BoxFuture<'f, Result<(DmaBuff<'b>, usize), (IoError, DmaBuff<'b>, usize)>> {
 
         async {
             if self.fifo_lock.is_read() {
@@ -397,7 +397,7 @@ impl<'a,'b> core::future::Future for ReadFut<'a,'b> {
 }
 
 impl Write<u8> for SerialDispatcher {
-    fn write<'f, 'a: 'f,'b: 'f>(&'a mut self, mut dbuff: DmaBuff<'b>) -> BoxFuture<'f, Result<(DmaBuff<'b>, usize), (IoError, DmaBuff<'b>, usize)>> {
+    fn write<'f, 'a: 'f,'b: 'f>(&'a self, _: u64, mut dbuff: DmaBuff<'b>) -> BoxFuture<'f, Result<(DmaBuff<'b>, usize), (IoError, DmaBuff<'b>, usize)>> {
         async {
             if self.fifo_lock.is_write() {
                 // SAFETY: as_mut guarantees that this is safe.
@@ -490,7 +490,7 @@ impl NormalFile for FrameCtlBFile {
 }
 
 impl Read<u8> for FrameCtlBFile {
-    fn read<'f, 'a: 'f,'b: 'f>(&'a mut self, mut dbuff: DmaBuff<'b>) -> BoxFuture<'f, Result<(DmaBuff<'b>, usize), (IoError, DmaBuff<'b>, usize)>> {
+    fn read<'f, 'a: 'f,'b: 'f>(&'a self, _: u64, mut dbuff: DmaBuff<'b>) -> BoxFuture<'f, Result<(DmaBuff<'b>, usize), (IoError, DmaBuff<'b>, usize)>> {
         async {
             let buff = unsafe { &mut *crate::mem::dma::DmaTarget::as_mut(&mut *dbuff) };
             let real = ok_or_lazy!(self.dispatch.inner.real.upgrade() => Err((IoError::MediaError, dbuff, 0)));
@@ -514,10 +514,8 @@ impl Read<u8> for FrameCtlBFile {
     }
 }
 
-derive_seek_blank!(FrameCtlBFile);
-
 impl Write<u8> for FrameCtlBFile {
-    fn write<'f, 'a: 'f,'b: 'f>(&'a mut self, mut dbuff: DmaBuff<'b>) -> BoxFuture<'f, Result<(DmaBuff<'b>,usize), (IoError, DmaBuff<'b>, usize)>> {
+    fn write<'f, 'a: 'f,'b: 'f>(&'a self, _: u64, mut dbuff: DmaBuff<'b>) -> BoxFuture<'f, Result<(DmaBuff<'b>,usize), (IoError, DmaBuff<'b>, usize)>> {
         async {
             let buff = unsafe { &mut *crate::mem::dma::DmaTarget::as_mut(&mut *dbuff) };
             let s = match core::str::from_utf8(buff) {

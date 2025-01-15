@@ -310,21 +310,15 @@ impl Directory for Dir {
                     // Extends the buffer without initializing memory
                     // SAFETY: This is safe because we set the size above & u8 is always valid to read.
                     unsafe { vec.set_len(len.try_into().unwrap()) };
-                    let cursor = file.move_cursor(0).unwrap();
-                    file.set_cursor(0).unwrap();
                     let dbuff = crate::mem::dma::DmaGuard::from(vec);
                     let (dbuff, claimed) = dbuff.claim().unwrap(); // cannot fail
 
-                    let (_,read_len) = file.read(claimed).await.map_err(|(e, _, _)| (None, Some(e)))?; // drop claimed buffer after completion
+                    let (_,read_len) = file.read(0,claimed).await.map_err(|(e, _, _)| (None, Some(e)))?; // drop claimed buffer after completion
                     let Ok(dbuff) = dbuff.unwrap() else { unreachable!() };
                     let mut vec = dbuff.unwrap();
 
                     vec.truncate(read_len); // If the file shrinks between getting len and reading then we truncate garbage data.
 
-                    // restore cursor set it to 0 if we cant
-                    if let Err(_) = file.set_cursor(cursor) {
-                        file.set_cursor(0).unwrap();
-                    }
                     *new_file.data.write().await = vec;
                 }
                 entry.insert(new_file.serial);
@@ -459,7 +453,6 @@ impl TmpFsFile for FileAccessor{
             accessor: self.clone(),
             fs,
             serial: self.serial,
-            cursor: 0,
         })
     }
 
@@ -479,7 +472,6 @@ struct TmpFsNormalFile {
     // this is usize because the data is in a vec with a max size of usize::MAX.
     // If I ever reimplement this as a Physical Region Description then I should change this to u64
     // ^^ unlikely
-    cursor: usize,
 }
 
 impl NormalFile<u8> for TmpFsNormalFile {
@@ -538,61 +530,39 @@ impl File for TmpFsNormalFile {
     }
 }
 
-impl Seek for TmpFsNormalFile {
-    fn set_cursor(&mut self, pos: u64) -> Result<u64, IoError> {
-        self.cursor = pos.try_into().map_err(|_| IoError::EndOfFile)?;
-        Ok(self.cursor as u64)
-    }
-
-    fn rewind(&mut self, pos: u64) -> Result<u64, IoError> {
-        let mut c = self.cursor as u64;
-        c = c.checked_sub(pos).ok_or(IoError::EndOfFile)?;
-        self.cursor = c as usize; // Truncation cannot occur here.
-        Ok(c)
-    }
-
-    fn seek(&mut self, pos: u64) -> Result<u64, IoError> {
-        let mut c = self.cursor as u64;
-        c = c.checked_add(pos).ok_or(IoError::EndOfFile)?;
-        self.cursor = c.try_into().map_err(|_| IoError::EndOfFile)?;
-        Ok(c)
-    }
-}
-
 impl Read<u8> for TmpFsNormalFile {
-    fn read<'f, 'a: 'f,'b: 'f>(&'a mut self, mut dbuff: DmaBuff<'b>) -> BoxFuture<'f, Result<(DmaBuff<'b>, usize), (IoError, DmaBuff<'b>, usize)>> {
-        async {
-            let buff = unsafe {&mut *crate::mem::dma::DmaTarget::as_mut(&mut *dbuff) };
+    fn read<'f, 'a: 'f,'b: 'f>(&'a self, pos: u64, mut dbuff: DmaBuff<'b>) -> BoxFuture<'f, Result<(DmaBuff<'b>, usize), (IoError, DmaBuff<'b>, usize)>> {
+        async move {
+            let buff = unsafe {&mut *DmaTarget::as_mut(&mut *dbuff) };
             if !self.accessor.lock.lock().cmp_t(self) {
                 return Err((IoError::Exclusive, dbuff, 0));
             }
             let file = self.accessor.data.read().await;
-            if self.cursor >= file.len() {
+            if pos as usize >= file.len() {
                 return Err((IoError::EndOfFile, dbuff, 0))
             }
-            let count = buff.len().min(file.len() - self.cursor); // either selects the remaining `file` length or the entire `buff` length
-            buff[..count].copy_from_slice(&file[self.cursor..self.cursor + count]);
-            self.cursor += count;
+            let count = buff.len().min(file.len() - pos as usize); // either selects the remaining `file` length or the entire `buff` length
+            buff[..count].copy_from_slice(&file[pos as usize..pos as usize + count]);
             Ok((dbuff,count))
         }.boxed()
     }
 }
 
 impl Write<u8> for TmpFsNormalFile {
-    fn write<'f, 'a: 'f,'b: 'f>(&'a mut self, mut dbuff: DmaBuff<'b>) -> BoxFuture<'f, Result<(DmaBuff<'b>, usize), (IoError, DmaBuff<'b>, usize)>> {
-        async {
+    fn write<'f, 'a: 'f,'b: 'f>(&'a self, pos: u64, mut dbuff: DmaBuff<'b>) -> BoxFuture<'f, Result<(DmaBuff<'b>, usize), (IoError, DmaBuff<'b>, usize)>> {
+        async move {
             let buff = unsafe {&mut *DmaTarget::as_mut(&mut *dbuff) };
             if !self.accessor.lock.lock().cmp_t(self) {
                 return Err((IoError::Exclusive, dbuff, 0))
             }
             let mut file = self.accessor.data.write().await;
             // extend file if necessary
-            if buff.len() + self.cursor > file.len() {
+            if buff.len() + pos as usize > file.len() {
                 // SAFETY: new len is valid & u8 does not have an invalid state
-                file.reserve_exact(buff.len() + self.cursor);
-                unsafe { file.set_len(buff.len() + self.cursor) };
+                file.reserve_exact(buff.len() + pos as usize);
+                unsafe { file.set_len(buff.len() + pos as usize) };
             }
-            file[self.cursor..self.cursor + buff.len()].copy_from_slice(buff);
+            file[pos as usize..pos as usize + buff.len()].copy_from_slice(buff);
 
             Ok((dbuff, buff.len()))
         }.boxed()
