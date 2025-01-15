@@ -293,7 +293,7 @@ impl Directory for Dir {
         }.boxed()
     }
 
-    fn new_file<'s, 'a:'s>(&'s self, name: &'a str, file: Option<&'a mut dyn NormalFile<u8>>) -> BoxFuture<Result<(), (Option<IoError>, Option<IoError>)>> {
+    fn new_file<'f, 'b: 'f, 'a:'f>(&'a self, name: &'b str, file: Option<&'b mut dyn NormalFile<u8>>) -> BoxFuture<'f, Result<(), (Option<IoError>, Option<IoError>)>> {
         async {
 
             let mut l = self.accessor.map.write();
@@ -336,7 +336,7 @@ impl Directory for Dir {
         }.boxed()
     }
 
-    fn new_dir<'a>(&'a self, name: &'a str) -> IoResult<Box<dyn Directory>> {
+    fn new_dir<'f, 'a: 'f, 'b: 'f>(&'a self, name: &'b str) -> IoResult<'f, Box<dyn Directory>> {
         async {
 
             let mut l = self.accessor.map.write();
@@ -354,7 +354,7 @@ impl Directory for Dir {
         }.boxed()
     }
 
-    fn store<'a>(&'a self, name: &'a str, file: Box<dyn File>) -> IoResult<()> {
+    fn store<'f, 'a: 'f, 'b: 'f>(&'a self, name: &'b str, file: Box<dyn File>) -> IoResult<'f, ()> {
         async {
             let mut l = self.accessor.map.write();
             if let alloc::collections::btree_map::Entry::Vacant(entry) = l.entry(name.to_string()) {
@@ -375,7 +375,7 @@ impl Directory for Dir {
         }.boxed()
     }
 
-    fn get_file<'a>(&'a self, name: &'a str) -> IoResult<Box<dyn File>> {
+    fn get_file<'f,'a: 'f,'b: 'f>(&'a self, name: &'b str) -> IoResult<'f, Box<dyn File>> {
         async move {
 
             if name == PARENT_DIR && self.accessor.is_root() {
@@ -393,7 +393,7 @@ impl Directory for Dir {
         }.boxed()
     }
 
-    fn get_file_with_meta<'a>(&'a self, name: &'a str) -> IoResult<FileHandle> {
+    fn get_file_with_meta<'f, 'a: 'f, 'b: 'f>(&'a self, name: &'b str) -> IoResult<'f, FileHandle> {
         async move {
 
             if name == PARENT_DIR && self.accessor.is_root() {
@@ -422,7 +422,7 @@ impl Directory for Dir {
         }.boxed()
     }
 
-    fn remove<'a>(&'a self, name: &'a str) -> IoResult<()> {
+    fn remove<'f, 'a: 'f, 'b: 'f>(&'a self, name: &'b str) -> IoResult<'f, ()> {
         async {
             let id = *self.accessor.map.read().get(name).ok_or(IoError::NotPresent)?;
             let fs = self.fs.upgrade().ok_or(IoError::NotPresent)?;

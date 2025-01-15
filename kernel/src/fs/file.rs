@@ -41,7 +41,7 @@ use core::fmt::Formatter;
 use core::future::Future;
 use futures_util::FutureExt;
 use crate::fs::{IoError, IoResult};
-use crate::mem::dma::{DmaBuff, DmaTarget};
+use crate::mem::dma::DmaBuff;
 
 self::file_derive_debug!(File);
 
@@ -268,11 +268,11 @@ pub trait Directory: File {
     ///
     /// If `file` needs to be read to be added to the directory the driver must attempt to restore the cursor.
     /// If restoring th cursor throws an error then the cursor should be set to 0
-    fn new_file<'s, 'a:'s>(&'s self, name: &'a str, file: Option<&'a mut dyn NormalFile<u8>>) -> futures_util::future::BoxFuture<Result<(), (Option<IoError>, Option<IoError>)>>;
+    fn new_file<'f, 'b: 'f, 'a:'f>(&'a self, name: &'b str, file: Option<&'b mut dyn NormalFile<u8>>) -> futures_util::future::BoxFuture<'f, Result<(), (Option<IoError>, Option<IoError>)>>;
 
     /// Constructs a new directory, automatically returns a file object for the new directory.
     // If we are making a new dir we probably also want to use it. This optimizes out the extra fetch.
-    fn new_dir<'a>(&'a self, name: &'a str) -> IoResult<alloc::boxed::Box<dyn Directory>>;
+    fn new_dir<'f, 'a: 'f, 'b: 'f>(&'a self, name: &'b str) -> IoResult<'f, alloc::boxed::Box<dyn Directory>>;
 
     /// Stores a file, without modifying its primitive type in the current filesystem.
     /// If a file of the type already exists with `name` it must be shadowed and restored when `file` is removed.
@@ -284,7 +284,7 @@ pub trait Directory: File {
     /// If the filesystem allows caching then the VFS will cache the directory and handle device
     /// files transparently to the filesystem.
     #[allow(unused_variables)]
-    fn store<'a>(&'a self, name: &'a str, file: alloc::boxed::Box<dyn File>) -> IoResult<()> {
+    fn store<'f, 'a: 'f, 'b: 'f>(&'a self, name: &'b str, file: alloc::boxed::Box<dyn File>) -> IoResult<'f, ()> {
         async {
             Err(IoError::NotSupported)
         }.boxed()
@@ -298,7 +298,7 @@ pub trait Directory: File {
     ///
     /// The VFS implementation prevents a filename from ever containing the file separator character '/'.
     /// A filesystem may use this character internally to denote internally used files like "/journal"
-    fn get_file<'a>(&'a self, name: &'a str) -> IoResult<alloc::boxed::Box<dyn File>>;
+    fn get_file<'f,'a: 'f,'b: 'f>(&'a self, name: &'b str) -> IoResult<'f,alloc::boxed::Box<dyn File>>;
 
     /// Returns a files metadata.
     ///
@@ -306,7 +306,7 @@ pub trait Directory: File {
     ///
     /// If `name` is a device file where the driver does not know the state of the device then the
     /// may assume its metadata. This method should never return [IoError::IsDevice].
-    fn get_file_meta<'a>(&'a self, name: &'a str) -> IoResult<FileMetadata> {
+    fn get_file_meta<'f, 'a: 'f, 'b: 'f>(&'a self, name: &'b str) -> IoResult<'f, FileMetadata> {
         async {
             FileMetadata::new_from_file(&*self.get_file(name).await?).await
         }.boxed()
@@ -323,7 +323,7 @@ pub trait Directory: File {
     /// The default implementation should not be used. It is very poorly optimized.
     ///
     /// See [Directory::get_file] for more info.
-    fn get_file_with_meta<'a>(&'a self, name: &'a str) -> IoResult<FileHandle> {
+    fn get_file_with_meta<'f, 'a: 'f, 'b: 'f>(&'a self, name: &'b str) -> IoResult<'f,FileHandle> {
 
         async {
 
@@ -357,7 +357,7 @@ pub trait Directory: File {
     ///
     /// If `name` is a VFS-managed device file then this fn must remove the entry from the directory
     /// and return [IoError::IsDevice] to inform the VFS to remove the device entry from the device-override list.
-    fn remove<'a>(&'a self, name: &'a str) -> IoResult<()>;
+    fn remove<'f, 'a: 'f, 'b: 'f>(&'a self, name: &'b str) -> IoResult<'f, ()>;
 }
 
 #[macro_export]
