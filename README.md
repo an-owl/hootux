@@ -76,13 +76,15 @@ achieve them.
  - ANSI support
    - ~~This will require creating a font module using bitmaps not rasters~~
      - Just take a font from Linux and use `bindgen`
- - VFS
+ - ~~VFS~~
    - Support FAT filesystems
    - EXT too maybe?
    - Do psudoFSs first
-   - RAM-disk support
+   - ~~RAM-disk support~~
      - With quotas
      - This doesn't seem too hard.
+   - Overhaul SysFs to use FS API.
+     - Also add sync access to allow optimized usage.
  - Investigate making drivers the sole owners of PCI devices
    - Kernel requires some ownership, pass a dyn Into<pci::DeviceControl> to the kernel
  - Fix PCI ownership models
