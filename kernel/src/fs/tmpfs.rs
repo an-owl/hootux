@@ -16,6 +16,7 @@ use cast_trait_object::DynCastExt;
 use futures_util::FutureExt;
 use lazy_static::lazy_static;
 use crate::fs::IoError::NotPresent;
+use crate::mem::dma::{DmaBuff, DmaClaimable, DmaTarget};
 
 lazy_static! {
     pub static ref DRIVER_MAJOR: MajorNum = MajorNum::new();
@@ -311,10 +312,14 @@ impl Directory for Dir {
                     unsafe { vec.set_len(len.try_into().unwrap()) };
                     let cursor = file.move_cursor(0).unwrap();
                     file.set_cursor(0).unwrap();
+                    let dbuff = crate::mem::dma::DmaGuard::from(vec);
+                    let (dbuff, claimed) = dbuff.claim().unwrap(); // cannot fail
 
-                    let b: &mut [u8] = file.read(&mut vec).await.map_err(|(e, _)| (None, Some(e)))?;
-                    let b_len = b.len();
-                    vec.truncate(b_len); // If the file shrinks between getting len and reading then we truncate garbage data.
+                    let (_,read_len) = file.read(claimed).await.map_err(|(e, _, _)| (None, Some(e)))?; // drop claimed buffer after completion
+                    let Ok(dbuff) = dbuff.unwrap() else { unreachable!() };
+                    let mut vec = dbuff.unwrap();
+
+                    vec.truncate(read_len); // If the file shrinks between getting len and reading then we truncate garbage data.
 
                     // restore cursor set it to 0 if we cant
                     if let Err(_) = file.set_cursor(cursor) {
@@ -555,30 +560,30 @@ impl Seek for TmpFsNormalFile {
 }
 
 impl Read<u8> for TmpFsNormalFile {
-    fn read<'a>(&'a mut self, buff: &'a mut [u8]) -> BoxFuture<Result<&'a mut [u8], (IoError, usize)>> {
+    fn read<'f, 'a: 'f,'b: 'f>(&'a mut self, mut dbuff: DmaBuff<'b>) -> BoxFuture<'f, Result<(DmaBuff<'b>, usize), (IoError, DmaBuff<'b>, usize)>> {
         async {
-
+            let buff = unsafe {&mut *crate::mem::dma::DmaTarget::as_mut(&mut *dbuff) };
             if !self.accessor.lock.lock().cmp_t(self) {
-                return Err((IoError::Exclusive,0));
+                return Err((IoError::Exclusive, dbuff, 0));
             }
             let file = self.accessor.data.read().await;
             if self.cursor >= file.len() {
-                return Err((IoError::EndOfFile, 0))
+                return Err((IoError::EndOfFile, dbuff, 0))
             }
             let count = buff.len().min(file.len() - self.cursor); // either selects the remaining `file` length or the entire `buff` length
             buff[..count].copy_from_slice(&file[self.cursor..self.cursor + count]);
             self.cursor += count;
-            Ok(&mut buff[..count])
+            Ok((dbuff,count))
         }.boxed()
     }
 }
 
 impl Write<u8> for TmpFsNormalFile {
-    fn write<'a>(&'a mut self, buff: &'a [u8]) -> BoxFuture<Result<usize, (IoError,usize)>> {
+    fn write<'f, 'a: 'f,'b: 'f>(&'a mut self, mut dbuff: DmaBuff<'b>) -> BoxFuture<'f, Result<(DmaBuff<'b>, usize), (IoError, DmaBuff<'b>, usize)>> {
         async {
-
+            let buff = unsafe {&mut *DmaTarget::as_mut(&mut *dbuff) };
             if !self.accessor.lock.lock().cmp_t(self) {
-                return Err((IoError::Exclusive,0))
+                return Err((IoError::Exclusive, dbuff, 0))
             }
             let mut file = self.accessor.data.write().await;
             // extend file if necessary
@@ -589,7 +594,7 @@ impl Write<u8> for TmpFsNormalFile {
             }
             file[self.cursor..self.cursor + buff.len()].copy_from_slice(buff);
 
-            Ok(buff.len())
+            Ok((dbuff, buff.len()))
         }.boxed()
     }
 }
