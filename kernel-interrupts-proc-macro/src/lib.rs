@@ -87,4 +87,11 @@ pub fn ok_or_lazy(input: TokenStream) -> TokenStream {
     ts.into()
 }
 
+mod sysfs_impl;
 
+#[proc_macro_attribute]
+pub fn impl_sysfs_root_traits(input: TokenStream, _: TokenStream) -> TokenStream {
+    let t: sysfs_impl::ImplSysFsRoot = syn::parse(input).unwrap();
+    let ts: proc_macro2::TokenStream = t.into();
+    ts.into()
+}
