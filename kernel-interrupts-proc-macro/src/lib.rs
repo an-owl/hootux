@@ -1,4 +1,5 @@
 use proc_macro::TokenStream;
+use syn::__private::TokenStream2;
 
 mod interrupts;
 
@@ -90,8 +91,20 @@ pub fn ok_or_lazy(input: TokenStream) -> TokenStream {
 mod sysfs_impl;
 
 #[proc_macro_attribute]
-pub fn impl_sysfs_root_traits(input: TokenStream, _: TokenStream) -> TokenStream {
-    let t: sysfs_impl::ImplSysFsRoot = syn::parse(input).unwrap();
+pub fn impl_sysfs_root_traits(_: TokenStream, input: TokenStream) -> TokenStream {
+    let t: sysfs_impl::ImplSysFsRoot = syn::parse_macro_input!(input);
     let ts: proc_macro2::TokenStream = t.into();
     ts.into()
+}
+
+#[proc_macro_derive(SysfsDir, attributes(file,index))]
+pub fn derive_sysfs_dir(input: TokenStream) -> TokenStream {
+    let s: sysfs_impl::SysfsDirDerive = syn::parse_macro_input!(input);
+    let ts = quote::quote! {#s};
+    ts.into()
+}
+
+fn file(_: TokenStream) -> TokenStream {
+    let t = quote::quote! {#[dyn_cast(File => NormalFile<u8>, Directory, FileSystem, Fifo<u8>, DeviceFile)]};
+    t.into()
 }
