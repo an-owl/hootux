@@ -389,7 +389,7 @@ macro_rules! derive_seek_blank {
 
 pub use derive_seek_blank;
 
-use crate::fs::vfs::DevID;
+pub use crate::fs::vfs::DevID;
 
 #[derive(Clone, Debug)]
 pub struct FileMetadata {
