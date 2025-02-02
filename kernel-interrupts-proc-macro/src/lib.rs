@@ -90,6 +90,7 @@ pub fn ok_or_lazy(input: TokenStream) -> TokenStream {
 
 mod sysfs_impl;
 
+/// Implements filesystem traits for teh sysfs filesystem root.
 #[proc_macro_attribute]
 pub fn impl_sysfs_root_traits(_: TokenStream, input: TokenStream) -> TokenStream {
     let t: sysfs_impl::ImplSysFsRoot = syn::parse_macro_input!(input);
@@ -97,6 +98,17 @@ pub fn impl_sysfs_root_traits(_: TokenStream, input: TokenStream) -> TokenStream
     ts.into()
 }
 
+/// Implements hootux::fs::sysfs::SysfsDir for item-structs.
+///
+/// This macro defines two helpers, `#[index(_)]` and `#[file(_)]`.
+/// These attributes take structured arguments, as `key=value` the valid keys are
+///
+/// * alias: For `file` only. Sets a filename override, default filename is the field identifier. This field expects an identifier
+/// * getter: Optional for `file`, default is `field.clone_file()` Required by `index`. The argument identifier for getters is `name`.
+/// This overrides the getter for the field, so types that don't implement file may be used.
+/// * keys: Required by `index`, not available to `file`. Used to fetch stored filenames from index. This must return an iterator over [String]
+///
+/// `file` may be allowed any number of times, `index` may be used zero or one times.
 #[proc_macro_derive(SysfsDir, attributes(file,index))]
 pub fn derive_sysfs_dir(input: TokenStream) -> TokenStream {
     let s: sysfs_impl::SysfsDirDerive = syn::parse_macro_input!(input);
