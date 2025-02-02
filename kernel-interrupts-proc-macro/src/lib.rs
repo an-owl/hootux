@@ -104,7 +104,14 @@ pub fn derive_sysfs_dir(input: TokenStream) -> TokenStream {
     ts.into()
 }
 
-fn file(_: TokenStream) -> TokenStream {
-    let t = quote::quote! {#[dyn_cast(File => NormalFile<u8>, Directory, FileSystem, Fifo<u8>, DeviceFile)]};
+/// Returns [dyn_cast](https://docs.rs/cast_trait_object/0.1.4/cast_trait_object/) attributes required by `File` trait.
+///
+/// Requires `use crate::fs::file::*`
+#[proc_macro_attribute]
+pub fn file(_: TokenStream, _: TokenStream) -> TokenStream {
+    let t = quote::quote! {
+        #[::cast_trait_object::dyn_cast(File => NormalFile<u8>, Directory, FileSystem, Fifo<u8>, DeviceFile)]
+        #[::cast_trait_object::dyn_upcast(File)]
+    };
     t.into()
 }
