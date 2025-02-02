@@ -400,6 +400,8 @@ mod kw {
 #[cfg(test)]
 mod tests {
     use quote::ToTokens;
+    use syn::parse::Parser;
+    use crate::sysfs_impl::SysfsDirDerive;
 
     #[test]
     fn test_sysfs_root_impl() {
@@ -413,5 +415,50 @@ mod tests {
 
         let ts: proc_macro2::TokenStream = t.into();
         eprintln!("{:?}", ts.to_string());
+    }
+
+    #[test]
+    fn test_derive_sysfs_with_files() {
+        let ts = quote::quote! {
+            struct Foo {
+                #[file(getter={baz.clone()})]
+                bar: Bar,
+                #[file(getter={baz.clone()})]
+                baz: Baz,
+            }
+        };
+        let derive: SysfsDirDerive = syn::parse2(ts).unwrap();
+
+        let out = quote::quote! {#derive};
+        println!("{}", out.to_string() );
+    }
+
+    #[test]
+    fn test_derive_without_fields() {
+        let ts = quote::quote! {
+            struct Foo {
+                bar: Bar,
+                baz: Baz,
+            }
+        };
+        let derive: SysfsDirDerive = syn::parse2(ts).unwrap();
+
+        let out = quote::quote! {#derive};
+        println!("{}", out.to_string() );
+    }
+
+    #[test]
+    fn test_derive_index_only() {
+        let ts = quote::quote! {
+            struct Foo {
+                bar: Bar,
+                #[index(getter={baz.get()},keys={baz.keys()})]
+                baz: Baz,
+            }
+        };
+        let derive: SysfsDirDerive = syn::parse2(ts).unwrap();
+
+        let out = quote::quote! {#derive};
+        println!("{}", out.to_string() );
     }
 }
