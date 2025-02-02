@@ -14,14 +14,23 @@ impl syn::parse::Parse for ImplSysFsRoot {
     }
 }
 
+macro_rules! some_to_err {
+    ($input:expr,$err:expr) => {
+        match $input {
+            Some(_) => Err($err),
+            None => Ok(()),
+        }
+    }
+}
 
 impl From<ImplSysFsRoot> for proc_macro2::TokenStream {
     fn from(value: ImplSysFsRoot) -> Self {
         let verbatim = &value.struct_def;
-        let num_fields = value.struct_def.fields.len();
+        let num_fields = value.struct_def.fields.len() as u64;
         let struct_name = &value.struct_def.ident;
 
-        let file_arms = value.struct_def.fields.iter().map(|field| FileMatchArbBuilder {field});
+        // all arms except "root"
+        let file_arms = value.struct_def.fields.iter().map(|field| FileMatchArbBuilder {field}).filter(|i| i.field.ident.as_ref().unwrap() != "root");
         let file_names = value.struct_def.fields.iter().map(|field| field.ident.as_ref().unwrap().to_string());
 
         quote::quote! {
@@ -49,13 +58,13 @@ impl From<ImplSysFsRoot> for proc_macro2::TokenStream {
                 }
 
                 fn len(&self) -> IoResult<u64> {
-                    async {Some(#num_fields)}
+                    async {Ok(#num_fields)}.boxed()
                 }
             }
 
-            impl crate::fs::file::Directory for SysFsRootObject {
+            impl crate::fs::file::Directory for #struct_name {
                 fn entries(&self) -> IoResult<usize> {
-                    async {Some(#num_fields)}
+                    async {Ok(#num_fields as usize)}.boxed()
                 }
 
                 fn new_file<'f, 'b: 'f, 'a: 'f>(&'a self, name: &'b str, file: Option<&'b mut dyn NormalFile<u8>>) -> BoxFuture<'f, Result<(), (Option<IoError>, Option<IoError>)>> {
@@ -66,7 +75,7 @@ impl From<ImplSysFsRoot> for proc_macro2::TokenStream {
 
                 fn new_dir<'f, 'a: 'f, 'b: 'f>(&'a self, name: &'b str) -> IoResult<'f, Box<dyn Directory>> {
                     async {
-                        Err(Some(IoError::NotSupported))
+                        Err(IoError::NotSupported)
                     }.boxed()
                 }
 
@@ -74,25 +83,25 @@ impl From<ImplSysFsRoot> for proc_macro2::TokenStream {
                     async {
                         match name {
                             #(#file_arms),*,
-                            _ => async { Err(IoError::NotPresent) }
+                            _ => async { Err(IoError::NotPresent) }.boxed(),
                         }
-                    }
+                    }.boxed()
                 }
 
                 fn file_list(&self) -> IoResult<Vec<String>> {
-                    async {::alloc::vec![#(String::from(#file_names)),*]}.boxed()
+                    async {Ok(::alloc::vec![#(::alloc::string::String::from(#file_names)),*])}.boxed()
                 }
 
                 fn remove<'f, 'a: 'f, 'b: 'f>(&'a self, name: &'b str) -> IoResult<'f, ()> {
                     async {
-                        Err(Some(IoError::NotSupported))
+                        Err(IoError::NotSupported)
                     }.boxed()
                 }
             }
 
-            impl FileSystem for SysFsRootObject {
+            impl FileSystem for #struct_name {
                 fn root(&self) -> Box<dyn Directory> {
-                    Box(self.clone())
+                    Box::new(self.clone())
                 }
 
                 fn get_opt(&self, option: &str) -> Option<FsOptionVariant> {
@@ -128,7 +137,7 @@ impl quote::ToTokens for FileMatchArbBuilder<'_> {
         let field_ident = self.field.ident.as_ref().unwrap().to_string();
         let field_name = self.field.ident.as_ref().unwrap();
 
-        tokens.append_all(quote::quote! { #field_ident => async { Ok(self. #field_name .clone_file()) } });
+        tokens.append_all(quote::quote! { #field_ident => async { Ok(self. #field_name .clone_file()) }.boxed() });
 
     }
 }
@@ -141,6 +150,7 @@ pub struct SysfsDirDerive {
 
 impl syn::parse::Parse for SysfsDirDerive {
     fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
+        eprintln!("Parsing");
         let def: syn::DeriveInput = input.parse()?;
         let syn::Data::Struct(ref ty_def) = def.data else {
             return Err(syn::Error::new(input.span(), "SysfsDirDerive only supports structs"));
@@ -155,7 +165,7 @@ impl syn::parse::Parse for SysfsDirDerive {
                     if let HelperType::File(_) = field.helper {
                         files.push(field)
                     } else {
-                        index.replace(field).ok_or(syn::Error::new(input.span(), "Multiple indexes are not allowed"))?;
+                        some_to_err!(index.replace(field),syn::Error::new(input.span(), "Multiple indexes are not allowed"))?;
                     }
                 },
                 Err(e) if format!("{e}") == "no-attr" => continue,
@@ -211,7 +221,14 @@ impl quote::ToTokens for SysfsDirDerive {
             quote::quote! {::core::result::Err(hootux::fs::IoError::DeviceError)}
         };
 
-        let file_ident = self.files.iter().map(|f| f.pub_name()).flatten();
+        let mut file_ident = self.files.iter().map(|f| f.pub_name()).flatten().peekable();
+        let mut remove_file_err_arm = TokenStream::new();
+        if file_ident.peek().is_some() {
+            remove_file_err_arm = quote::quote! {
+                #(#file_ident) | * => Err(hootux::fs::IoError::NotSupported)
+            }
+        }
+
 
 
         let ts = quote::quote! {
@@ -237,7 +254,7 @@ impl quote::ToTokens for SysfsDirDerive {
 
                 fn remove(&self, name: &str) -> Result<(), IoError> {
                     match {
-                        #(#file_ident) | * => Err(hootux::fs::IoError::NotSupported)
+                        #remove_file_err_arm,
                         r => #remove
                     }
                 }
@@ -265,26 +282,34 @@ impl syn::parse::Parse for HelperArgs {
         let mut getter = None;
         let mut keys = None;
 
+        eprintln!("parsing helper arguments");
         while !input.is_empty() {
             if input.peek(kw::alias) {
                 let _: kw::alias = input.parse()?;
                 let _: syn::Token![=] = input.parse()?;
-                let ident: syn::Ident = input.parse()?;
-                alias.replace(ident.to_string()).ok_or(syn::Error::new(ident.span(), "Found multiple alias"))?;
+                let ident: syn::LitStr = input.parse()?;
+                some_to_err!(alias.replace(ident.value()),syn::Error::new(ident.span(), "Found multiple alias"))?;
 
             } else if input.peek(kw::getter) {
                 let _: kw::getter = input.parse()?;
                 let _: syn::Token![=] = input.parse()?;
-                getter.replace(input.parse()?).ok_or(syn::Error::new(input.span(), "Found multiple getters"))?;
+                some_to_err!(getter.replace(input.parse()?),syn::Error::new(input.span(), "Found multiple getters"))?;
+
 
             } else if input.peek(kw::keys) {
                 let _: kw::keys = input.parse()?;
                 let _: syn::Token![=] = input.parse()?;
-                keys.replace(input.parse()?).ok_or(syn::Error::new(input.span(), "Found multiple keys"))?;
+                some_to_err!(keys.replace(input.parse()?),syn::Error::new(input.span(), "Found multiple keys"))?;
+
 
             } else {
                 return Err(syn::Error::new(input.span(), "Unexpected token"));
             }
+
+            // Skip separator, if none is present then assume end of stream
+            let sep: Result<syn::Token![,],_> = input.parse();
+            if sep.is_err() { break }
+
         };
 
         Ok(Self { alias, getter, keys })
@@ -304,6 +329,12 @@ impl TryFrom<&syn::Attribute> for HelperType {
         } else if value.path().is_ident("index") {
             if args.alias.is_some() {
                 return Err(syn::Error::new(value.span(), "`alias` not valid for index"));
+            }
+            if args.getter.is_none() {
+                return Err(syn::Error::new(value.span(), "`getter` is required for index"));
+            }
+            if args.keys.is_none() {
+                return Err(syn::Error::new(value.span(), "`keys` is required for index"));
             }
             Ok(Self::Index(args))
         } else {
