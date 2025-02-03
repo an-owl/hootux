@@ -200,7 +200,7 @@ impl quote::ToTokens for SysfsDirDerive {
         let index_list_extend = if let Some(ref index) = self.index {
             let HelperType::Index(ref args) = index.helper else {unreachable!()};
             let keys = args.keys.as_ref().unwrap(); // expected arg.
-            Some(quote::quote! {::core::iter::Extend::extend::(&mut v, #keys )})
+            Some(quote::quote! {::core::iter::Extend::extend(&mut v, #keys )})
         } else {
             None
         };
@@ -209,14 +209,14 @@ impl quote::ToTokens for SysfsDirDerive {
         let match_getters = self.files.iter().map(|f| f.match_getter()).chain(self.index.as_ref().map(|f| f.match_getter()));
         let store = if let Some(ref index) = self.index {
             let ident = index.field.ident.as_ref().unwrap();
-            quote::quote! { #ident .store(name)}
+            quote::quote! { self. #ident .store(name)}
         } else {
             quote::quote! {::core::result::Err(hootux::fs::IoError::NotSupported)}
         };
 
         let remove = if let Some(ref index) = self.index {
             let ident = index.field.ident.as_ref().unwrap();
-            quote::quote! { #ident .remove(name)}
+            quote::quote! {self. #ident .remove(name)}
         } else {
             quote::quote! {::core::result::Err(hootux::fs::IoError::DeviceError)}
         };
@@ -225,7 +225,7 @@ impl quote::ToTokens for SysfsDirDerive {
         let mut remove_file_err_arm = TokenStream::new();
         if file_ident.peek().is_some() {
             remove_file_err_arm = quote::quote! {
-                #(#file_ident) | * => Err(hootux::fs::IoError::NotSupported)
+                #(#file_ident) | * => Err(hootux::fs::IoError::NotSupported),
             }
         }
 
@@ -237,24 +237,24 @@ impl quote::ToTokens for SysfsDirDerive {
                     #const_files #add_index
                 }
 
-                fn file_list(&self) -> Vec<String> {
-                    let v = vec![#(#file_iter),*];
+                fn file_list(&self) -> ::alloc::vec::Vec<::alloc::string::String> {
+                    let v = ::alloc::vec![#(#file_iter),*];
                     #index_list_extend
                 }
 
-                fn get_file(&self, name: &str) -> Result<Box<dyn SysfsFile>, IoError> {
+                fn get_file(&self, name: &str) -> ::core::result::Result<::alloc::boxed::Box<dyn ::hootux::fs::sysfs::SysfsFile>, ::hootux::fs::IoError> {
                     match {
                         #(#match_getters),*
                     }
                 }
 
-                fn store(&self, name: &str, file: Box<dyn SysfsFile>) -> Result<(), IoError> {
+                fn store(&self, name: &str, file: ::alloc::boxed::Box<dyn ::hootux::fs::sysfs::SysfsFile>) -> Result<(), ::hootux::fs::IoError> {
                     #store
                 }
 
-                fn remove(&self, name: &str) -> Result<(), IoError> {
+                fn remove(&self, name: &str) -> ::core::result::Result<(),  ::hootux::fs::IoError> {
                     match {
-                        #remove_file_err_arm,
+                        #remove_file_err_arm
                         r => #remove
                     }
                 }
