@@ -122,10 +122,12 @@ pub fn derive_sysfs_dir(input: TokenStream) -> TokenStream {
 ///
 /// Requires `use crate::fs::file::*`
 #[proc_macro_attribute]
-pub fn file(_: TokenStream, _: TokenStream) -> TokenStream {
+pub fn file(_: TokenStream, input: TokenStream) -> TokenStream {
+    let t: proc_macro2::TokenStream = input.into();
     let t = quote::quote! {
-        #[::cast_trait_object::dyn_cast(File => NormalFile<u8>, Directory, FileSystem, Fifo<u8>, DeviceFile)]
+        #[::cast_trait_object::dyn_cast(File => ::hootux::fs::file::NormalFile<u8>, ::hootux::fs::file::Directory, ::hootux::fs::device::FileSystem, ::hootux::fs::device::Fifo<u8>,  ::hootux::fs::device::DeviceFile)]
         #[::cast_trait_object::dyn_upcast(File)]
+        #t
     };
     t.into()
 }
