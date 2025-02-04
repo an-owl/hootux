@@ -108,6 +108,9 @@ pub fn impl_sysfs_root_traits(_: TokenStream, input: TokenStream) -> TokenStream
 /// * keys: Required by `index`, not available to `file`. Used to fetch stored filenames from index. This must return an iterator over [String]
 ///
 /// `file` may be allowed any number of times, `index` may be used zero or one times.
+///
+/// An index will have the methods `len() -> u64`,`remove(&str) -> Result<(),IoError>`,`store(&str,Box<dyn SysfsFile>) -> Result<(),IoError>` called on them.
+/// Using an extension trait is recommended where these are not implemented already is recommended.
 #[proc_macro_derive(SysfsDir, attributes(file,index))]
 pub fn derive_sysfs_dir(input: TokenStream) -> TokenStream {
     let s: sysfs_impl::SysfsDirDerive = syn::parse_macro_input!(input);
