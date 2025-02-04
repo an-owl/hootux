@@ -190,8 +190,8 @@ impl quote::ToTokens for SysfsDirDerive {
         let add_index = { // Add len of index into entries
             let mut ts = TokenStream::new();
             if let Some(ref helper) = self.index {
-                ts.append_all(quote::quote! {+});
-                helper.field.ident.to_tokens(&mut ts);
+                let ident = helper.field.ident.as_ref().unwrap();
+                ts.append_all(quote::quote! {+ self. #ident .len()});
             }
             ts
         };
@@ -238,12 +238,12 @@ impl quote::ToTokens for SysfsDirDerive {
                 }
 
                 fn file_list(&self) -> ::alloc::vec::Vec<::alloc::string::String> {
-                    let v = ::alloc::vec![#(#file_iter),*];
+                    let mut v = ::alloc::vec![#(#file_iter),*];
                     #index_list_extend
                 }
 
                 fn get_file(&self, name: &str) -> ::core::result::Result<::alloc::boxed::Box<dyn ::hootux::fs::sysfs::SysfsFile>, ::hootux::fs::IoError> {
-                    match {
+                    match name {
                         #(#match_getters),*
                     }
                 }
@@ -253,7 +253,7 @@ impl quote::ToTokens for SysfsDirDerive {
                 }
 
                 fn remove(&self, name: &str) -> ::core::result::Result<(),  ::hootux::fs::IoError> {
-                    match {
+                    match name {
                         #remove_file_err_arm
                         r => #remove
                     }
