@@ -429,12 +429,22 @@ impl DevID {
     }
 }
 
+/// Major number must be acquired from the kernel.
+/// Minor numbers can be allocated by the driver owning the major number.
+///
+/// A series of numbers are reserved and may not be allocated at runtime and are reserved for kernel use.
+/// Each reserved value and its use is documented here.
+///
+/// <ol start=0>
+///     <li> Invalid: may not be used </li>
+///     <li> sysfs: All sysfs components use this major number </li>
+/// </ol>
 #[derive(Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Debug)]
 pub struct MajorNum(usize);
 
 impl MajorNum {
     pub fn new() -> Self {
-        static NEXT: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(1); // 0 is not allowed.
+        static NEXT: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(2); // 0 is not allowed.
         Self(NEXT.fetch_add(1,atomic::Ordering::Relaxed))
     }
 }
