@@ -80,12 +80,10 @@ impl From<ImplSysFsRoot> for proc_macro2::TokenStream {
                 }
 
                 fn get_file<'f, 'a: 'f, 'b: 'f>(&'a self, name: &'b str) -> IoResult<'f, Box<dyn File>> {
-                    async {
-                        match name {
-                            #(#file_arms),*,
-                            _ => async { Err(IoError::NotPresent) }.boxed(),
-                        }
-                    }.boxed()
+                    match name {
+                        #(#file_arms),*,
+                        _ => async { Err(IoError::NotPresent) }.boxed(),
+                    }
                 }
 
                 fn file_list(&self) -> IoResult<Vec<String>> {
