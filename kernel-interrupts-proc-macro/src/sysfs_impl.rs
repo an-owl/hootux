@@ -228,7 +228,6 @@ impl quote::ToTokens for SysfsDirDerive {
         }
 
 
-
         let ts = quote::quote! {
             impl hootux::fs::sysfs::SysfsDirectory for #derive_ident {
                 fn entries(&self) -> usize {
@@ -237,7 +236,8 @@ impl quote::ToTokens for SysfsDirDerive {
 
                 fn file_list(&self) -> ::alloc::vec::Vec<::alloc::string::String> {
                     let mut v = ::alloc::vec![#(#file_iter),*];
-                    #index_list_extend
+                    #index_list_extend;
+                    v
                 }
 
                 fn get_file(&self, name: &str) -> ::core::result::Result<::alloc::boxed::Box<dyn ::hootux::fs::sysfs::SysfsFile>, ::hootux::fs::IoError> {
@@ -270,8 +270,8 @@ enum HelperType {
 
 struct HelperArgs {
     alias: Option<String>,
-    getter: Option<syn::ExprBlock>,
-    keys: Option<syn::ExprBlock>,
+    getter: Option<syn::Expr>,
+    keys: Option<syn::Expr>,
 }
 
 impl syn::parse::Parse for HelperArgs {
