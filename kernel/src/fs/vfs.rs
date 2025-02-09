@@ -443,8 +443,13 @@ impl DevID {
 pub struct MajorNum(usize);
 
 impl MajorNum {
+
+    /// Lowest value for publicly available Major numbers.
+    /// All values below this must be documented in the [Self]'s doc comment.
+    const PUBLIC_BASE: usize = 2;
+
     pub fn new() -> Self {
-        static NEXT: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(2); // 0 is not allowed.
+        static NEXT: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(Self::PUBLIC_BASE); // 0 is not allowed.
         Self(NEXT.fetch_add(1,atomic::Ordering::Relaxed))
     }
 }
