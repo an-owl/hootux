@@ -449,7 +449,7 @@ impl MajorNum {
     const PUBLIC_BASE: usize = 2;
 
     pub fn new() -> Self {
-        static NEXT: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(Self::PUBLIC_BASE); // 0 is not allowed.
+        static NEXT: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(MajorNum::PUBLIC_BASE); // 0 is not allowed.
         Self(NEXT.fetch_add(1,atomic::Ordering::Relaxed))
     }
 
