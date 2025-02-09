@@ -207,7 +207,7 @@ impl quote::ToTokens for SysfsDirDerive {
         let match_getters = self.files.iter().map(|f| f.match_getter()).chain(self.index.as_ref().map(|f| f.match_getter()));
         let store = if let Some(ref index) = self.index {
             let ident = index.field.ident.as_ref().unwrap();
-            quote::quote! { self. #ident .store(name)}
+            quote::quote! { self. #ident .store(name,file)}
         } else {
             quote::quote! {::core::result::Err(hootux::fs::IoError::NotSupported)}
         };
