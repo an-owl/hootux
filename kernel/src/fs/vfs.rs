@@ -452,6 +452,14 @@ impl MajorNum {
         static NEXT: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(Self::PUBLIC_BASE); // 0 is not allowed.
         Self(NEXT.fetch_add(1,atomic::Ordering::Relaxed))
     }
+
+    /// Private constructor for reserved major numbers.
+    ///
+    /// Callers must ensure that `n` is less than [Self::PUBLIC_BASE]
+    pub(crate) const fn new_kernel(n: usize) -> Self {
+        debug_assert!(n < Self::PUBLIC_BASE);
+        Self(n)
+    }
 }
 
 impl Display for DevID {
