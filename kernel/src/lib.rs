@@ -21,6 +21,7 @@
 #![allow(incomplete_features)]
 #![feature(generic_const_exprs)] // https://github.com/rust-lang/rust/issues/134044#issuecomment-2526396815 for why this is here
 extern crate alloc;
+extern crate self as hootux;
 pub use mem::allocator::alloc_interface;
 
 mod device_check;
