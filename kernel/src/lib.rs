@@ -17,6 +17,7 @@
 #![feature(link_llvm_intrinsics)]
 #![feature(layout_for_ptr)]
 #![feature(set_ptr_value)]
+#![feature(trait_upcasting)]
 
 #![allow(incomplete_features)]
 #![feature(generic_const_exprs)] // https://github.com/rust-lang/rust/issues/134044#issuecomment-2526396815 for why this is here

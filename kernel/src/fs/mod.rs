@@ -7,6 +7,7 @@ pub mod vfs;
 pub mod file;
 pub mod device;
 pub mod tmpfs;
+pub mod sysfs;
 
 /// Contains the systems VFS. It may not be constructed until a root filesystem can be acquired.
 ///
