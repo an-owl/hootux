@@ -7,7 +7,7 @@ mod unsafe_box;
 mod worm;
 mod single_arc;
 mod io_write;
-mod vtable;
+
 
 pub use mutex::Mutex;
 pub use static_protected::{KernelStatic, UnlockedStatic};
@@ -15,7 +15,6 @@ pub(crate) use unsafe_box::UnsafeBox;
 pub(crate) use worm::Worm;
 pub use single_arc::*;
 pub use io_write::{ToWritableBuffer, WriteableBuffer};
-pub use vtable::*;
 
 /// Struct to provide !Send, !Sync traits
 #[derive(Default, Copy, Clone)]
