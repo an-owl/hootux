@@ -45,7 +45,7 @@ pub fn init_exceptions() {
 
     // SAFETY: This is the only write to `IDT` and it occurs before multiprocessing is initialized
     unsafe { core::ptr::addr_of_mut!(IDT).write(idt); }
-    unsafe { IDT.load() }
+    unsafe { (&mut *(&raw mut IDT)).load() }
 }
 
 extern "x86-interrupt" fn except_breakpoint(stack_frame: InterruptStackFrame) {
@@ -79,7 +79,7 @@ impl RecursiveLock {
     fn new() -> Option<Self> {
         // SAFETY: This is only accessed here and in Self::drop()
         // References are never leaked
-        if unsafe { core::mem::replace(&mut RECURSIVE, true) } {
+        if unsafe { core::mem::replace(&mut *(&raw mut RECURSIVE), true) } {
             Some(RecursiveLock)
         } else {
             None
@@ -339,5 +339,5 @@ pub(crate) fn reg_waker(irq: InterruptIndex, waker: &core::task::Waker) -> Resul
 }
 
 pub fn load_idt() {
-    unsafe { IDT.load(); }
+    unsafe { (&*(&raw const IDT)).load(); }
 }

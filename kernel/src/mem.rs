@@ -94,6 +94,8 @@ unsafe impl FrameAllocator<Size1GiB> for DummyFrameAlloc {
 /// complete physical memory is mapped to virtual memory at the passed
 /// `physical_memory_offset`. Also, this function must be only called once
 /// to avoid aliasing `&mut` references (which is undefined behavior).
+#[allow(dead_code)]
+// will be used in the future
 unsafe fn active_l4_table(physical_memory_offset: VirtAddr) -> &'static mut PageTable {
     use x86_64::registers::control::Cr3;
     let (l4, _) = Cr3::read();

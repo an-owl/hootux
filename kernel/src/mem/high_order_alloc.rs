@@ -368,7 +368,6 @@ pub(super) trait AllocAddressType:
     + Copy
     + Sized
 {
-    fn is_power_of_two(&self) -> bool;
     fn from_u32(origin: u32) -> Self
     where
         Self: Sized;
@@ -378,9 +377,6 @@ pub(super) trait AllocAddressType:
 }
 
 impl AllocAddressType for usize {
-    fn is_power_of_two(&self) -> bool {
-        usize::is_power_of_two(*self)
-    }
 
     fn from_u32(origin: u32) -> Self
     where
@@ -398,9 +394,6 @@ impl AllocAddressType for usize {
 }
 
 impl AllocAddressType for u64 {
-    fn is_power_of_two(&self) -> bool {
-        u64::is_power_of_two(*self)
-    }
 
     fn from_u32(origin: u32) -> Self
     where

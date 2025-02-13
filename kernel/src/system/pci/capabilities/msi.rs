@@ -292,7 +292,7 @@ impl<'a> super::Capability<'a> for MessageSignaledIntX<'a> {
         alloc::boxed::Box::new(self)
     }
 
-    fn any_mut(&'a mut self) -> &mut (dyn Any + 'a) {
+    fn any_mut(&'a mut self) -> &'a mut (dyn Any + 'a) {
         self
     }
 }

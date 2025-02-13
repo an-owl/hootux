@@ -2,7 +2,7 @@ use crate::graphics::pixel::{PixBgr3Byte, PixBgr4Byte, Pixel};
 
 pub mod basic_output;
 
-mod pixel;
+pub mod pixel;
 
 pub static KERNEL_FRAMEBUFFER: crate::util::KernelStatic<FrameBuffer> =
     crate::util::KernelStatic::new();
@@ -200,7 +200,7 @@ mod font {
     }
 }
 
-trait Sprite {
+pub trait Sprite {
     /// Returns the width of `self` in pixels
     fn width(&self) -> usize;
 

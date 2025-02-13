@@ -258,7 +258,7 @@ impl DeviceControl {
     pub fn get_cap_structure_mut<'a>(
         &'a mut self,
         id: capabilities::CapabilityId,
-    ) -> Option<alloc::boxed::Box<dyn capabilities::Capability + 'a>> {
+    ) -> Option<alloc::boxed::Box<dyn capabilities::Capability<'a> + 'a>> {
         match id {
             capabilities::CapabilityId::Null => None, // but why? Null is never stored
             capabilities::CapabilityId::PciPowerManagement => unimplemented!(),

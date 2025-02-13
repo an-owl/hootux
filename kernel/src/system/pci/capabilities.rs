@@ -5,7 +5,7 @@ pub trait Capability<'a> {
 
     fn boxed(self) -> alloc::boxed::Box<(dyn core::any::Any + 'a)>;
 
-    fn any_mut(&'a mut self) -> &mut (dyn core::any::Any + 'a);
+    fn any_mut(&'a mut self) -> &'a mut (dyn core::any::Any + 'a);
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Ord, PartialOrd, Eq)]

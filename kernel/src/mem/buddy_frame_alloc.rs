@@ -882,7 +882,6 @@ pub struct FrameAllocRef<'a> {
 use x86_64::structures::paging::{
     FrameAllocator, FrameDeallocator, PhysFrame, Size1GiB, Size2MiB, Size4KiB,
 };
-use crate::serial_println;
 
 unsafe impl<'a> FrameAllocator<Size4KiB> for FrameAllocRef<'a> {
     fn allocate_frame(&mut self) -> Option<PhysFrame<Size4KiB>> {

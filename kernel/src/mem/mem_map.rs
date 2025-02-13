@@ -5,7 +5,7 @@
 
 use super::*;
 use crate::mem::buddy_frame_alloc::FrameAllocRef;
-use x86_64::structures::paging::mapper::{FlagUpdateError, TranslateError, UnmapError};
+use x86_64::structures::paging::mapper::{FlagUpdateError, TranslateError};
 
 /// Flags for Normal data in L1 (4K) pages.
 pub const PROGRAM_DATA_FLAGS: PageTableFlags = PageTableFlags::from_bits_truncate((1 << 63) | 0b11);
@@ -144,7 +144,7 @@ pub(crate) unsafe fn unmap_and_free(addr: VirtAddr) -> Result<(),()>{
             let op = frame_attribute_table::FatOperation::UnAlias;
             let fae = frame_attribute_table::ATTRIBUTE_TABLE_HEAD.do_op_phys(entry.addr(),op);
 
-            let mut free = if let Some(ref fae) = fae {
+            let free = if let Some(ref fae) = fae {
                 // if not aliased
                 fae.alias_count() <= 1
             } else {

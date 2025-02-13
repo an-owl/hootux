@@ -70,18 +70,17 @@ impl BuddyHeapInner {
     /// Extends `self` by `len * ORDER_MAX_SIZE` this fn may require an allocation to self, if no
     /// space is available use [Self::stack_extend]
     ///
-    /// #Panics
+    /// # Panics
     ///
     /// This fn will panic if [core::alloc::AllocError] is encountered
     fn extend(&mut self, len: usize) {
         if let Some(region) = self
             .high_order
             .allocate(Layout::from_size_align(len, 0x1000).unwrap())
-        // this returns a a FreeRegion not a pointer so the size is known regardless of the input
+        // this returns a FreeRegion not a pointer so the size is known regardless of the input
         {
             let (ptr, _) = region.as_raw();
             for i in 0..(HIGH_ORDER_BLOCK_RATIO as usize) {
-                let bs = ptr + (ORDER_MAX_SIZE * i);
                 self.free_list[ORDERS - 1].push_back(i);
             }
             return;
@@ -97,6 +96,8 @@ impl BuddyHeapInner {
     }
 
     /// Extends self by moving the end address by `len * ORDER_MAX_SIZE` returning region extended
+    #[allow(dead_code)]
+    // im not sure why I added this if I wasn't going to use it. It's probably here for something but IDK what.
     fn extend_allocate(&mut self, len: usize) -> NonNull<[u8]> {
         let ret = self.end;
         self.end += len * ORDER_MAX_SIZE;

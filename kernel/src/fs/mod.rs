@@ -23,7 +23,7 @@ pub const PATH_SEPARATOR: char = '/';
 
 /// Initializes the VFS,
 pub fn init_fs(vfs: alloc::boxed::Box<dyn device::FileSystem>) {
-    assert!(unsafe { VIRTUAL_FILE_SYSTEM.is_none() });
+    assert!(unsafe { (& *(&raw const VIRTUAL_FILE_SYSTEM)).is_some() });
     log::debug!("Initializing VFS with: {} type: {}",vfs.device(), vfs.driver_name());
     unsafe { VIRTUAL_FILE_SYSTEM = Some(alloc::boxed::Box::new(vfs::VirtualFileSystem::new(vfs))); }
 }
@@ -35,7 +35,7 @@ pub fn init_fs(vfs: alloc::boxed::Box<dyn device::FileSystem>) {
 /// Technically this function should be unsafe. This is because is calls [Option::unwrap_unchecked]
 /// however it is not possible for external code to call this fn before the VFS is initialized.
 pub fn get_vfs() -> &'static vfs::VirtualFileSystem {
-    let t =  unsafe { VIRTUAL_FILE_SYSTEM.as_ref() };
+    let t =  unsafe { (&*(&raw const VIRTUAL_FILE_SYSTEM)).as_ref() };
     unsafe { t.unwrap_unchecked() }
 }
 

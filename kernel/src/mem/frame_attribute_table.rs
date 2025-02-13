@@ -627,7 +627,7 @@ impl FrameAttributes {
         self.inner.alias_count.load(Ordering::Relaxed)
     }
 
-    fn alias(&self) {
+    pub fn alias(&self) {
         self.inner.alias_count.fetch_add(1,Ordering::Relaxed);
     }
 
@@ -636,7 +636,7 @@ impl FrameAttributes {
     /// # Safety
     ///
     /// The caller must ensure that the frame is aliased by the new value of the alias count.
-    unsafe fn de_alias(&self) {
+    pub unsafe fn de_alias(&self) {
         self.inner.alias_count.fetch_sub(1,Ordering::Relaxed);
     }
 

@@ -15,7 +15,8 @@ lazy_static! {
             static mut STACK: [u8; STACK_SIZE] = [0; STACK_SIZE];
 
             // SAFETY: This is safe STACK is only accessed by the bsp
-            let stack_start = unsafe {VirtAddr::from_ptr(core::ptr::addr_of!(STACK)) };
+            #[allow(unused_unsafe)] // IMO this should have unsafe {}
+            let stack_start = VirtAddr::from_ptr(&raw const STACK);
             let stack_end = stack_start + STACK_SIZE as u64;
             stack_end
         };

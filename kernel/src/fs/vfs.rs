@@ -43,7 +43,7 @@ impl VirtualFileSystem {
         // todo vfs-persistent pseudo filesystems should be mounted here
     }
 
-    pub fn open<'a>(&'a self, path: &'a str) -> VfsFuture<Box<dyn File>> {
+    pub fn open<'a>(&'a self, path: &'a str) -> VfsFuture<'a, Box<dyn File>> {
         async {
             path.is_absolute()?;
             let mut file = self.root.root().clone_file();
@@ -94,7 +94,7 @@ impl VirtualFileSystem {
     /// On success this will return the requested directory, the remaining path segment and the depth of the returned file.
     ///
     /// In the path `/usr/lib/share` a depth of `0` refers to `usr` a depth of `2` refers to `share`.
-    fn traverse_to_dir<'a>(&'a self, path: &'a str) -> VfsFuture<(Box<dyn Directory>,&'a str , usize)> {
+    fn traverse_to_dir<'a>(&'a self, path: &'a str) -> VfsFuture<'a, (Box<dyn Directory>,&'a str , usize)> {
         async {
             //path.is_absolute()?;
             // p_iter[0] is "" because of leading slash
@@ -136,7 +136,7 @@ impl VirtualFileSystem {
     /// # Errors
     ///
     /// Errors what return a path depth will contain [usize::MAX], the caller should set this to the appropriate value.
-    fn traverse_file<'a>(&'a self, dir: &'a dyn Directory, name: &'a str) -> VfsFuture<Box<dyn File>> {
+    fn traverse_file<'a>(&'a self, dir: &'a dyn Directory, name: &'a str) -> VfsFuture<'a, Box<dyn File>> {
         async move {
             if name == "." || name == "" {
                 return Ok(dir.clone_file())
@@ -170,7 +170,7 @@ impl VirtualFileSystem {
     }
 
     /// Creates a new directory at the specified path, returns a file objet to the new directory.
-    pub fn mkdir<'a>(&'a self, path: &'a str) -> VfsFuture<Box<dyn Directory>> {
+    pub fn mkdir<'a>(&'a self, path: &'a str) -> VfsFuture<'a, Box<dyn Directory>> {
         async {
             path.is_absolute()?;
             let (dir, name, _) = self.traverse_to_dir(path).await?;
@@ -179,7 +179,7 @@ impl VirtualFileSystem {
         }.boxed()
     }
 
-    pub fn new_file<'a,>(&'a self, path: &'a str, file: Option<&'a mut dyn NormalFile<u8>>) -> VfsFuture<()> {
+    pub fn new_file<'a,>(&'a self, path: &'a str, file: Option<&'a mut dyn NormalFile<u8>>) -> VfsFuture<'a, ()> {
         async {
             path.is_absolute()?;
             let (dir, name, _) = self.traverse_to_dir(path).await?;
@@ -194,7 +194,7 @@ impl VirtualFileSystem {
     ///
     /// If the file is a mountpoint this will fail with  `Err(IsDevice)`,
     /// The file must be removed via [Self::umount] instead.
-    pub fn remove<'a>(&'a self, path: &'a str) -> VfsFuture<()> {
+    pub fn remove<'a>(&'a self, path: &'a str) -> VfsFuture<'a, ()> {
         async {
             path.is_absolute()?;
             let (file, name, _) = self.traverse_to_dir(path).await?;
@@ -235,7 +235,7 @@ impl VirtualFileSystem {
     /// - `fs.device()` must not return [DevID::NULL].
     /// - Excluding the last segment `mountpoint` must be a valid accessible location in the filesystem.
     // todo should this be sync?
-    pub fn mount<'a>(&'a self, mut fs: Box<dyn FileSystem>, mountpoint: &'a str, _vfs_options: MountFlags, options: &'a str) -> VfsFuture<()> {
+    pub fn mount<'a>(&'a self, mut fs: Box<dyn FileSystem>, mountpoint: &'a str, _vfs_options: MountFlags, options: &'a str) -> VfsFuture<'a, ()> {
         async {
 
             //log::info!("Mounting {} to {mountpoint} ({})", fs.device(), fs.raw_file().unwrap_or(fs.driver_name()) );
@@ -255,7 +255,7 @@ impl VirtualFileSystem {
     /// - The requested path must allow mounting device files.
     /// - `fs.device()` must not return [DevID::NULL].
     /// - Excluding the last segment `mountpoint` must be a valid accessible location in the filesystem.
-    pub fn mount_dev<'a>(&'a self, dev: Box<dyn DeviceFile>, mountpoint: &'a str) -> VfsFuture<()> {
+    pub fn mount_dev<'a>(&'a self, dev: Box<dyn DeviceFile>, mountpoint: &'a str) -> VfsFuture<'a, ()> {
         async move {
             mountpoint.is_absolute()?;
             let id = dev.device();
@@ -328,7 +328,7 @@ impl VirtualFileSystem {
         self.device_ctl.read().mounts.search(dev).map(|d| d.file.clone_file().dyn_cast().ok().unwrap())
     }
 
-    pub fn file_list<'a>(&'a self, path: &'a str) -> VfsFuture<alloc::vec::Vec<String>> {
+    pub fn file_list<'a>(&'a self, path: &'a str) -> VfsFuture<'a, alloc::vec::Vec<String>> {
         async {
             path.is_absolute()?;
             let (dir,name,depth) = self.traverse_to_dir(path).await?;
