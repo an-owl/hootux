@@ -83,8 +83,12 @@ achieve them.
    - ~~RAM-disk support~~
      - With quotas
      - This doesn't seem too hard.
-   - Overhaul SysFs to use FS API.
-     - Also add sync access to allow optimized usage.
+   - ~~Overhaul SysFs to use FS API.~~
+     - ~~Also add sync access to allow optimized usage.~~
+     - Port existing drivers to use this
+       - PCI
+       - Serial
+     - port firmware submodule
  - Investigate making drivers the sole owners of PCI devices
    - Kernel requires some ownership, pass a dyn Into<pci::DeviceControl> to the kernel
  - Fix PCI ownership models
