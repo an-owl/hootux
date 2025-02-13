@@ -29,7 +29,7 @@ impl crate::util::Mutex<SleepQueue> {
         let mut l = if let Some(l) = self.try_lock() {
             l
         } else {
-            return
+            return;
         };
 
         if l.list.front().is_some_and(|t| t.try_wake(ct)) {

@@ -3,8 +3,7 @@
 //!
 //! Everything within this module is unstable.
 
-
-extern {
+extern "C" {
 
     /// Fetches the return address of the current fn.
     /// This will ignore inlining.
@@ -29,14 +28,12 @@ extern {
 /// This fn is not unsafe in its current state (rustc 1.77.0), due to its instability it is treated as unsafe
 #[macro_export]
 macro_rules! return_address {
-    () => {
-        {
-            let __hootux_return_address_macro_binding = $crate::llvm::private_return_address(0);
-            if __hootux_return_address_macro_binding.is_null() {
-                None
-            } else {
-                Some(__hootux_return_address_macro_binding)
-            }
+    () => {{
+        let __hootux_return_address_macro_binding = $crate::llvm::private_return_address(0);
+        if __hootux_return_address_macro_binding.is_null() {
+            None
+        } else {
+            Some(__hootux_return_address_macro_binding)
         }
-    };
+    }};
 }

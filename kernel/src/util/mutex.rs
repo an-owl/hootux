@@ -1,4 +1,4 @@
-use core::cell::{UnsafeCell};
+use core::cell::UnsafeCell;
 use core::ops::{Deref, DerefMut};
 use core::sync::atomic;
 use core::sync::atomic::Ordering;
@@ -134,36 +134,32 @@ impl<'a, T> ReentrantMutex<T> {
     /// Attempts to lock control bit returns None if control bit is locked.
     #[inline]
     pub fn try_lock_inner(&self) -> Option<ReentrantMutexGuard<T>> {
-        self.try_control(||
-        {
-            match self.owner.load(Ordering::Relaxed) {
-                None => {
-                    self.owner.store(Some(crate::who_am_i()),Ordering::Acquire);
-                    self.lock_count.fetch_add(1,Ordering::Acquire);
+        self.try_control(|| match self.owner.load(Ordering::Relaxed) {
+            None => {
+                self.owner.store(Some(crate::who_am_i()), Ordering::Acquire);
+                self.lock_count.fetch_add(1, Ordering::Acquire);
 
-                    let r = ReentrantMutexGuard {
-                        master: &self,
-                        _marker: core::marker::PhantomData,
-                        _unsend: super::PhantomUnsend::default(),
-                    };
-                    Some(r)
-                }
-
-                Some(owner) if owner == crate::mp::who_am_i() => {
-                    self.lock_count.fetch_add(1,Ordering::Acquire);
-                    let r = ReentrantMutexGuard {
-                        master: &self,
-                        _marker: core::marker::PhantomData,
-                        _unsend: super::PhantomUnsend::default(),
-                    };
-                    Some(r)
-                }
-
-                _ => {
-                    None
-                }
+                let r = ReentrantMutexGuard {
+                    master: &self,
+                    _marker: core::marker::PhantomData,
+                    _unsend: super::PhantomUnsend::default(),
+                };
+                Some(r)
             }
-        }).ok()?
+
+            Some(owner) if owner == crate::mp::who_am_i() => {
+                self.lock_count.fetch_add(1, Ordering::Acquire);
+                let r = ReentrantMutexGuard {
+                    master: &self,
+                    _marker: core::marker::PhantomData,
+                    _unsend: super::PhantomUnsend::default(),
+                };
+                Some(r)
+            }
+
+            _ => None,
+        })
+        .ok()?
     }
 
     /// Frees the current lock, decrementing the count by one
@@ -172,11 +168,11 @@ impl<'a, T> ReentrantMutex<T> {
         // This does not require acquiring `control`, all other CPUs attempting to lock self will
         // fail until the owner is updated.
         // Only the current owner can change `lock_count` so self cannot be locked by another CPU until `owner` is cleared
-        let nc = self.lock_count.fetch_sub(1,Ordering::Release);
+        let nc = self.lock_count.fetch_sub(1, Ordering::Release);
 
         // fetch sub fetches the value **before** sub, if nc is 1 then lock_count is 0
         if nc == 1 {
-            self.owner.store(None,Ordering::Release)
+            self.owner.store(None, Ordering::Release)
         }
     }
 
@@ -211,28 +207,22 @@ impl<'a, T> ReentrantMutex<T> {
     /// This is intended for use with interrupts. However
     pub fn try_lock_pedantic(&self) -> Option<ReentrantMutexGuard<T>> {
         loop {
-            match self.try_control(|| {
-                match self.owner.load(Ordering::Relaxed) {
-                    None => {
-                        self.owner.store(Some(crate::who_am_i()),Ordering::Acquire);
-                        self.lock_count.fetch_add(1,Ordering::Acquire);
+            match self.try_control(|| match self.owner.load(Ordering::Relaxed) {
+                None => {
+                    self.owner.store(Some(crate::who_am_i()), Ordering::Acquire);
+                    self.lock_count.fetch_add(1, Ordering::Acquire);
 
-                        let r = ReentrantMutexGuard {
-                            master: &self,
-                            _marker: core::marker::PhantomData,
-                            _unsend: super::PhantomUnsend::default(),
-                        };
-                        Some(Ok(r))
-                    }
-
-                    Some(owner) if owner == crate::mp::who_am_i() => {
-                        Some(Err(()))
-                    }
-
-                    _ => {
-                        None
-                    }
+                    let r = ReentrantMutexGuard {
+                        master: &self,
+                        _marker: core::marker::PhantomData,
+                        _unsend: super::PhantomUnsend::default(),
+                    };
+                    Some(Ok(r))
                 }
+
+                Some(owner) if owner == crate::mp::who_am_i() => Some(Err(())),
+
+                _ => None,
             }) {
                 Ok(Some(Ok(g))) => return Some(g),
 
@@ -242,25 +232,29 @@ impl<'a, T> ReentrantMutex<T> {
                 // Another CPU is owner, spin
                 Ok(None) => {
                     core::hint::spin_loop();
-                    continue
-                },
+                    continue;
+                }
 
                 // control bit is locked, try again
                 Err(_) => {
                     core::hint::spin_loop();
-                    continue
-                },
+                    continue;
+                }
             }
         }
     }
 
     /// Attempts to fetch the control bit, if successful calls `f()` and returns whether it succeeded
-    fn try_control<F,R>(&self, f: F) -> Result<R,()>
-        where F: FnOnce() -> R
+    fn try_control<F, R>(&self, f: F) -> Result<R, ()>
+    where
+        F: FnOnce() -> R,
     {
-        if let Ok(_) = self.control.compare_exchange_weak(false,true,Ordering::Acquire,Ordering::Relaxed) {
+        if let Ok(_) =
+            self.control
+                .compare_exchange_weak(false, true, Ordering::Acquire, Ordering::Relaxed)
+        {
             let r = Ok(f());
-            self.control.store(false,Ordering::Release);
+            self.control.store(false, Ordering::Release);
             r
         } else {
             Err(())

@@ -11,11 +11,7 @@ impl Parse for OkOrLazy {
         let _ = input.parse::<syn::Token![=>]>()?;
         let err_branch = input.parse()?;
 
-
-        Ok(Self {
-            expr,
-            err_branch,
-        })
+        Ok(Self { expr, err_branch })
     }
 }
 
@@ -36,8 +32,8 @@ impl From<OkOrLazy> for proc_macro2::TokenStream {
 
 #[cfg(test)]
 mod test {
-    use quote::{quote};
     use crate::lazy_prop::OkOrLazy;
+    use quote::quote;
 
     #[test]
     fn parse_ok() {
@@ -48,6 +44,6 @@ mod test {
     fn codegen_succeeds() {
         let ok: OkOrLazy = syn::parse2(quote! {foo.bar() => () }).unwrap();
         let ret: proc_macro2::TokenStream = ok.into();
-        eprintln!("{}",ret.to_string());
+        eprintln!("{}", ret.to_string());
     }
 }

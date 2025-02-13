@@ -5,8 +5,8 @@ use log::{error, warn};
 use x86_64::structures::idt::{InterruptDescriptorTable, InterruptStackFrame, PageFaultErrorCode};
 
 pub mod apic;
-pub mod vector_tables;
 pub mod buff;
+pub mod vector_tables;
 
 pub const PIC_0_OFFSET: u8 = 32;
 pub const PIC_1_OFFSET: u8 = PIC_0_OFFSET + 8;
@@ -17,7 +17,6 @@ pub static PICS: spin::Mutex<pic8259::ChainedPics> =
     spin::Mutex::new(unsafe { pic8259::ChainedPics::new(PIC_0_OFFSET, PIC_1_OFFSET) });
 
 static mut IDT: InterruptDescriptorTable = InterruptDescriptorTable::new();
-
 
 pub fn init_exceptions() {
     let mut idt = InterruptDescriptorTable::new();
@@ -36,15 +35,19 @@ pub fn init_exceptions() {
     }
 
     idt[InterruptIndex::Keyboard.as_u8()].set_handler_fn(keyboard_interrupt_handler);
-    idt.general_protection_fault.set_handler_fn(except_general_protection);
-    idt.segment_not_present.set_handler_fn(except_seg_not_present);
+    idt.general_protection_fault
+        .set_handler_fn(except_general_protection);
+    idt.segment_not_present
+        .set_handler_fn(except_seg_not_present);
     idt[32].set_handler_fn(crate::mem::tlb::int_shootdown_wrapper);
     idt[33].set_handler_fn(apic_error);
     bind_stubs(&mut idt);
     idt[255].set_handler_fn(spurious);
 
     // SAFETY: This is the only write to `IDT` and it occurs before multiprocessing is initialized
-    unsafe { core::ptr::addr_of_mut!(IDT).write(idt); }
+    unsafe {
+        core::ptr::addr_of_mut!(IDT).write(idt);
+    }
     unsafe { (&mut *(&raw mut IDT)).load() }
 }
 
@@ -95,7 +98,6 @@ impl Drop for RecursiveLock {
     }
 }
 
-
 extern "x86-interrupt" fn except_page(sf: InterruptStackFrame, e: PageFaultErrorCode) {
     use x86_64::registers::control::Cr2;
 
@@ -107,23 +109,24 @@ extern "x86-interrupt" fn except_page(sf: InterruptStackFrame, e: PageFaultError
             let fix = core::mem::MaybeUninit::new(fix);
             unsafe {
                 core::arch::asm!(
-                "xchg rsp,[r12]",
-                "call _page_fault_fixup_inner",
-                "xchg rsp,[r12]",
-                in("r12") &sf.stack_pointer,
-                in("rdi") &fix,
-                clobber_abi("C")
-            );
+                    "xchg rsp,[r12]",
+                    "call _page_fault_fixup_inner",
+                    "xchg rsp,[r12]",
+                    in("r12") &sf.stack_pointer,
+                    in("rdi") &fix,
+                    clobber_abi("C")
+                );
             }
             core::mem::forget(fix);
             return;
         } else {
-            if let Ok(()) = crate::mem::frame_attribute_table::ATTRIBUTE_TABLE_HEAD.fixup(Cr2::read().unwrap()) {
+            if let Ok(()) =
+                crate::mem::frame_attribute_table::ATTRIBUTE_TABLE_HEAD.fixup(Cr2::read().unwrap())
+            {
                 return;
             }
         }
     }
-
 
     println!("*EXCEPTION: PAGE FAULT*\n");
 
@@ -146,7 +149,9 @@ extern "x86-interrupt" fn except_page(sf: InterruptStackFrame, e: PageFaultError
 /// after calling it.
 #[no_mangle]
 unsafe extern "C" fn _page_fault_fixup_inner(fix: *mut crate::mem::virt_fixup::CachedFixup) {
-    unsafe { fix.read().fixup(); }
+    unsafe {
+        fix.read().fixup();
+    }
 }
 
 extern "x86-interrupt" fn except_general_protection(sf: InterruptStackFrame, e: u64) {
@@ -263,7 +268,6 @@ impl InterruptIndex {
     }
 }
 
-
 /// Attempts to reserve `count` contiguous interrupts. Starting at `req_priority`.
 /// If `count` contiguous interrupts cannot be located this fn will return the next highest number
 /// of contiguous interrupts. The caller can then make a decision on how to reduce the number of IRQs requested.
@@ -289,7 +293,9 @@ pub fn reserve_irq(req_priority: u8, count: u8) -> Result<u8, u8> {
 
 /// Reserves a single irq without locking the IHR
 pub fn reserve_single(req_priority: u8) -> Option<u8> {
-    vector_tables::IHR.reserve_contiguous(req_priority.max(PUB_VEC_START), 1).ok()
+    vector_tables::IHR
+        .reserve_contiguous(req_priority.max(PUB_VEC_START), 1)
+        .ok()
 }
 
 /// Registers an interrupt handler to the given IRQ. This function will return `Ok(())` on success
@@ -339,5 +345,7 @@ pub(crate) fn reg_waker(irq: InterruptIndex, waker: &core::task::Waker) -> Resul
 }
 
 pub fn load_idt() {
-    unsafe { (&*(&raw const IDT)).load(); }
+    unsafe {
+        (&*(&raw const IDT)).load();
+    }
 }

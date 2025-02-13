@@ -148,7 +148,6 @@ impl Ord for DeviceControl {
 }
 
 impl DeviceControl {
-
     // This is required because rustc cannot determine that raw pointers point to an array
     #[allow(invalid_reference_casting)]
     fn new(cfg_region_addr: u64, address: DeviceAddress) -> Option<Self> {
@@ -158,7 +157,6 @@ impl DeviceControl {
                 .unwrap()
         };
 
-
         let header_region =
             unsafe { &mut *(&mut cfg_region[0] as *mut _ as *mut configuration::CommonHeader) };
 
@@ -166,7 +164,6 @@ impl DeviceControl {
             return None;
         }
         let header_type = header_region.header_type();
-
 
         // Drop to prevent aliasing
         let header: &mut dyn PciHeader = match header_type {

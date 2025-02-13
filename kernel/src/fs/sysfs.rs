@@ -25,7 +25,10 @@ static mut SYSFS_ROOT: Option<SysFsRoot> = None;
 
 /// Initialize sysfs. **Must** be called by binary before [hootux::mp::start_mp] is called.
 pub fn init() {
-    assert!(crate::runlevel::runlevel() < crate::runlevel::Runlevel::Kernel, "sysfs::init(): Called too late.");
+    assert!(
+        crate::runlevel::runlevel() < crate::runlevel::Runlevel::Kernel,
+        "sysfs::init(): Called too late."
+    );
     // SAFETY: checking
     unsafe { SysFsRoot::init() };
 }
@@ -45,7 +48,6 @@ pub struct SysFsRoot {
 }
 
 impl SysFsRoot {
-
     /// Constructs a new SysfsRoot and stores it in [SYSFS_ROOT].
     ///
     /// # Safety
@@ -58,10 +60,14 @@ impl SysFsRoot {
     ///
     /// This will panic if it has already been called.
     unsafe fn init() {
-        core::ptr::replace(&raw mut SYSFS_ROOT, Some(Self {
-            //firmware: SysfsFirmware {},
-            bus: bus::SysfsBus::init()
-        })).expect("SYSFS_ROOT already initialized");
+        core::ptr::replace(
+            &raw mut SYSFS_ROOT,
+            Some(Self {
+                //firmware: SysfsFirmware {},
+                bus: bus::SysfsBus::init(),
+            }),
+        )
+        .expect("SYSFS_ROOT already initialized");
     }
 
     /// Fetches a new SysfsRoot file-object.
@@ -69,7 +75,10 @@ impl SysFsRoot {
     /// This does not actually construct a new SysfsRoot. See [Self::init]
     pub fn new() -> Self {
         // SAFETY: This fn assumes that SYSFS_ROOT is immutable at this stage.
-        unsafe { &mut* &raw mut SYSFS_ROOT }.as_ref().unwrap().clone()
+        unsafe { &mut *&raw mut SYSFS_ROOT }
+            .as_ref()
+            .unwrap()
+            .clone()
     }
 }
 

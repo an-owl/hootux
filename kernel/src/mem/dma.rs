@@ -6,25 +6,33 @@ use core::ops::DerefMut;
 
 pub type DmaBuff<'a> = Box<dyn DmaTarget + 'a>;
 
-pub struct DmaGuard<T,C> {
+pub struct DmaGuard<T, C> {
     inner: core::mem::ManuallyDrop<C>,
 
     _phantom: PhantomData<T>,
     lock: Option<alloc::sync::Arc<core::sync::atomic::AtomicBool>>,
 }
 
-impl<T,C> Drop for DmaGuard<T,C> {
+impl<T, C> Drop for DmaGuard<T, C> {
     fn drop(&mut self) {
-        if !self.lock.take().is_some_and(|v| v.load(atomic::Ordering::Acquire)) {
+        if !self
+            .lock
+            .take()
+            .is_some_and(|v| v.load(atomic::Ordering::Acquire))
+        {
             // SAFETY: Well, we definitely aren't using this anymore
             unsafe { core::mem::ManuallyDrop::drop(&mut self.inner) }
         }
     }
 }
 
-impl<T,C> DmaGuard<T,C> {
+impl<T, C> DmaGuard<T, C> {
     pub fn unwrap(mut self) -> C {
-        if self.lock.take().is_some_and(|v| v.load(atomic::Ordering::Acquire)) {
+        if self
+            .lock
+            .take()
+            .is_some_and(|v| v.load(atomic::Ordering::Acquire))
+        {
             panic!("DmaGuard::unwrap(): Called while data was locked");
         }
         // SAFETY: `self` is forgotten immediately after this
@@ -34,7 +42,7 @@ impl<T,C> DmaGuard<T,C> {
     }
 }
 
-unsafe impl<T: 'static + Send, A: Allocator + Send + 'static> DmaTarget for DmaGuard<T,Vec<T, A>> {
+unsafe impl<T: 'static + Send, A: Allocator + Send + 'static> DmaTarget for DmaGuard<T, Vec<T, A>> {
     fn as_mut(&mut self) -> *mut [u8] {
         let ptr = self.inner.as_mut_ptr();
         let elem_size = size_of::<T>();
@@ -42,7 +50,7 @@ unsafe impl<T: 'static + Send, A: Allocator + Send + 'static> DmaTarget for DmaG
     }
 }
 
-unsafe impl<T: Send + 'static, A: Send + Allocator + 'static> DmaTarget for DmaGuard<T,Box<T,A>> {
+unsafe impl<T: Send + 'static, A: Send + Allocator + 'static> DmaTarget for DmaGuard<T, Box<T, A>> {
     fn as_mut(&mut self) -> *mut [u8] {
         let ptr = self.inner.as_mut() as *mut T as *mut u8;
         let elem_size = size_of::<T>();
@@ -50,22 +58,35 @@ unsafe impl<T: Send + 'static, A: Send + Allocator + 'static> DmaTarget for DmaG
     }
 }
 
-
 unsafe impl<'a, T: Send> DmaTarget for DmaGuard<T, &'a mut T> {
-
     fn as_mut(&mut self) -> *mut [u8] {
-        unsafe { core::slice::from_raw_parts_mut(self.inner.deref_mut() as *mut _ as *mut u8, size_of_val(&*self.inner)) }
+        unsafe {
+            core::slice::from_raw_parts_mut(
+                self.inner.deref_mut() as *mut _ as *mut u8,
+                size_of_val(&*self.inner),
+            )
+        }
     }
 }
 
-unsafe impl<T,C> DmaClaimable for DmaGuard<T, C> where Self: DmaTarget {
-    fn claim<'a,'b>(mut self) -> Option<(DmaClaimed<Self>,Box<dyn DmaTarget + 'b>)> {
-
+unsafe impl<T, C> DmaClaimable for DmaGuard<T, C>
+where
+    Self: DmaTarget,
+{
+    fn claim<'a, 'b>(mut self) -> Option<(DmaClaimed<Self>, Box<dyn DmaTarget + 'b>)> {
         // Lazily constructed, because this may not actually be used.
         if let Some(lock) = self.lock.as_ref() {
-            lock.compare_exchange(false,true, atomic::Ordering::Acquire, atomic::Ordering::Relaxed).ok()?;
+            lock.compare_exchange(
+                false,
+                true,
+                atomic::Ordering::Acquire,
+                atomic::Ordering::Relaxed,
+            )
+            .ok()?;
         } else {
-            self.lock = Some(alloc::sync::Arc::new(core::sync::atomic::AtomicBool::new(true)));
+            self.lock = Some(alloc::sync::Arc::new(core::sync::atomic::AtomicBool::new(
+                true,
+            )));
         }
 
         let b = Box::new(BorrowedDmaGuard {
@@ -73,11 +94,13 @@ unsafe impl<T,C> DmaClaimable for DmaGuard<T, C> where Self: DmaTarget {
             lock: self.lock.as_ref().unwrap().clone(), // Guaranteed to be some
             _phantom: PhantomData,
         });
-        Some((DmaClaimed{inner: self}, b))
+        Some((DmaClaimed { inner: self }, b))
     }
 
     fn query_owned(&self) -> bool {
-        self.lock.as_ref().is_some_and(|v| v.load(atomic::Ordering::Acquire))
+        self.lock
+            .as_ref()
+            .is_some_and(|v| v.load(atomic::Ordering::Acquire))
     }
 }
 
@@ -103,7 +126,11 @@ impl Drop for BorrowedDmaGuard<'_> {
 
 impl<T, C: DmaPointer<T>> From<C> for DmaGuard<T, C> {
     fn from(inner: C) -> Self {
-        DmaGuard { inner: core::mem::ManuallyDrop::new(inner), _phantom: PhantomData, lock: None }
+        DmaGuard {
+            inner: core::mem::ManuallyDrop::new(inner),
+            _phantom: PhantomData,
+            lock: None,
+        }
     }
 }
 
@@ -111,8 +138,7 @@ pub struct StackDmaGuard<'a, T: ?Sized + Send> {
     data: &'a mut T,
 }
 
-impl <'a, T: ?Sized + Send> StackDmaGuard<'a, T> {
-
+impl<'a, T: ?Sized + Send> StackDmaGuard<'a, T> {
     /// Constructs a StackDmaGuard for `data`.
     ///
     /// # Safety
@@ -120,9 +146,7 @@ impl <'a, T: ?Sized + Send> StackDmaGuard<'a, T> {
     /// The caller must guarantee that `data` does not outlive `self` and that all futures `self`
     /// is given to are completed.
     pub unsafe fn new(data: &'a mut T) -> Self {
-        Self {
-            data
-        }
+        Self { data }
     }
 }
 
@@ -134,19 +158,17 @@ unsafe impl<T: ?Sized + Send> DmaTarget for StackDmaGuard<'_, T> {
     }
 }
 
-
 mod sealed {
     pub trait Sealed {}
 }
 
 trait DmaPointer<T>: sealed::Sealed {}
 
+impl<T, A: Allocator> sealed::Sealed for Vec<T, A> {}
+impl<T, A: Allocator> DmaPointer<T> for Vec<T, A> {}
 
-impl<T,A:Allocator> sealed::Sealed for Vec<T,A> {}
-impl<T,A:Allocator> DmaPointer<T> for Vec<T,A> {}
-
-impl<T,A:Allocator> sealed::Sealed for Box<T,A> {}
-impl<T,A:Allocator> DmaPointer<T> for Box<T,A> {}
+impl<T, A: Allocator> sealed::Sealed for Box<T, A> {}
+impl<T, A: Allocator> DmaPointer<T> for Box<T, A> {}
 
 pub struct PhysicalRegionDescriber<'a> {
     data: *mut [u8],
@@ -169,9 +191,9 @@ impl Iterator for PhysicalRegionDescriber<'_> {
     fn next(&mut self) -> Option<Self::Item> {
         let base = self.next_chunk(self.next)?;
         // SAFETY: I think this is unsound
-        let data = unsafe { & *self.data };
+        let data = unsafe { &*self.data };
 
-        let mut diff = super::PAGE_SIZE - (base as usize & (super::PAGE_SIZE-1)).min(data.len()); // diff between next index and base
+        let mut diff = super::PAGE_SIZE - (base as usize & (super::PAGE_SIZE - 1)).min(data.len()); // diff between next index and base
 
         loop {
             match self.next_chunk(diff + self.next) {
@@ -219,7 +241,6 @@ pub struct PhysicalRegionDescription {
 ///
 /// An implementor must ensure that the DMA region returned by [Self::as_mut] is owned by `self` is treated as volatile.
 pub unsafe trait DmaTarget: Send {
-
     /// Returns a pointer into the target buffer.
     ///
     /// # Safety
@@ -250,7 +271,6 @@ pub unsafe trait DmaTarget: Send {
 ///
 /// If `self` is dropped while the data is borrowed then the data must be leaked.
 pub unsafe trait DmaClaimable: DmaTarget {
-
     /// This fn returns a [DmaTarget] using the same target buffer as `self`.
     ///
     /// When this fn completes successfully then the returned type (`'b`) "owns" the target data of self (`'a`),
@@ -266,7 +286,9 @@ pub unsafe trait DmaClaimable: DmaTarget {
     /// type of `self` thus skipping a downcast back into `Self`
     ///
     /// The lifetimes should be treated as `fn('a) -> 'a` by the caller but `fn('a) -> 'b` must be safe.
-    fn claim<'a, 'b>(self) -> Option<(DmaClaimed<Self>, Box<dyn DmaTarget + 'b>)> where Self: Sized;
+    fn claim<'a, 'b>(self) -> Option<(DmaClaimed<Self>, Box<dyn DmaTarget + 'b>)>
+    where
+        Self: Sized;
 
     /// Returns `true` if self currently owned the buffer.
     fn query_owned(&self) -> bool;
@@ -280,10 +302,9 @@ pub struct DmaClaimed<T: DmaClaimable> {
 }
 
 impl<T: DmaClaimable> DmaClaimed<T> {
-
     /// Attempts to unwrap the buffer calling [DmaClaimable::query_owned] to determine if the inner
     /// value has ownership of its buffer.
-    pub fn unwrap(self) -> Result<T,Self> {
+    pub fn unwrap(self) -> Result<T, Self> {
         if self.inner.query_owned() {
             Ok(self.inner)
         } else {
@@ -295,8 +316,9 @@ impl<T: DmaClaimable> DmaClaimed<T> {
 #[test_case]
 #[cfg(test)]
 fn test_dmaguard() {
-    use crate::{alloc_interface,mem};
-    let mut b = alloc::vec::Vec::new_in(alloc_interface::DmaAlloc::new(mem::MemRegion::Mem64,4096));
+    use crate::{alloc_interface, mem};
+    let mut b =
+        alloc::vec::Vec::new_in(alloc_interface::DmaAlloc::new(mem::MemRegion::Mem64, 4096));
     b.resize(0x4000, 0u8);
     let mut g = mem::dma::DmaGuard::from(b);
 
@@ -308,14 +330,15 @@ fn test_dmaguard() {
 
     let mut t = g.claim().unwrap();
     assert!(g.claim().is_none());
-    for (p,c) in t.prd().zip(prd_cmp) {
-        assert_eq!(c,alloc::format!("{:x?}",p))
+    for (p, c) in t.prd().zip(prd_cmp) {
+        assert_eq!(c, alloc::format!("{:x?}", p))
     }
 
     drop(t);
     g.unwrap();
 
-    let mut b = alloc::vec::Vec::new_in(alloc_interface::DmaAlloc::new(mem::MemRegion::Mem64,4096));
+    let mut b =
+        alloc::vec::Vec::new_in(alloc_interface::DmaAlloc::new(mem::MemRegion::Mem64, 4096));
     b.resize(0x4000, 0u8);
     let mut g = mem::dma::DmaGuard::from(b);
     let t = g.claim();
@@ -324,6 +347,4 @@ fn test_dmaguard() {
     drop(g);
 
     x86_64::instructions::nop();
-
-
 }

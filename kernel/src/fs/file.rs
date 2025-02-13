@@ -36,12 +36,12 @@
     Until this is done core::mem::forget()-ing any futures may cause UB.
 */
 
+use crate::fs::{IoError, IoResult};
+use crate::mem::dma::DmaBuff;
 use alloc::string::ToString;
 use core::fmt::Formatter;
 use core::future::Future;
 use futures_util::FutureExt;
-use crate::fs::{IoError, IoResult};
-use crate::mem::dma::DmaBuff;
 
 self::file_derive_debug!(File);
 
@@ -162,7 +162,12 @@ pub trait NormalFile<T = u8>: Read<T> + Write<T> + File + Send + Sync {
     /// If the file is locked it must then compare the reference contained within the lock with the
     /// file object being used for the operation. If they have the same address then that is the
     /// file object with permission to use IO on the file.
-    fn file_lock<'a>(self: alloc::boxed::Box<Self>) ->  futures_util::future::BoxFuture<'a, Result<LockedFile<T>,(IoError, alloc::boxed::Box<dyn NormalFile<T>>)>>;
+    fn file_lock<'a>(
+        self: alloc::boxed::Box<Self>,
+    ) -> futures_util::future::BoxFuture<
+        'a,
+        Result<LockedFile<T>, (IoError, alloc::boxed::Box<dyn NormalFile<T>>)>,
+    >;
 
     /// Unlocks self.
     ///
@@ -191,7 +196,14 @@ pub trait Read<T> {
     /// If this fn returns `Err(_)` it will return the number of characters read before it encountered an error.
     ///
     /// [IoError::NotPresent] - Will be returned when the file no longer exists.
-    fn read<'f, 'a: 'f,'b: 'f>(&'a self, pos: u64, buff: DmaBuff<'b>) -> futures_util::future::BoxFuture<'f, Result<(DmaBuff<'b>, usize),(IoError,DmaBuff<'b>,usize)>>;
+    fn read<'f, 'a: 'f, 'b: 'f>(
+        &'a self,
+        pos: u64,
+        buff: DmaBuff<'b>,
+    ) -> futures_util::future::BoxFuture<
+        'f,
+        Result<(DmaBuff<'b>, usize), (IoError, DmaBuff<'b>, usize)>,
+    >;
 }
 
 /// This trait's methods may have side effects. Any side effects should be documented at the implementation level.
@@ -202,7 +214,14 @@ pub trait Write<T> {
     /// The data contained in `buff` may not be modified during this operation.
     ///
     /// We can return a `usize` here because a single op cannot reasonably write more than `usize::MAX` bytes
-    fn write<'f, 'a: 'f,'b: 'f>(&'a self, pos: u64, buff: DmaBuff<'b>) -> futures_util::future::BoxFuture<'f,Result<(DmaBuff<'b>, usize), (IoError,DmaBuff<'b>,usize)>>;
+    fn write<'f, 'a: 'f, 'b: 'f>(
+        &'a self,
+        pos: u64,
+        buff: DmaBuff<'b>,
+    ) -> futures_util::future::BoxFuture<
+        'f,
+        Result<(DmaBuff<'b>, usize), (IoError, DmaBuff<'b>, usize)>,
+    >;
 }
 
 self::file_derive_debug!(Directory);
@@ -219,7 +238,6 @@ self::file_derive_debug!(Directory);
 ///
 /// When a directory is the filesystem root both "." and ".." should be the same file.
 pub trait Directory: File {
-
     /// Returns the number of entries in this directory.
     /// Because `self` may be aliased this may change without warning.
     fn entries(&self) -> IoResult<usize>;
@@ -234,11 +252,18 @@ pub trait Directory: File {
     ///
     /// If `file` needs to be read to be added to the directory the driver must attempt to restore the cursor.
     /// If restoring th cursor throws an error then the cursor should be set to 0
-    fn new_file<'f, 'b: 'f, 'a:'f>(&'a self, name: &'b str, file: Option<&'b mut dyn NormalFile<u8>>) -> futures_util::future::BoxFuture<'f, Result<(), (Option<IoError>, Option<IoError>)>>;
+    fn new_file<'f, 'b: 'f, 'a: 'f>(
+        &'a self,
+        name: &'b str,
+        file: Option<&'b mut dyn NormalFile<u8>>,
+    ) -> futures_util::future::BoxFuture<'f, Result<(), (Option<IoError>, Option<IoError>)>>;
 
     /// Constructs a new directory, automatically returns a file object for the new directory.
     // If we are making a new dir we probably also want to use it. This optimizes out the extra fetch.
-    fn new_dir<'f, 'a: 'f, 'b: 'f>(&'a self, name: &'b str) -> IoResult<'f, alloc::boxed::Box<dyn Directory>>;
+    fn new_dir<'f, 'a: 'f, 'b: 'f>(
+        &'a self,
+        name: &'b str,
+    ) -> IoResult<'f, alloc::boxed::Box<dyn Directory>>;
 
     /// Stores a file, without modifying its primitive type in the current filesystem.
     /// If a file of the type already exists with `name` it must be shadowed and restored when `file` is removed.
@@ -250,10 +275,12 @@ pub trait Directory: File {
     /// If the filesystem allows caching then the VFS will cache the directory and handle device
     /// files transparently to the filesystem.
     #[allow(unused_variables)]
-    fn store<'f, 'a: 'f, 'b: 'f>(&'a self, name: &'b str, file: alloc::boxed::Box<dyn File>) -> IoResult<'f, ()> {
-        async {
-            Err(IoError::NotSupported)
-        }.boxed()
+    fn store<'f, 'a: 'f, 'b: 'f>(
+        &'a self,
+        name: &'b str,
+        file: alloc::boxed::Box<dyn File>,
+    ) -> IoResult<'f, ()> {
+        async { Err(IoError::NotSupported) }.boxed()
     }
 
     /// Requests a file handle from the directory.
@@ -264,7 +291,10 @@ pub trait Directory: File {
     ///
     /// The VFS implementation prevents a filename from ever containing the file separator character '/'.
     /// A filesystem may use this character internally to denote internally used files like "/journal"
-    fn get_file<'f,'a: 'f,'b: 'f>(&'a self, name: &'b str) -> IoResult<'f,alloc::boxed::Box<dyn File>>;
+    fn get_file<'f, 'a: 'f, 'b: 'f>(
+        &'a self,
+        name: &'b str,
+    ) -> IoResult<'f, alloc::boxed::Box<dyn File>>;
 
     /// Returns a files metadata.
     ///
@@ -273,9 +303,7 @@ pub trait Directory: File {
     /// If `name` is a device file where the driver does not know the state of the device then the
     /// may assume its metadata. This method should never return [IoError::IsDevice].
     fn get_file_meta<'f, 'a: 'f, 'b: 'f>(&'a self, name: &'b str) -> IoResult<'f, FileMetadata> {
-        async {
-            FileMetadata::new_from_file(&*self.get_file(name).await?).await
-        }.boxed()
+        async { FileMetadata::new_from_file(&*self.get_file(name).await?).await }.boxed()
     }
 
     /// Returns information alongside the requested file.
@@ -289,22 +317,23 @@ pub trait Directory: File {
     /// The default implementation should not be used. It is very poorly optimized.
     ///
     /// See [Directory::get_file] for more info.
-    fn get_file_with_meta<'f, 'a: 'f, 'b: 'f>(&'a self, name: &'b str) -> IoResult<'f,FileHandle> {
-
+    fn get_file_with_meta<'f, 'a: 'f, 'b: 'f>(&'a self, name: &'b str) -> IoResult<'f, FileHandle> {
         async {
-
             let meta = self.get_file_meta(name).await?;
 
             let file = {
                 match self.get_file(name).await {
                     Ok(f) => f,
-                    Err(IoError::IsDevice) => return Ok(FileHandle::new_dev(FileMetadata::new_unknown())),
-                    Err(e) => return Err(e)
+                    Err(IoError::IsDevice) => {
+                        return Ok(FileHandle::new_dev(FileMetadata::new_unknown()))
+                    }
+                    Err(e) => return Err(e),
                 }
             };
 
-            Ok(FileHandle::new(file,true,meta))
-        }.boxed()
+            Ok(FileHandle::new(file, true, meta))
+        }
+        .boxed()
     }
 
     /// Returns a vec containing all entries within the directory.
@@ -328,9 +357,23 @@ pub trait Directory: File {
 
 #[macro_export]
 macro_rules! cast_file {
-    ($ty:path: $id:expr) => { { let t: ::core::result::Result< ::alloc::boxed::Box< dyn $ty >, alloc::boxed::Box<dyn $crate::fs::file::File> >= cast_trait_object::DynCastExt::dyn_cast( $id ); t } };
-    (& $ty:path: $id:expr) => { {let t:  ::core::result::Result< & dyn $ty , & dyn $crate::fs::file::File >= cast_trait_object::DynCastExt::dyn_cast( $id ); t} };
-    (mut $ty:path: $id:expr) => { { let t: ::core::result::Result< &mut dyn $ty, &mut dyn $crate::fs::file::File >= cast_trait_object::DynCastExt::dyn_cast( $id ); t } };
+    ($ty:path: $id:expr) => {{
+        let t: ::core::result::Result<
+            ::alloc::boxed::Box<dyn $ty>,
+            alloc::boxed::Box<dyn $crate::fs::file::File>,
+        > = cast_trait_object::DynCastExt::dyn_cast($id);
+        t
+    }};
+    (& $ty:path: $id:expr) => {{
+        let t: ::core::result::Result<&dyn $ty, &dyn $crate::fs::file::File> =
+            cast_trait_object::DynCastExt::dyn_cast($id);
+        t
+    }};
+    (mut $ty:path: $id:expr) => {{
+        let t: ::core::result::Result<&mut dyn $ty, &mut dyn $crate::fs::file::File> =
+            cast_trait_object::DynCastExt::dyn_cast($id);
+        t
+    }};
 }
 
 pub use cast_file;
@@ -338,9 +381,9 @@ pub use cast_file;
 /// Derives debug for `dyn $tra` when it is wrapped in a Box or Arc
 macro_rules! file_derive_debug {
     ($tra:path) => {
-        impl ::core::fmt::Debug for ::alloc::boxed::Box< dyn $tra > {
+        impl ::core::fmt::Debug for ::alloc::boxed::Box<dyn $tra> {
             fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
-                write!(f,"Box(File:{:?}({}))",self.file_type(),self.device())
+                write!(f, "Box(File:{:?}({}))", self.file_type(), self.device())
             }
         }
     };
@@ -409,26 +452,32 @@ pub struct FileMetadata {
 }
 
 impl FileMetadata {
-
     /// Constructs a new instance of self
     ///
     /// # Panics
     ///
     /// This fn will panic if `block_size` is zero.
-    pub fn new(size: u64, block_size: u64, id: u64, device: super::vfs::DevID, file_type: FileType) -> Self {
+    pub fn new(
+        size: u64,
+        block_size: u64,
+        id: u64,
+        device: super::vfs::DevID,
+        file_type: FileType,
+    ) -> Self {
         Self {
             unknown: false,
             size,
-            block_size: block_size.try_into().expect("Tried to create a FileMetadata with block size of `0`"),
+            block_size: block_size
+                .try_into()
+                .expect("Tried to create a FileMetadata with block size of `0`"),
             id,
             device,
             f_type: file_type,
         }
     }
 
-
     /// Constructs an instance of self using the information provided by `file`
-    pub async fn new_from_file(file: &dyn File) -> Result<Self,IoError> {
+    pub async fn new_from_file(file: &dyn File) -> Result<Self, IoError> {
         Ok(Self {
             unknown: false,
             size: file.len().await?,
@@ -455,7 +504,6 @@ impl FileMetadata {
     pub fn file_type(&self) -> FileType {
         self.f_type
     }
-
 
     /// The file must be given an ID. This ID is used by the kernel for cache lookups.
     ///
@@ -487,7 +535,6 @@ impl FileMetadata {
         self.unknown
     }
 }
-
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum FileType {
@@ -521,7 +568,7 @@ pub enum FileType {
 pub struct FsOpts {
     dir_cache: bool,
     dev_allowed: bool,
-    extra: alloc::collections::BTreeMap<alloc::string::String,FsOptionVariant>,
+    extra: alloc::collections::BTreeMap<alloc::string::String, FsOptionVariant>,
 }
 
 impl FsOpts {
@@ -553,19 +600,25 @@ impl FsOpts {
     ///
     /// This is intended to be used while the filesystem is initialized, not used at runtime.
     #[cold]
-    pub fn set<T: Into<FsOptionVariant>>(&mut self, property: alloc::string::String, value: T) -> &mut Self {
+    pub fn set<T: Into<FsOptionVariant>>(
+        &mut self,
+        property: alloc::string::String,
+        value: T,
+    ) -> &mut Self {
         let value = value.into();
         match &*property {
-            Self::DEV_ALLOWED => {
-                self.dev_allowed = value.try_into().unwrap()
-            }
+            Self::DEV_ALLOWED => self.dev_allowed = value.try_into().unwrap(),
 
             Self::DIR_CACHE => {
                 if let FsOptionVariant::Bool(b) = value {
                     self.dir_cache = b
                 }
             }
-            _ => self.extra.insert(property,value.into()).ok_or(()).expect_err("Failed to insert property"),
+            _ => self
+                .extra
+                .insert(property, value.into())
+                .ok_or(())
+                .expect_err("Failed to insert property"),
         }
 
         self
@@ -602,7 +655,7 @@ impl FsOpts {
 }
 
 /// Helper for wrapping data that may be included within FsOptions
-#[derive(Clone,Eq,PartialEq,Debug)]
+#[derive(Clone, Eq, PartialEq, Debug)]
 pub enum FsOptionVariant {
     Int(usize),
     Bool(bool),
@@ -622,13 +675,12 @@ impl core::str::FromStr for FsOptionVariant {
     }
 }
 
-
 impl core::fmt::Display for FsOptionVariant {
     fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
         match self {
-            FsOptionVariant::Int(i) => core::write!(f,"{i}"),
-            FsOptionVariant::Bool(b) => core::write!(f,"{b}"),
-            FsOptionVariant::String(s) => core::write!(f,"{s}"),
+            FsOptionVariant::Int(i) => core::write!(f, "{i}"),
+            FsOptionVariant::Bool(b) => core::write!(f, "{b}"),
+            FsOptionVariant::String(s) => core::write!(f, "{s}"),
         }
     }
 }
@@ -710,14 +762,11 @@ pub struct LockedFile<T> {
 }
 
 impl<T> LockedFile<T> {
-
     pub fn new_from_lock(file: crate::util::SingleArc<dyn NormalFile<T>>) -> Self {
-        Self {
-            file,
-        }
+        Self { file }
     }
 
-    pub async fn unlock(self) -> Result<alloc::boxed::Box<dyn NormalFile<T>>,IoError> {
+    pub async fn unlock(self) -> Result<alloc::boxed::Box<dyn NormalFile<T>>, IoError> {
         // SAFETY: Aren't we forgetting one teensy-weenzy, but ever so crucial little tiny detail
         unsafe { self.file.unlock_unsafe().await? };
 
@@ -738,11 +787,16 @@ unsafe impl<T> Sync for LockedFile<T> {}
 // fixme: Watch AsyncDrop trait.
 impl<T> Drop for LockedFile<T> {
     fn drop(&mut self) {
-
         // awful one-liner.
         // polls unlock with a dummy waker until it's ready.
-        while unsafe {let mut p = core::pin::pin!(self.file.unlock_unsafe());
-            p.as_mut().poll(&mut core::task::Context::from_waker(futures_util::task::noop_waker_ref()))}.is_pending() {}
+        while unsafe {
+            let mut p = core::pin::pin!(self.file.unlock_unsafe());
+            p.as_mut().poll(&mut core::task::Context::from_waker(
+                futures_util::task::noop_waker_ref(),
+            ))
+        }
+        .is_pending()
+        {}
     }
 }
 

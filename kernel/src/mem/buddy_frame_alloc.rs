@@ -37,28 +37,38 @@ impl PreInitFrameAlloc {
         let mut mem_64_n = None;
 
         for i in regions.iter() {
-            crate::serial_println!("{:x?}",i);
+            crate::serial_println!("{:x?}", i);
         }
         macro_rules! usable_regions {
-            ($regions:ident) => { $regions.iter().filter(|p| p.ty == libboot::boot_info::MemoryRegionType::Usable) };
+            ($regions:ident) => {
+                $regions
+                    .iter()
+                    .filter(|p| p.ty == libboot::boot_info::MemoryRegionType::Usable)
+            };
         }
 
         for i in usable_regions!(regions) {
-            if let Some(n) = MemRegion::Mem16.first_in_region(i.phys_addr as usize, i.size as usize + i.phys_addr as usize) {
+            if let Some(n) = MemRegion::Mem16
+                .first_in_region(i.phys_addr as usize, i.size as usize + i.phys_addr as usize)
+            {
                 mem_16_n = Some(n);
                 break;
             }
         }
 
         for i in usable_regions!(regions) {
-            if let Some(n) = MemRegion::Mem32.first_in_region(i.phys_addr as usize, i.size as usize + i.phys_addr as usize) {
+            if let Some(n) = MemRegion::Mem32
+                .first_in_region(i.phys_addr as usize, i.size as usize + i.phys_addr as usize)
+            {
                 mem_32_n = Some(n);
                 break;
             }
         }
 
         for i in usable_regions!(regions) {
-            if let Some(n) = MemRegion::Mem64.first_in_region(i.phys_addr as usize, i.size as usize + i.phys_addr as usize) {
+            if let Some(n) = MemRegion::Mem64
+                .first_in_region(i.phys_addr as usize, i.size as usize + i.phys_addr as usize)
+            {
                 mem_64_n = Some(n);
                 break;
             }
@@ -104,7 +114,9 @@ impl PreInitFrameAlloc {
         'base: while let Some(i) = iter.next() {
             if (ret >= i.phys_addr as usize) && (ret < i.size as usize + i.phys_addr as usize) {
                 // ret is found, now figure out next addr
-                if let Some(ptr) = region.first_in_region(ret + PAGE_SIZE, i.size as usize + i.phys_addr as usize) {
+                if let Some(ptr) =
+                    region.first_in_region(ret + PAGE_SIZE, i.size as usize + i.phys_addr as usize)
+                {
                     // next is in same memory region
                     match region {
                         MemRegion::Mem16 => self.mem_16_n = Some(ptr),
@@ -116,7 +128,8 @@ impl PreInitFrameAlloc {
                     // locate next memory region
                     while let Some(i) = iter.next() {
                         // Will only return Some() if this memory region is within the correct dma region
-                        if let Some(next) = region.first_in_region(i.phys_addr as usize,(i.size + i.phys_addr) as usize)
+                        if let Some(next) = region
+                            .first_in_region(i.phys_addr as usize, (i.size + i.phys_addr) as usize)
                         {
                             match region {
                                 MemRegion::Mem16 => self.mem_16_n = Some(next),
@@ -174,7 +187,9 @@ pub fn drain_map() {
     //let f_alloc = super::SYS_FRAME_ALLOCATOR.alloc.lock();
     //for i in f_alloc.mem_16.free_list {}
 
-    assert!(super::allocator::COMBINED_ALLOCATOR.lock().phys_alloc()
+    assert!(super::allocator::COMBINED_ALLOCATOR
+        .lock()
+        .phys_alloc()
         .alloc
         .lock()
         .is_fully_init
@@ -182,11 +197,26 @@ pub fn drain_map() {
 
     // Must be in smallest -> largest order or alloc will try to return the wrong region
     drain_map_inner(MemRegion::Mem16);
-    super::allocator::COMBINED_ALLOCATOR.lock().phys_alloc().alloc.lock().is_fully_init = Some(MemRegion::Mem16);
+    super::allocator::COMBINED_ALLOCATOR
+        .lock()
+        .phys_alloc()
+        .alloc
+        .lock()
+        .is_fully_init = Some(MemRegion::Mem16);
     drain_map_inner(MemRegion::Mem32);
-    super::allocator::COMBINED_ALLOCATOR.lock().phys_alloc().alloc.lock().is_fully_init = Some(MemRegion::Mem32);
+    super::allocator::COMBINED_ALLOCATOR
+        .lock()
+        .phys_alloc()
+        .alloc
+        .lock()
+        .is_fully_init = Some(MemRegion::Mem32);
     drain_map_inner(MemRegion::Mem64);
-    super::allocator::COMBINED_ALLOCATOR.lock().phys_alloc().alloc.lock().is_fully_init = Some(MemRegion::Mem64);
+    super::allocator::COMBINED_ALLOCATOR
+        .lock()
+        .phys_alloc()
+        .alloc
+        .lock()
+        .is_fully_init = Some(MemRegion::Mem64);
 }
 
 /// Inner fn for `drain_map()` drains all of `MEM_MAP`'s region into `super::SYS_FRAME_ALLOC`
@@ -243,7 +273,12 @@ fn drain_map_inner(region: MemRegion) {
         drop(f_alloc);
 
         // SAFETY: region is given by frame allocator and is unused
-        unsafe { super::allocator::COMBINED_ALLOCATOR.lock().phys_alloc().dealloc(base, len) }
+        unsafe {
+            super::allocator::COMBINED_ALLOCATOR
+                .lock()
+                .phys_alloc()
+                .dealloc(base, len)
+        }
 
         #[cfg(feature = "alloc-debug-serial")]
         {
@@ -731,8 +766,8 @@ impl BuddyFrameAlloc {
                     // This is a hack fix to prevent my single frame of free mem16 memory from being
                     // used while initializing the allocator
                     // This alloc() call hasn't yet modified the inner state machine so this shouldn't do anything bad
-                    if let Some(r) = alloc.allocate(limit,MemRegion::Mem32) {
-                        return Some(r)
+                    if let Some(r) = alloc.allocate(limit, MemRegion::Mem32) {
+                        return Some(r);
                     } else if r < region {
                         region = r
                     }
@@ -744,7 +779,6 @@ impl BuddyFrameAlloc {
                 return MEM_MAP.get().alloc(region);
             }
         }
-
 
         if limit > ORDER_MAX_SIZE {
             self.alloc_huge(layout, region)

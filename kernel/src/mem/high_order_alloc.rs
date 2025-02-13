@@ -2,7 +2,6 @@ use core::cmp::Ordering;
 use core::fmt::{Debug, Display};
 use core::ops::{Add, BitAnd, BitOr, Not, Sub};
 
-
 const fn assert_wf_bool(value: bool) -> usize {
     if value {
         1
@@ -22,14 +21,17 @@ const fn assert_wf_bool(value: bool) -> usize {
 #[allow(private_bounds)]
 #[derive(Debug)]
 pub(super) struct HighOrderAlloc<T: AllocAddressType, const BS: u32>
-    where
-    [(); assert_wf_bool(BS.is_power_of_two())]:
+where
+    [(); assert_wf_bool(BS.is_power_of_two())]:,
 {
     free_list: alloc::vec::Vec<FreeMem<T, BS>>,
 }
 
 #[allow(private_bounds)]
-impl<T: AllocAddressType, const BS: u32> HighOrderAlloc<T, BS> where [(); assert_wf_bool(BS.is_power_of_two())]: {
+impl<T: AllocAddressType, const BS: u32> HighOrderAlloc<T, BS>
+where
+    [(); assert_wf_bool(BS.is_power_of_two())]:,
+{
     pub(super) const fn new() -> Self {
         Self {
             free_list: alloc::vec::Vec::new(),
@@ -377,7 +379,6 @@ pub(super) trait AllocAddressType:
 }
 
 impl AllocAddressType for usize {
-
     fn from_u32(origin: u32) -> Self
     where
         Self: Sized,
@@ -394,7 +395,6 @@ impl AllocAddressType for usize {
 }
 
 impl AllocAddressType for u64 {
-
     fn from_u32(origin: u32) -> Self
     where
         Self: Sized,

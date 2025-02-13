@@ -1,5 +1,3 @@
-
-
 pub struct CpuBMap {
     // This uses a Vec to avoid th issue linux had (has?) with systems with more thant 256 CPUs
     // usize is the smallest size we can allocate so this doesn't waste space
@@ -9,7 +7,7 @@ pub struct CpuBMap {
 impl CpuBMap {
     pub const fn new() -> Self {
         Self {
-            map: spin::RwLock::new(alloc::vec::Vec::new())
+            map: spin::RwLock::new(alloc::vec::Vec::new()),
         }
     }
 
@@ -54,7 +52,7 @@ impl CpuBMap {
     }
 
     pub fn get(&self, cpu: super::CpuIndex) -> bool {
-        if let Some(u) = self.map.read().get(cpu as usize/usize::BITS as usize) {
+        if let Some(u) = self.map.read().get(cpu as usize / usize::BITS as usize) {
             let t = u.load(atomic::Ordering::Relaxed);
             // check if bit is set
             0 != t & 1 << (cpu % usize::BITS)
@@ -66,7 +64,7 @@ impl CpuBMap {
     pub const fn iter(&self) -> CpuBitmapIterator {
         CpuBitmapIterator {
             map: self,
-            last: None
+            last: None,
         }
     }
 
@@ -85,15 +83,17 @@ impl CpuBMap {
     /// Returns the contents of `self`, clears the contents of `self`.
     pub fn take(&mut self) -> Self {
         let mut n = Self::new();
-        n.map.write().resize_with(self.map.read().len(),|| Default::default());
-        core::mem::swap(self,&mut n);
+        n.map
+            .write()
+            .resize_with(self.map.read().len(), || Default::default());
+        core::mem::swap(self, &mut n);
         n
     }
 }
 
 pub struct CpuBitmapIterator<'a> {
     map: &'a CpuBMap,
-    last: Option<super::CpuIndex>
+    last: Option<super::CpuIndex>,
 }
 
 impl<'a> Iterator for CpuBitmapIterator<'a> {
@@ -112,26 +112,25 @@ impl<'a> Iterator for CpuBitmapIterator<'a> {
                 let fo = u.trailing_zeros();
                 if fo != usize::BITS {
                     self.last = Some(index * usize::BITS + fo);
-                    return self.last
+                    return self.last;
                 } else {
                     index += 1;
                 }
             }
 
-            for (i,n) in arr.iter().enumerate().skip(index as usize) {
+            for (i, n) in arr.iter().enumerate().skip(index as usize) {
                 let u = n.load(atomic::Ordering::Relaxed);
                 let fo = u.trailing_zeros();
                 if fo != usize::BITS {
                     self.last = Some((i * usize::BITS as usize + fo as usize) as super::CpuIndex);
-                    return  self.last
+                    return self.last;
                 }
             }
-            return None
-
+            return None;
         } else {
             if self.map.get(0) {
                 self.last = Some(0);
-               return Some(0);
+                return Some(0);
             } else {
                 self.last = Some(0);
                 self.next()

@@ -12,7 +12,6 @@
 /// done then may result in a kernel panic.
 ///
 /// Fixup events are always handled by the kernel.
-
 use core::cmp::Ordering;
 use x86_64::VirtAddr;
 
@@ -25,15 +24,20 @@ static KERNEL_FIXUP_LIST: FixupList = FixupList::new();
 /// used in kernel fixups.
 ///
 /// If the requested region intersects with an existing region this will return `Err(())`
-pub fn set_fixup_region<T>(address: *const T, len: usize, page_size: usize, shrinkable: bool) -> Result<(),()> {
+pub fn set_fixup_region<T>(
+    address: *const T,
+    len: usize,
+    page_size: usize,
+    shrinkable: bool,
+) -> Result<(), ()> {
     log::debug!("new fixup region at: {address:p} len: {len}");
-    KERNEL_FIXUP_LIST.insert(address,len,page_size,shrinkable)
+    KERNEL_FIXUP_LIST.insert(address, len, page_size, shrinkable)
 }
 
 /// Removes a fixup region starting at the `address`
 ///
 /// `address` must be the start starting address of the fixup region.
-pub fn remove_fixup_region<T>(address: *const T) -> Result<(),()> {
+pub fn remove_fixup_region<T>(address: *const T) -> Result<(), ()> {
     KERNEL_FIXUP_LIST.remove(VirtAddr::from_ptr(address))
 }
 
@@ -54,10 +58,18 @@ impl FixupList {
     }
 
     /// See [set_fixup]
-    pub fn insert<T>(&self, address: *const T, len: usize, page_size: usize, shrinkable: bool) -> Result<(),()> {
-
+    pub fn insert<T>(
+        &self,
+        address: *const T,
+        len: usize,
+        page_size: usize,
+        shrinkable: bool,
+    ) -> Result<(), ()> {
         #[cfg(target_arch = "x86_64")]
-        assert!(page_size == 0x1000 || page_size == 0x20_0000 || page_size == 0x40000000, "Invalid Page Size: {page_size:#x}");
+        assert!(
+            page_size == 0x1000 || page_size == 0x20_0000 || page_size == 0x40000000,
+            "Invalid Page Size: {page_size:#x}"
+        );
         #[cfg(not(target_arch = "x86_64"))]
         compile_error!("Page size must be defined");
 
@@ -82,23 +94,20 @@ impl FixupList {
 
     /// Resolves `address` to a fixup region and returns that region if it is present
     /// alongside the page size for the region.
-    pub(crate)fn try_fixup(&self, address: VirtAddr) -> Option<CachedFixup> {
+    pub(crate) fn try_fixup(&self, address: VirtAddr) -> Option<CachedFixup> {
         let l = self.list.upgradeable_read();
         match l.binary_search_by(|e| address.partial_cmp(e).unwrap()) {
-
-            Ok(i) => {
-                Some(CachedFixup{
-                    lock: l,
-                    index: i,
-                    address
-                })
-            },
+            Ok(i) => Some(CachedFixup {
+                lock: l,
+                index: i,
+                address,
+            }),
             Err(_) => None,
         }
     }
 
     /// See [remove_fixup_region]
-    pub fn remove(&self, address: VirtAddr) -> Result<(),()> {
+    pub fn remove(&self, address: VirtAddr) -> Result<(), ()> {
         let l = self.list.upgradeable_read();
         match l.binary_search_by(|e| e.address.cmp(&address)) {
             Err(_) => Err(()),
@@ -143,15 +152,20 @@ struct FixupEntry {
 }
 
 impl FixupEntry {
-    fn fixup(&self,addr: VirtAddr) -> (VirtAddr,u64) {
-        self.fixup_remain.fetch_sub(self.page_size,atomic::Ordering::Relaxed);
-        (VirtAddr::new(!(self.page_size as u64) - 1 & addr.as_u64()), self.page_size as u64)
+    fn fixup(&self, addr: VirtAddr) -> (VirtAddr, u64) {
+        self.fixup_remain
+            .fetch_sub(self.page_size, atomic::Ordering::Relaxed);
+        (
+            VirtAddr::new(!(self.page_size as u64) - 1 & addr.as_u64()),
+            self.page_size as u64,
+        )
     }
 }
 
 impl PartialEq for FixupEntry {
     fn eq(&self, other: &FixupEntry) -> bool {
-        self.address <= other.address + other.len as u64 && other.address <= self.address + self.len as u64
+        self.address <= other.address + other.len as u64
+            && other.address <= self.address + self.len as u64
     }
 }
 
@@ -183,37 +197,58 @@ impl Ord for FixupEntry {
 pub(crate) struct CachedFixup<'a> {
     lock: spin::RwLockUpgradableGuard<'a, alloc::vec::Vec<FixupEntry>>,
     index: usize,
-    address: VirtAddr
+    address: VirtAddr,
 }
-
 
 impl<'a> CachedFixup<'a> {
     pub fn fixup(self) {
-        let (addr,size) = self.lock[self.index].fixup(self.address);
+        let (addr, size) = self.lock[self.index].fixup(self.address);
 
         // Force check that this can be acquired safely again.
         // We are just going to panic on a page fault if this fails anyway.
         // This shouldn't panic but if it does we **need** to catch and fix it.
-        let l = super::allocator::COMBINED_ALLOCATOR.try_lock_pedantic().expect("Tried to fixup page while mm is in use");
+        let l = super::allocator::COMBINED_ALLOCATOR
+            .try_lock_pedantic()
+            .expect("Tried to fixup page while mm is in use");
 
         // SAFETY: map_page() here is safe, this is intended to handle a page fault. The faulting code will expect this data to be accessible this makes it so.
         // from_addr_unchecked() here is safe, `try_fixup` will align the address to the required value.
         #[cfg(target_arch = "x86_64")]
         match size {
-            0x1000 => unsafe { super::mem_map::map_page::<x86_64::structures::paging::page::Size4KiB>(x86_64::structures::paging::Page::from_start_address_unchecked(addr), super::mem_map::PROGRAM_DATA_FLAGS) },
-            0x20_0000 => unsafe { super::mem_map::map_page::<x86_64::structures::paging::page::Size2MiB>(x86_64::structures::paging::Page::from_start_address_unchecked(addr), super::mem_map::PROGRAM_DATA_FLAGS | x86_64::structures::paging::PageTableFlags::HUGE_PAGE) }
-            0x4000_0000 => unsafe { super::mem_map::map_page::<x86_64::structures::paging::page::Size1GiB>(x86_64::structures::paging::Page::from_start_address_unchecked(addr), super::mem_map::PROGRAM_DATA_FLAGS | x86_64::structures::paging::PageTableFlags::HUGE_PAGE) }
-            _ => unsafe { core::hint::unreachable_unchecked() } // SAFETY `size` is only defined to be ont of the above values
+            0x1000 => unsafe {
+                super::mem_map::map_page::<x86_64::structures::paging::page::Size4KiB>(
+                    x86_64::structures::paging::Page::from_start_address_unchecked(addr),
+                    super::mem_map::PROGRAM_DATA_FLAGS,
+                )
+            },
+            0x20_0000 => unsafe {
+                super::mem_map::map_page::<x86_64::structures::paging::page::Size2MiB>(
+                    x86_64::structures::paging::Page::from_start_address_unchecked(addr),
+                    super::mem_map::PROGRAM_DATA_FLAGS
+                        | x86_64::structures::paging::PageTableFlags::HUGE_PAGE,
+                )
+            },
+            0x4000_0000 => unsafe {
+                super::mem_map::map_page::<x86_64::structures::paging::page::Size1GiB>(
+                    x86_64::structures::paging::Page::from_start_address_unchecked(addr),
+                    super::mem_map::PROGRAM_DATA_FLAGS
+                        | x86_64::structures::paging::PageTableFlags::HUGE_PAGE,
+                )
+            },
+            _ => unsafe { core::hint::unreachable_unchecked() }, // SAFETY `size` is only defined to be ont of the above values
         }
 
         drop(l);
-        #[cfg(not(target_arch = "x86_64"))] {
+        #[cfg(not(target_arch = "x86_64"))]
+        {
             compile_error!("No page sizes configured")
         }
 
         let index = self.index;
-        let entry =  &self.lock[index];
-        entry.fixup_remain.fetch_sub(entry.page_size, atomic::Ordering::Relaxed);
+        let entry = &self.lock[index];
+        entry
+            .fixup_remain
+            .fetch_sub(entry.page_size, atomic::Ordering::Relaxed);
         if entry.fixup_remain.load(atomic::Ordering::Relaxed) <= 0 && entry.clear_when_fixed {
             let mut l = self.lock.upgrade();
             l.remove(index);
@@ -225,6 +260,12 @@ impl<'a> CachedFixup<'a> {
         This shouldn't occupy the entire memory bus, it should be a "Fill with pattern" command
          */
         // SAFETY: We just allocated this
-        unsafe { core::slice::from_raw_parts_mut(addr.align_down(0x1000u64).as_mut_ptr::<u8>(), size as usize) }.fill(0);
+        unsafe {
+            core::slice::from_raw_parts_mut(
+                addr.align_down(0x1000u64).as_mut_ptr::<u8>(),
+                size as usize,
+            )
+        }
+        .fill(0);
     }
 }

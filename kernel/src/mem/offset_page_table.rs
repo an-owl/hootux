@@ -1,3 +1,4 @@
+use super::tlb::{shootdown, shootdown_hint, ShootdownContent};
 use super::{PageIterator, PageTableLevel};
 use x86_64::structures::paging::mapper::{
     FlagUpdateError, MapToError, MapperFlush, MapperFlushAll, TranslateError, UnmapError,
@@ -8,11 +9,6 @@ use x86_64::structures::paging::{
     Size2MiB, Size4KiB,
 };
 use x86_64::{PhysAddr, VirtAddr};
-use super::tlb::{
-    shootdown,
-    shootdown_hint,
-    ShootdownContent,
-};
 
 pub struct OffsetPageTable {
     offset_base: VirtAddr,
@@ -335,7 +331,9 @@ impl OffsetPageTable {
 
     /// Allocates a new table into memory without mapping it
     fn new_table(&self) -> *mut PageTable {
-        let frame: PhysFrame<Size4KiB> = super::allocator::COMBINED_ALLOCATOR.lock().phys_alloc()
+        let frame: PhysFrame<Size4KiB> = super::allocator::COMBINED_ALLOCATOR
+            .lock()
+            .phys_alloc()
             .get()
             .allocate_frame()
             .expect("System ran out of memory");
@@ -395,9 +393,13 @@ impl OffsetPageTable {
     }
 
     /// Returns the page table entry for the requested virtual address.
-    pub(crate) fn get_entry(&self, level: PageTableLevel, page: VirtAddr) -> Result<PageTableEntry,GetEntryErr> {
+    pub(crate) fn get_entry(
+        &self,
+        level: PageTableLevel,
+        page: VirtAddr,
+    ) -> Result<PageTableEntry, GetEntryErr> {
         let page: Page<Size4KiB> = Page::containing_address(page);
-        let t = self.traverse(level,page).map_err(|e| {
+        let t = self.traverse(level, page).map_err(|e| {
             match e {
                 InternalError::ParentEntryHugePage(_) => GetEntryErr::ParentHugePage,
                 InternalError::PageNotMapped(_) => GetEntryErr::NotMapped,
@@ -515,7 +517,7 @@ impl Mapper<Size4KiB> for OffsetPageTable {
             let entry = &mut self.l4_table[PageTableLevel::L4.get_index(page)];
             if entry.flags().contains(PageTableFlags::PRESENT) {
                 let mut f = entry.flags();
-                f.set(PageTableFlags::PRESENT,false);
+                f.set(PageTableFlags::PRESENT, false);
                 entry.set_flags(f);
             }
             shootdown(page.into());
@@ -536,7 +538,7 @@ impl Mapper<Size4KiB> for OffsetPageTable {
                     let entry = &mut table[LEVEL.get_index(page)];
                     if entry.flags().contains(PageTableFlags::PRESENT) {
                         let mut f = entry.flags();
-                        f.set(PageTableFlags::PRESENT,false);
+                        f.set(PageTableFlags::PRESENT, false);
                         entry.set_flags(f);
                     }
                     shootdown(page.into());
@@ -561,7 +563,7 @@ impl Mapper<Size4KiB> for OffsetPageTable {
                     let entry = &mut table[LEVEL.get_index(page)];
                     if entry.flags().contains(PageTableFlags::PRESENT) {
                         let mut f = entry.flags();
-                        f.set(PageTableFlags::PRESENT,false);
+                        f.set(PageTableFlags::PRESENT, false);
                         entry.set_flags(f);
                     }
                     shootdown(page.into());
@@ -700,7 +702,7 @@ impl Mapper<Size2MiB> for OffsetPageTable {
             let entry = &mut self.l4_table[PageTableLevel::L4.get_index(page)];
             if entry.flags().contains(PageTableFlags::PRESENT) {
                 let mut f = entry.flags();
-                f.set(PageTableFlags::PRESENT,false);
+                f.set(PageTableFlags::PRESENT, false);
                 entry.set_flags(f);
             }
             shootdown(page.into());
@@ -721,7 +723,7 @@ impl Mapper<Size2MiB> for OffsetPageTable {
                     let entry = &mut table[LEVEL.get_index(page)];
                     if entry.flags().contains(PageTableFlags::PRESENT) {
                         let mut f = entry.flags();
-                        f.set(PageTableFlags::PRESENT,false);
+                        f.set(PageTableFlags::PRESENT, false);
                         entry.set_flags(f);
                     }
                     shootdown(page.into());
@@ -746,7 +748,7 @@ impl Mapper<Size2MiB> for OffsetPageTable {
                     let entry = &mut table[LEVEL.get_index(page)];
                     if entry.flags().contains(PageTableFlags::PRESENT) {
                         let mut f = entry.flags();
-                        f.set(PageTableFlags::PRESENT,false);
+                        f.set(PageTableFlags::PRESENT, false);
                         entry.set_flags(f);
                     }
                     shootdown(page.into());
@@ -887,7 +889,7 @@ impl Mapper<Size1GiB> for OffsetPageTable {
             let entry = &mut self.l4_table[PageTableLevel::L4.get_index(page)];
             if entry.flags().contains(PageTableFlags::PRESENT) {
                 let mut f = entry.flags();
-                f.set(PageTableFlags::PRESENT,false);
+                f.set(PageTableFlags::PRESENT, false);
                 entry.set_flags(f);
             }
             shootdown(page.into());
@@ -908,7 +910,7 @@ impl Mapper<Size1GiB> for OffsetPageTable {
                     let entry = &mut table[LEVEL.get_index(page)];
                     if entry.flags().contains(PageTableFlags::PRESENT) {
                         let mut f = entry.flags();
-                        f.set(PageTableFlags::PRESENT,false);
+                        f.set(PageTableFlags::PRESENT, false);
                         entry.set_flags(f);
                     }
                     shootdown(page.into());

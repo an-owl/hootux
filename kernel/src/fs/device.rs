@@ -1,5 +1,5 @@
-use core::fmt::Formatter;
 use super::file::*;
+use core::fmt::Formatter;
 
 /// This is a marker trait for files which act as special device (character/block) files.
 ///
@@ -23,7 +23,7 @@ file_derive_debug!(DeviceFile);
 
 pub enum DeviceWrapper {
     Fifo(alloc::boxed::Box<dyn Fifo<u8>>),
-    FileSystem(alloc::boxed::Box<dyn FileSystem>)
+    FileSystem(alloc::boxed::Box<dyn FileSystem>),
 }
 
 impl core::fmt::Debug for DeviceWrapper {
@@ -48,14 +48,14 @@ impl OpenMode {
     pub fn is_read(&self) -> bool {
         match self {
             Self::Read | Self::ReadWrite => true,
-            _ => false
+            _ => false,
         }
     }
 
     pub fn is_write(&self) -> bool {
         match self {
             Self::Write | Self::ReadWrite => true,
-            _ => false
+            _ => false,
         }
     }
 }
@@ -78,7 +78,6 @@ file_derive_debug!(Fifo<u8>);
 /// than other file objects. Only one file object may be master for any file accessor at a time.
 /// If no master is currently present when the FIFO is opened a new master may be chosen arbitrarily.
 pub trait Fifo<T>: File + Read<T> + Write<T> {
-
     /// Locks this file accessor with the requested mode.
     fn open(&mut self, mode: OpenMode) -> Result<(), super::IoError>;
 

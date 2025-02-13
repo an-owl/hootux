@@ -3,11 +3,11 @@
 //!
 //! This module also contains internal filesystem implementations
 
-pub mod vfs;
-pub mod file;
 pub mod device;
-pub mod tmpfs;
+pub mod file;
 pub mod sysfs;
+pub mod tmpfs;
+pub mod vfs;
 
 /// Contains the systems VFS. It may not be constructed until a root filesystem can be acquired.
 ///
@@ -20,12 +20,17 @@ pub const THIS_DIR: &str = ".";
 pub const PARENT_DIR: &str = "..";
 pub const PATH_SEPARATOR: char = '/';
 
-
 /// Initializes the VFS,
 pub fn init_fs(vfs: alloc::boxed::Box<dyn device::FileSystem>) {
-    assert!(unsafe { (& *(&raw const VIRTUAL_FILE_SYSTEM)).is_some() });
-    log::debug!("Initializing VFS with: {} type: {}",vfs.device(), vfs.driver_name());
-    unsafe { VIRTUAL_FILE_SYSTEM = Some(alloc::boxed::Box::new(vfs::VirtualFileSystem::new(vfs))); }
+    assert!(unsafe { (&*(&raw const VIRTUAL_FILE_SYSTEM)).is_some() });
+    log::debug!(
+        "Initializing VFS with: {} type: {}",
+        vfs.device(),
+        vfs.driver_name()
+    );
+    unsafe {
+        VIRTUAL_FILE_SYSTEM = Some(alloc::boxed::Box::new(vfs::VirtualFileSystem::new(vfs)));
+    }
 }
 
 /// Returns a reference to the VFS.
@@ -35,14 +40,13 @@ pub fn init_fs(vfs: alloc::boxed::Box<dyn device::FileSystem>) {
 /// Technically this function should be unsafe. This is because is calls [Option::unwrap_unchecked]
 /// however it is not possible for external code to call this fn before the VFS is initialized.
 pub fn get_vfs() -> &'static vfs::VirtualFileSystem {
-    let t =  unsafe { (&*(&raw const VIRTUAL_FILE_SYSTEM)).as_ref() };
+    let t = unsafe { (&*(&raw const VIRTUAL_FILE_SYSTEM)).as_ref() };
     unsafe { t.unwrap_unchecked() }
 }
 
-pub type IoResult<'a,T> = futures_util::future::BoxFuture<'a, Result<T,IoError>>;
+pub type IoResult<'a, T> = futures_util::future::BoxFuture<'a, Result<T, IoError>>;
 
-#[derive(Debug)]
-#[derive(PartialEq)]
+#[derive(Debug, PartialEq)]
 pub enum IoError {
     /// Attempted to access a resource which is not present.
     ///
@@ -92,31 +96,35 @@ pub enum IoError {
     NotReady,
 
     /// Returned by [file::Write::write] when the input is an invalid variant of the character
-    InvalidData
+    InvalidData,
 }
 
 /// Generic test for a FileSystem implementation.
 ///
 /// This might panic on fail, it might throw an error.
 #[cfg(test)]
-pub async fn test_fs<F: device::FileSystem + ?Sized>(fs: alloc::boxed::Box<F>) -> crate::task::TaskResult {
+pub async fn test_fs<F: device::FileSystem + ?Sized>(
+    fs: alloc::boxed::Box<F>,
+) -> crate::task::TaskResult {
     use crate::fs::file::*;
 
     fs.root().new_file("file", None).await.unwrap();
-    let file = cast_file!(NormalFile<u8>:fs.root().get_file("file").await.unwrap()).ok().expect("Expected NormalFile did not get one");
+    let file = cast_file!(NormalFile<u8>:fs.root().get_file("file").await.unwrap())
+        .ok()
+        .expect("Expected NormalFile did not get one");
 
-    let mut file = match NormalFile::file_lock( file ).await {
+    let mut file = match NormalFile::file_lock(file).await {
         Ok(f) => f,
-        Err((e,_)) => panic!("Failed to clone `file` error: {:?}", e)
+        Err((e, _)) => panic!("Failed to clone `file` error: {:?}", e),
     };
 
     file.write(b"hello there").await.unwrap();
 
     let mut nf = cast_file!(NormalFile<u8>: file.clone_file()).ok().unwrap();
 
-    assert_eq!(file.set_cursor(0).unwrap(),0,"Bad cursor move");
+    assert_eq!(file.set_cursor(0).unwrap(), 0, "Bad cursor move");
     let mut buff = alloc::vec::Vec::new();
-    buff.resize(64,0);
+    buff.resize(64, 0);
     let read = file.read(&mut buff).await.unwrap();
     crate::println!("{}", core::str::from_utf8(read).unwrap());
     assert_eq!(read, b"hello there");
@@ -124,9 +132,14 @@ pub async fn test_fs<F: device::FileSystem + ?Sized>(fs: alloc::boxed::Box<F>) -
 
     match fs.root().get_file(PARENT_DIR).await {
         Err(IoError::IsDevice) => {}
-        _ => panic!("Expected IoError::IsDevice")
+        _ => panic!("Expected IoError::IsDevice"),
     }
-    let parent_fh = fs.root().get_file_with_meta(PARENT_DIR).await.expect("Got Error when fetching `/..`").expect("`/..` does not exist");
+    let parent_fh = fs
+        .root()
+        .get_file_with_meta(PARENT_DIR)
+        .await
+        .expect("Got Error when fetching `/..`")
+        .expect("`/..` does not exist");
     assert!(parent_fh.vfs_device_hint());
 
     crate::task::TaskResult::ExitedNormally

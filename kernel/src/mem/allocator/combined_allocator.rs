@@ -13,7 +13,7 @@ where
     superior: S,
     inferior: I,
     phys_alloc: buddy_frame_alloc::BuddyFrameAlloc,
-    mapper: Option<super::super::offset_page_table::OffsetPageTable>
+    mapper: Option<super::super::offset_page_table::OffsetPageTable>,
 }
 
 impl<S: SuperiorAllocator, I: InferiorAllocator> DualHeap<S, I> {

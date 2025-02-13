@@ -39,7 +39,7 @@ unsafe fn create_tls(t_data: *const u8, file_size: usize, mem_size: usize) -> *c
 /// This fn us unsafe because the caller must ensure that the arguments correctly describe the thread local template.
 /// The arguments given at runtime should never change.
 pub unsafe fn new_tls(t_data: *const u8, file_size: usize, mem_size: usize) -> *const *const u8 {
-    let tp = create_tls(t_data,file_size,mem_size);
+    let tp = create_tls(t_data, file_size, mem_size);
     Box::leak(Box::new(tp)) as *const *const u8
 }
 
@@ -53,7 +53,7 @@ pub unsafe fn new_tls(t_data: *const u8, file_size: usize, mem_size: usize) -> *
 /// This function is unsafe because the caller must ensure that the given args properly describe
 /// the thread local template.
 pub unsafe fn init_tls(t_data: *const u8, file_size: usize, mem_size: usize) {
-    let tp = new_tls(t_data,file_size,mem_size);
+    let tp = new_tls(t_data, file_size, mem_size);
 
     x86_msr::architecture::FsBase::write(tp.into());
     crate::runlevel::update_runlevel(crate::runlevel::Runlevel::Init)

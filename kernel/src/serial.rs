@@ -131,7 +131,7 @@ impl Serial {
             //read_buff: spin::RwLock::new(None),
             rx_tgt: spin::Mutex::new(None),
             dispatcher: futures_util::task::AtomicWaker::new(),
-            dirty: atomic::Atomic::new(false)
+            dirty: atomic::Atomic::new(false),
         };
 
         s.test().map(|_| s)
@@ -154,8 +154,12 @@ impl Serial {
         // clear DLAB
         unsafe { line.write(0x00u8) };
 
-        self.divisor.store(divisor,atomic::Ordering::Relaxed);
-        self.set_char_mode(self.bits.load(atomic::Ordering::Relaxed), self.parity.load(atomic::Ordering::Relaxed), self.stop.load(atomic::Ordering::Relaxed));
+        self.divisor.store(divisor, atomic::Ordering::Relaxed);
+        self.set_char_mode(
+            self.bits.load(atomic::Ordering::Relaxed),
+            self.parity.load(atomic::Ordering::Relaxed),
+            self.stop.load(atomic::Ordering::Relaxed),
+        );
     }
 
     pub fn set_char_mode(&self, data_bits: DataBits, parity: Parity, stop_bits: StopBits) {
@@ -163,9 +167,9 @@ impl Serial {
         b |= (parity as u8) << 2;
         b |= (stop_bits as u8) << 3;
 
-        self.bits.store(data_bits,atomic::Ordering::Relaxed);
-        self.parity.store(parity,atomic::Ordering::Relaxed);
-        self.stop.store(stop_bits,atomic::Ordering::Relaxed);
+        self.bits.store(data_bits, atomic::Ordering::Relaxed);
+        self.parity.store(parity, atomic::Ordering::Relaxed);
+        self.stop.store(stop_bits, atomic::Ordering::Relaxed);
 
         unsafe { x86_64::instructions::port::Port::new(self.base + Self::LINE_CTL).write(b) };
     }
@@ -257,10 +261,10 @@ impl Serial {
     /// Queues the buffer to be sent
     ///
     /// Returns a future which is woken after `buff` has been sent.
-    pub fn queue_send<'a>(&'a self, buff: &'a [u8]) -> impl core::future::Future<Output=()> + 'a{
+    pub fn queue_send<'a>(&'a self, buff: &'a [u8]) -> impl core::future::Future<Output = ()> + 'a {
         x86_64::instructions::interrupts::without_interrupts(|| {
             let mut l = self.write_buff.lock();
-            let r= l.push(buff);
+            let r = l.push(buff);
 
             // try to start sending if it isn't already
             if !self.run.load(atomic::Ordering::Relaxed) {
@@ -303,7 +307,7 @@ impl Serial {
             // pending bit is assert low
             while !id.pending() {
                 // this must occur before calling wake()
-                self.dirty.store(true,atomic::Ordering::Release);
+                self.dirty.store(true, atomic::Ordering::Release);
                 match id.reason() {
                     IntReason::ModemStatus => panic!("Serial modem status change"), // This is not configured to raise an interrupt
                     IntReason::TransmitterEmpty => {
@@ -313,7 +317,7 @@ impl Serial {
                                 self.try_send(b).unwrap() // checks if sending is allowed beforehand
                             } else {
                                 // Relaxed because `in`/`out` instructions are serializing and `try_send()` here will always send
-                                self.run.store(false,atomic::Ordering::Relaxed);
+                                self.run.store(false, atomic::Ordering::Relaxed);
                                 break;
                             }
                         }
@@ -322,31 +326,35 @@ impl Serial {
                         let mut l = self.rx_tgt.lock();
 
                         while let Some(b) = self.receive() {
-                            if let Some((buf,ref mut i)) = *l {
+                            if let Some((buf, ref mut i)) = *l {
                                 let buff = unsafe { &mut *buf };
                                 buff[*i] = b;
                                 *i += 1;
 
                                 // Clear the interrupt and break. This allows the caller to hand
                                 // over a new buffer without loosing data in between unless there is an overrun
-                                if *i >= buff.len() { // should never be greater
+                                if *i >= buff.len() {
+                                    // should never be greater
                                     // SAFETY: This is safe because we are disabling an interrupt.
-                                    unsafe { self.set_int_enable(InterruptEnable::TRANSMIT_HOLDING_REGISTER_EMPTY); }
-                                    break
+                                    unsafe {
+                                        self.set_int_enable(
+                                            InterruptEnable::TRANSMIT_HOLDING_REGISTER_EMPTY,
+                                        );
+                                    }
+                                    break;
                                 }
                             }
                         }
                     }
                     IntReason::LineStatus => panic!("Serial line status change"), // This is not configured to raise an interrupt
                     IntReason::FifoTimeOut => {
-                        if let Some((ref buff,ref mut i)) = *self.rx_tgt.lock() {
+                        if let Some((ref buff, ref mut i)) = *self.rx_tgt.lock() {
                             while let Some(b) = self.receive() {
                                 if *i > buff.len() {
-                                    continue
+                                    continue;
                                 }
-                                unsafe {(&mut **buff)[*i] = b};
+                                unsafe { (&mut **buff)[*i] = b };
                                 *i += 1;
-
                             }
                         } else {
                             let _ = self.receive();
@@ -401,7 +409,7 @@ impl futures_util::Future for &Serial {
     type Output = ();
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        if self.dirty.swap(false,atomic::Ordering::Relaxed) {
+        if self.dirty.swap(false, atomic::Ordering::Relaxed) {
             self.dispatcher.register(cx.waker());
             Poll::Ready(())
         } else {
@@ -515,11 +523,10 @@ bitflags::bitflags! {
 const SERIAL_ADDR: [u16; 8] = [0x3f8, 0x2f8, 0x3e8, 0x2e8, 0x5f8, 0x4f8, 0x5e8, 0x4e8];
 
 pub fn init_rt_serial() {
-
     let mut com = alloc::vec::Vec::new();
     let mut dispatchers = alloc::vec::Vec::new();
 
-    for (i,a) in SERIAL_ADDR.iter().enumerate() {
+    for (i, a) in SERIAL_ADDR.iter().enumerate() {
         match Serial::new(*a) {
             Ok(p) => {
                 log::info!("Found UART device on {a:#x}");
@@ -566,7 +573,10 @@ pub fn init_rt_serial() {
                 //let fs_dst = cast_file!(Directory: crate::task::util::block_on!(crate::fs::get_vfs().open("/")).unwrap()).unwrap();
                 //fs_dst.store( &format_args!("COM{i}").to_string() ,Box::new(d.clone()));
                 let name = format_args!("{FS_LOCATION}COM{i}").to_string();
-                crate::task::util::block_on!(crate::fs::get_vfs().mount_dev(Box::new(d.clone()),&name)).expect("Failed to crate mount FIFO for UART to VFS");
+                crate::task::util::block_on!(
+                    crate::fs::get_vfs().mount_dev(Box::new(d.clone()), &name)
+                )
+                .expect("Failed to crate mount FIFO for UART to VFS");
 
                 com.push(p);
 

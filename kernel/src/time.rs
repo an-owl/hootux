@@ -208,21 +208,20 @@ impl Duration {
 }
 
 pub struct AbsoluteTime {
-    nanos: u64
+    nanos: u64,
 }
 
 impl AbsoluteTime {
-
     /// Returns true if the time represented by self has passed.
     pub fn is_future(&self) -> bool {
-         self.nanos < get_sys_time()
+        self.nanos < get_sys_time()
     }
 }
 
 impl From<Duration> for AbsoluteTime {
     fn from(value: Duration) -> Self {
         Self {
-            nanos: get_sys_time() + value.nanos
+            nanos: get_sys_time() + value.nanos,
         }
     }
 }

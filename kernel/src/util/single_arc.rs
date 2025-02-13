@@ -12,26 +12,22 @@ pub struct SingleArc<T: ?Sized> {
     inner: *mut SingleArcInner<T>,
 }
 
-unsafe impl<T> Send for SingleArc<T> where T: Send{}
-unsafe impl<T> Sync for SingleArc<T> where T: Sync{}
+unsafe impl<T> Send for SingleArc<T> where T: Send {}
+unsafe impl<T> Sync for SingleArc<T> where T: Sync {}
 
 impl<T: ?Sized> SingleArc<T> {
     pub fn new(data: Box<T>) -> Self {
-        let inner = Box::leak(
-            Box::new(
-                SingleArcInner{
-                    weak_count: atomic::Atomic::new(0),
-                    data: core::cell::UnsafeCell::new(Some(data))
-                }
-            )
-        );
-        Self {
-            inner,
-        }
+        let inner = Box::leak(Box::new(SingleArcInner {
+            weak_count: atomic::Atomic::new(0),
+            data: core::cell::UnsafeCell::new(Some(data)),
+        }));
+        Self { inner }
     }
 
     pub fn downgrade(&self) -> Weak<T> {
-        unsafe { &*self.inner }.weak_count.fetch_add(1,atomic::Ordering::Acquire);
+        unsafe { &*self.inner }
+            .weak_count
+            .fetch_add(1, atomic::Ordering::Acquire);
         Weak {
             inner: Some(self.inner),
         }
@@ -78,16 +74,12 @@ impl<T: ?Sized> Drop for SingleArc<T> {
 
 impl<T: ?Sized> From<Box<T>> for SingleArc<T> {
     fn from(value: Box<T>) -> Self {
-        let inner = Box::leak(Box::new(
-            SingleArcInner{
-                weak_count: atomic::Atomic::new(0),
-                data: core::cell::UnsafeCell::new(Some(value))
-            }
-        ));
+        let inner = Box::leak(Box::new(SingleArcInner {
+            weak_count: atomic::Atomic::new(0),
+            data: core::cell::UnsafeCell::new(Some(value)),
+        }));
 
-        Self {
-            inner,
-        }
+        Self { inner }
     }
 }
 
@@ -96,24 +88,22 @@ pub struct Weak<T: ?Sized> {
     inner: Option<*mut SingleArcInner<T>>,
 }
 
-
 impl<T: ?Sized> Default for Weak<T> {
     fn default() -> Self {
-        Self{
-            inner: None
-        }
+        Self { inner: None }
     }
 }
 
 impl<T: ?Sized> Drop for Weak<T> {
     fn drop(&mut self) {
-
         unsafe {
             if let Some(inner) = self.inner {
                 // SAFETY: self.inner is synchronized and owned by self, so we can access it freely
                 let inner = &mut *inner;
                 inner.weak_count.fetch_sub(1, atomic::Ordering::Release);
-                if inner.weak_count.load(atomic::Ordering::Relaxed) == 0 && (&*inner.data.get()).is_none() {
+                if inner.weak_count.load(atomic::Ordering::Relaxed) == 0
+                    && (&*inner.data.get()).is_none()
+                {
                     // SAFETY: this is constructed using Box::new and leaked, we just undo it here
                     // We also check that this is not aliased
                     let _ = Box::from_raw(inner);
@@ -147,14 +137,14 @@ impl<T: ?Sized> Weak<T> {
     }
 
     /// Sets self to point to the data contained within `strong`.
-    pub fn set(&mut self, strong: &SingleArc<T>){
+    pub fn set(&mut self, strong: &SingleArc<T>) {
         *self = strong.downgrade()
     }
 
     /// Compares the inner value with `other` if they have the same address then this returns true.
     /// If `other` and the inner value of `self` do not have the same address, or `self` does not
     /// contain any data then returns true.
-    pub fn cmp_t(&self,other: *const T) -> bool {
+    pub fn cmp_t(&self, other: *const T) -> bool {
         if let Some(inner) = self.get() {
             core::ptr::eq(inner, other)
         } else {
@@ -165,5 +155,5 @@ impl<T: ?Sized> Weak<T> {
 
 struct SingleArcInner<T: ?Sized> {
     weak_count: atomic::Atomic<usize>,
-    data: core::cell::UnsafeCell<Option<Box<T>>>
+    data: core::cell::UnsafeCell<Option<Box<T>>>,
 }

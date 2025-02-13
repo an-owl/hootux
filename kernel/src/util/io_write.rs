@@ -1,4 +1,3 @@
-
 /// Extension trait to allow implementing [core;:fmt::Write]
 ///
 /// # Example
@@ -21,7 +20,7 @@ pub trait WriteableBuffer: core::fmt::Write {
 
 impl<'a> ToWritableBuffer for &'a mut [u8] {
     fn writable(self) -> impl WriteableBuffer {
-        WritableByteArray{
+        WritableByteArray {
             arr: self,
             cursor: 0,
         }

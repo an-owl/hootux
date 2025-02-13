@@ -2,9 +2,7 @@ use crate::mem;
 use core::alloc::{AllocError, Layout};
 use core::ptr::NonNull;
 use mem::mem_map::*;
-use x86_64::structures::paging::{
-    Page, Size4KiB,
-};
+use x86_64::structures::paging::{Page, Size4KiB};
 use x86_64::VirtAddr;
 
 pub mod bump;

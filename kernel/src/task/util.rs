@@ -60,20 +60,23 @@ impl alloc::task::Wake for DummyWaker {
 
 #[macro_export]
 macro_rules! block_on {
-    ($task:expr) => {
-        {
-            let mut future = $task;
-            loop {
-                match core::future::Future::poll( ::core::pin::Pin::new(&mut future), &mut ::core::task::Context::from_waker( & ::core::task::Waker::from( ::alloc::sync::Arc::new($crate::task::util::DummyWaker )))) {
-                    ::core::task::Poll::Pending => {
-                        core::hint::spin_loop(); // busy-loop, but whatever
-                        continue;
-                    },
-                    ::core::task::Poll::Ready(t) => break t,
-                };
-            }
+    ($task:expr) => {{
+        let mut future = $task;
+        loop {
+            match core::future::Future::poll(
+                ::core::pin::Pin::new(&mut future),
+                &mut ::core::task::Context::from_waker(&::core::task::Waker::from(
+                    ::alloc::sync::Arc::new($crate::task::util::DummyWaker),
+                )),
+            ) {
+                ::core::task::Poll::Pending => {
+                    core::hint::spin_loop(); // busy-loop, but whatever
+                    continue;
+                }
+                ::core::task::Poll::Ready(t) => break t,
+            };
         }
-    }
+    }};
 }
 
 pub use block_on;

@@ -2,10 +2,10 @@ use proc_macro2::TokenStream;
 use quote::{quote, ToTokens};
 use syn::parse::ParseStream;
 
-pub (super) struct MultiBootHeaderParser {
+pub(super) struct MultiBootHeaderParser {
     arch: syn::Path,
     attr: Option<Vec<syn::Attribute>>,
-    tags: Vec<TagBuilder>
+    tags: Vec<TagBuilder>,
 }
 
 impl MultiBootHeaderParser {
@@ -16,9 +16,9 @@ impl MultiBootHeaderParser {
         let st_name_header = quote::format_ident!("{}Header", Self::ST_NAME);
         let mut buff = quote!(head: #st_name_header);
 
-        for (i,tag) in self.tags.iter().enumerate() {
+        for (i, tag) in self.tags.iter().enumerate() {
             let id = tag.tag.clone();
-            let tag = quote::format_ident!("tag_{}",i);
+            let tag = quote::format_ident!("tag_{}", i);
 
             buff = quote!(
                 #buff,
@@ -26,7 +26,7 @@ impl MultiBootHeaderParser {
             );
         }
 
-        let st_name = quote::format_ident!("{}",Self::ST_NAME);
+        let st_name = quote::format_ident!("{}", Self::ST_NAME);
         // Dammit I need to define my own header here, because multiboot2_header doesn't have a
         // public constructor cor the header-header
         quote!(
@@ -51,7 +51,7 @@ impl MultiBootHeaderParser {
     /// Attributes given as arguments to the macro will be used on the static
     fn build_static(&self) -> TokenStream {
         let st_name_header = quote::format_ident!("{}Header", Self::ST_NAME);
-        let st_name = quote::format_ident!("{}",Self::ST_NAME);
+        let st_name = quote::format_ident!("{}", Self::ST_NAME);
         let arch = self.arch.clone();
 
         let mut construct = quote!(
@@ -63,8 +63,8 @@ impl MultiBootHeaderParser {
             },
         );
 
-        for (i,t) in self.tags.iter().enumerate() {
-            let tag = quote::format_ident!("tag_{}",i);
+        for (i, t) in self.tags.iter().enumerate() {
+            let tag = quote::format_ident!("tag_{}", i);
             let c = t.call();
             construct = quote!(
                 #construct
@@ -83,7 +83,6 @@ impl MultiBootHeaderParser {
 
 impl syn::parse::Parse for MultiBootHeaderParser {
     fn parse(input: ParseStream) -> syn::Result<Self> {
-
         let arch: syn::Path = input.parse()?;
 
         match input.parse::<syn::Token![,]>() {
@@ -93,8 +92,8 @@ impl syn::parse::Parse for MultiBootHeaderParser {
                 return Ok(Self {
                     arch,
                     attr: None,
-                    tags: Default::default()
-                })
+                    tags: Default::default(),
+                });
             }
         }
 
@@ -108,11 +107,7 @@ impl syn::parse::Parse for MultiBootHeaderParser {
             let _ = input.parse::<syn::Token![,]>();
         }
 
-        Ok(Self {
-            arch,
-            attr,
-            tags
-        })
+        Ok(Self { arch, attr, tags })
     }
 }
 
@@ -132,7 +127,6 @@ impl Into<TokenStream> for MultiBootHeaderParser {
     }
 }
 
-
 struct TagBuilder {
     tag: syn::Path,
     call: syn::ExprCall,
@@ -147,7 +141,6 @@ impl TagBuilder {
 
 impl syn::parse::Parse for TagBuilder {
     fn parse(input: ParseStream) -> syn::Result<Self> {
-
         let call: syn::ExprCall = input.parse()?;
 
         let tag = if let syn::Expr::Path(mut path) = *call.func.clone() {
@@ -155,16 +148,15 @@ impl syn::parse::Parse for TagBuilder {
             path.path.segments.pop_punct();
             path.path
         } else {
-            panic!("Failed to parse path for tag {}", call.func.to_token_stream().to_string())
+            panic!(
+                "Failed to parse path for tag {}",
+                call.func.to_token_stream().to_string()
+            )
         };
 
-        Ok(Self {
-            tag,
-            call
-        })
+        Ok(Self { tag, call })
     }
 }
-
 
 #[cfg(test)]
 mod test {
@@ -172,15 +164,21 @@ mod test {
 
     #[test]
     fn test_parser() {
-        let q = quote::quote!(I386, FramebufferHeaderTag::new(Required,1920,1080,8));
+        let q = quote::quote!(I386, FramebufferHeaderTag::new(Required, 1920, 1080, 8));
         let _: super::MultiBootHeaderParser = syn::parse2(q).unwrap();
     }
 
-
     #[test]
     fn tag_builder_check() {
-        let b: super::TagBuilder = syn::parse2(quote::quote!(FrameBufferHeaderTag::new(Required,1920,1080,8))).unwrap();
-        println!("ty name: {}\nfn call: {:?}",b.tag.to_token_stream().to_string(),b.call.to_token_stream().to_string());
+        let b: super::TagBuilder = syn::parse2(quote::quote!(FrameBufferHeaderTag::new(
+            Required, 1920, 1080, 8
+        )))
+        .unwrap();
+        println!(
+            "ty name: {}\nfn call: {:?}",
+            b.tag.to_token_stream().to_string(),
+            b.call.to_token_stream().to_string()
+        );
     }
 
     // note: for some reason this fails when `s` is proc_macro::TokenStream
@@ -188,31 +186,72 @@ mod test {
     fn build_with_no_tags() {
         let b: super::MultiBootHeaderParser = syn::parse2(quote::quote!(I386)).unwrap();
         let s: proc_macro2::TokenStream = b.into();
-        println!("{}",s.to_token_stream().to_string());
+        println!("{}", s.to_token_stream().to_string());
     }
 
     #[test]
     fn tag_builder_has_correct_output() {
-        let b: super::TagBuilder = syn::parse2(quote::quote!(FrameBufferHeaderTag::new(Required,1920,1080,8))).unwrap();
+        let b: super::TagBuilder = syn::parse2(quote::quote!(FrameBufferHeaderTag::new(
+            Required, 1920, 1080, 8
+        )))
+        .unwrap();
 
         let expect = "FrameBufferHeaderTag";
-        assert_eq!(expect, b.tag.to_token_stream().to_string(), "Tag name incorrect: Expected {expect} got {}", b.tag.to_token_stream().to_string());
+        assert_eq!(
+            expect,
+            b.tag.to_token_stream().to_string(),
+            "Tag name incorrect: Expected {expect} got {}",
+            b.tag.to_token_stream().to_string()
+        );
 
         let expect = "FrameBufferHeaderTag :: new";
-        assert_eq!(expect, b.call.func.to_token_stream().to_string(), "Constructor name incorrect: Expected {expect} got {}",b.call.to_token_stream().to_string());
+        assert_eq!(
+            expect,
+            b.call.func.to_token_stream().to_string(),
+            "Constructor name incorrect: Expected {expect} got {}",
+            b.call.to_token_stream().to_string()
+        );
 
-        let args: Vec<String> = b.call.args.iter().map(|e| e.to_token_stream().to_string()).collect();
-        let expect = ["Required","1920","1080","8"];
-        assert_eq!(expect, *args, "Constructor args incorrect: Expected {expect:?} got {:?}",&*args)
+        let args: Vec<String> = b
+            .call
+            .args
+            .iter()
+            .map(|e| e.to_token_stream().to_string())
+            .collect();
+        let expect = ["Required", "1920", "1080", "8"];
+        assert_eq!(
+            expect, *args,
+            "Constructor args incorrect: Expected {expect:?} got {:?}",
+            &*args
+        )
     }
 
     #[test]
     fn handles_paths_correctly() {
-        let b: super::MultiBootHeaderParser = syn::parse2(quote::quote!(multiboot2_header::HeaderTagISA::I386, multiboot2_header::FrameBufferHeaderTag::new(multiboot2_header::HeaderTagFlag::Required,1920,1080,8))).unwrap();
+        let b: super::MultiBootHeaderParser = syn::parse2(quote::quote!(
+            multiboot2_header::HeaderTagISA::I386,
+            multiboot2_header::FrameBufferHeaderTag::new(
+                multiboot2_header::HeaderTagFlag::Required,
+                1920,
+                1080,
+                8
+            )
+        ))
+        .unwrap();
         let expect = "multiboot2_header :: HeaderTagISA :: I386";
-        assert_eq!(b.arch.to_token_stream().to_string(), expect, "Incorrect arch identifier: Expected {expect} got {}", b.arch.to_token_stream().to_string());
+        assert_eq!(
+            b.arch.to_token_stream().to_string(),
+            expect,
+            "Incorrect arch identifier: Expected {expect} got {}",
+            b.arch.to_token_stream().to_string()
+        );
         let expect = "multiboot2_header :: FrameBufferHeaderTag";
-        assert_eq!(b.tags[0].tag.to_token_stream().to_string(), expect, "Incorrect arch identifier: Expected {expect} got {}", b.tags[0].tag.to_token_stream().to_string())
+        assert_eq!(
+            b.tags[0].tag.to_token_stream().to_string(),
+            expect,
+            "Incorrect arch identifier: Expected {expect} got {}",
+            b.tags[0].tag.to_token_stream().to_string()
+        )
     }
 
     #[test]
@@ -232,6 +271,6 @@ mod test {
             multiboot2_header::ConsoleHeaderTag::new(multiboot2_header::HeaderTagFlag::Optional,multiboot2_header::ConsoleHeaderTagFlags::EgaTextSupported)
         )).unwrap();
         let s: proc_macro2::TokenStream = p.into();
-        println!("{}",s.to_string());
+        println!("{}", s.to_string());
     }
 }

@@ -1,7 +1,6 @@
 use proc_macro2::Span;
 use quote::ToTokens;
 
-
 #[derive(Debug)]
 pub struct SlabLikeParser {
     pub_type: syn::ItemStruct,
@@ -10,7 +9,6 @@ pub struct SlabLikeParser {
     slab_size: usize,
 
     backing_alloc: Option<(syn::Path, syn::Expr)>,
-
 }
 
 impl syn::parse::Parse for SlabLikeParser {
@@ -25,7 +23,6 @@ impl syn::parse::Parse for SlabLikeParser {
             },
             backing_alloc: {
                 if let Ok(p) = input.parse::<syn::Path>() {
-
                     let _ = input.parse::<syn::Token![,]>()?;
                     let alloc_constructor = input.parse()?;
                     Some((p, alloc_constructor))
@@ -35,12 +32,14 @@ impl syn::parse::Parse for SlabLikeParser {
             },
         };
 
-
         if this.slab_size.is_power_of_two() {
             Ok(this)
         } else {
             // we catch this here because the actual rustc error message is nonsense
-            Err(syn::Error::new(Span::call_site(),"Slab size must be power of two"))
+            Err(syn::Error::new(
+                Span::call_site(),
+                "Slab size must be power of two",
+            ))
         }
     }
 }
@@ -52,18 +51,19 @@ impl From<SlabLikeParser> for proc_macro2::TokenStream {
         let slab_size = value.slab_size;
 
         // We need to resolve the backing alloc parts, because they are optional we need to generate the default too
-        let (backing_alloc,construct) = value.backing_alloc
-            .map(
-                |(alloc,construct)|
-                    (alloc.into_token_stream(),construct.into_token_stream())
-            )
-            .unwrap_or(
-                (quote::quote!(::alloc::alloc::Global),quote::quote!(::alloc::alloc::Global))
-            );
+        let (backing_alloc, construct) = value
+            .backing_alloc
+            .map(|(alloc, construct)| (alloc.into_token_stream(), construct.into_token_stream()))
+            .unwrap_or((
+                quote::quote!(::alloc::alloc::Global),
+                quote::quote!(::alloc::alloc::Global),
+            ));
         let pt_ident = pt.ident.clone();
 
-
-        let backing_static = quote::format_ident!("__KERNEL_PROC_MACRO_STATIC_SLABLIKE_ALLOCATOR_FOR_{}", pt_ident);
+        let backing_static = quote::format_ident!(
+            "__KERNEL_PROC_MACRO_STATIC_SLABLIKE_ALLOCATOR_FOR_{}",
+            pt_ident
+        );
 
         quote::quote! {
 
@@ -98,16 +98,20 @@ impl From<SlabLikeParser> for proc_macro2::TokenStream {
 
 #[cfg(test)]
 mod test {
+    use crate::slablike::SlabLikeParser;
     use quote::ToTokens;
     use syn::parse::Parse;
-    use crate::slablike::SlabLikeParser;
 
     #[test]
     fn parses_correctly() {
-        let parsed = syn::parse2::<SlabLikeParser>(quote::quote! {struct MyStruct; u8 4096}).unwrap();
+        let parsed =
+            syn::parse2::<SlabLikeParser>(quote::quote! {struct MyStruct; u8 4096}).unwrap();
         assert_eq!(parsed.slab_size, 4096);
         assert_eq!(parsed.pub_type.ident, "MyStruct");
-        assert_eq!(parsed.alloc_ty.clone().into_token_stream().to_string(), "u8");
+        assert_eq!(
+            parsed.alloc_ty.clone().into_token_stream().to_string(),
+            "u8"
+        );
 
         let ts: proc_macro2::TokenStream = parsed.into();
 
@@ -116,16 +120,37 @@ mod test {
 
     #[test]
     fn constructor_ok() {
-        let parsed = syn::parse2::<SlabLikeParser>(quote::quote! {struct MyStruct; u8 4096 std::alloc::Global, std::alloc::Global}).unwrap();
+        let parsed = syn::parse2::<SlabLikeParser>(
+            quote::quote! {struct MyStruct; u8 4096 std::alloc::Global, std::alloc::Global},
+        )
+        .unwrap();
         assert!(parsed.backing_alloc.is_some());
 
-        assert_eq!(parsed.backing_alloc.clone().unwrap().0.to_token_stream().to_string(), "std :: alloc :: Global");
-        assert_eq!(parsed.backing_alloc.clone().unwrap().1.to_token_stream().to_string(), "std :: alloc :: Global");
+        assert_eq!(
+            parsed
+                .backing_alloc
+                .clone()
+                .unwrap()
+                .0
+                .to_token_stream()
+                .to_string(),
+            "std :: alloc :: Global"
+        );
+        assert_eq!(
+            parsed
+                .backing_alloc
+                .clone()
+                .unwrap()
+                .1
+                .to_token_stream()
+                .to_string(),
+            "std :: alloc :: Global"
+        );
     }
 
     #[test]
     fn parse_assert_pow2() {
-        let ts = syn::parse2::<SlabLikeParser>( quote::quote! {struct MyStruct; u8 4095});
+        let ts = syn::parse2::<SlabLikeParser>(quote::quote! {struct MyStruct; u8 4095});
         if let Err(e) = ts {
             assert_eq!(e.to_string(), "Slab size must be power of two")
         } else {

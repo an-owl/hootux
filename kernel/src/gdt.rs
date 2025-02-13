@@ -7,7 +7,6 @@ use x86_64::VirtAddr;
 pub const DOUBLE_FAULT_IST_INDEX: u16 = 0;
 const STACK_SIZE: usize = 4096 * 5;
 
-
 lazy_static! {
     static ref TSS: TaskStateSegment = {
         let mut tss = TaskStateSegment::new();
@@ -50,7 +49,7 @@ pub(crate) fn new_tss() -> TaskStateSegment {
     tss.interrupt_stack_table[DOUBLE_FAULT_IST_INDEX as usize] = {
         // This is preferred over allocating a Box<[_,_]>
         let mut b: alloc::vec::Vec<u8> = alloc::vec::Vec::new();
-        b.resize(STACK_SIZE,0);
+        b.resize(STACK_SIZE, 0);
         let l = b.leak();
         VirtAddr::from_ptr(&l[0]) + STACK_SIZE as u64
     };

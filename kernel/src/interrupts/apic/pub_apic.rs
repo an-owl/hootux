@@ -74,8 +74,13 @@ impl super::Apic for SysApic {
         LOCAL_APIC.get().get_id()
     }
 
-    unsafe fn send_ipi(&mut self, target: IpiTarget, int_type: InterruptType, vector: u8) -> Result<(), IpiError> {
-        LOCAL_APIC.get().send_ipi(target,int_type,vector)
+    unsafe fn send_ipi(
+        &mut self,
+        target: IpiTarget,
+        int_type: InterruptType,
+        vector: u8,
+    ) -> Result<(), IpiError> {
+        LOCAL_APIC.get().send_ipi(target, int_type, vector)
     }
 
     fn block_ipi_delivered(&self, timeout: Duration) -> bool {

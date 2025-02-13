@@ -205,7 +205,9 @@ unsafe impl Allocator for DmaAlloc {
             };
 
             // mem::mem_map cannot be used because DMA areas must be contiguous
-            let phys_addr = mem::allocator::COMBINED_ALLOCATOR.lock().phys_alloc()
+            let phys_addr = mem::allocator::COMBINED_ALLOCATOR
+                .lock()
+                .phys_alloc()
                 .allocate(
                     Layout::from_size_align(layout.size(), self.phys_align).unwrap(),
                     self.region,
@@ -246,7 +248,6 @@ unsafe impl Allocator for DmaAlloc {
         for i in range.map(|p| p.start_address()) {
             mem::mem_map::unmap_and_free(i).unwrap()
         }
-
     }
 }
 
@@ -264,7 +265,8 @@ unsafe impl Allocator for DmaAlloc {
 pub struct VirtAlloc;
 
 impl VirtAlloc {
-    pub fn alloc_boxed<T>() -> Result<alloc::boxed::Box<core::mem::MaybeUninit<T>, Self>, AllocError> {
+    pub fn alloc_boxed<T>() -> Result<alloc::boxed::Box<core::mem::MaybeUninit<T>, Self>, AllocError>
+    {
         let ptr = Self.allocate(Layout::new::<T>())?;
         Ok(unsafe { alloc::boxed::Box::from_raw_in(ptr.as_ptr().cast(), Self) })
     }
@@ -281,25 +283,42 @@ unsafe impl Allocator for VirtAlloc {
 
     unsafe fn deallocate(&self, mut ptr: NonNull<u8>, layout: Layout) {
         // pointer may not be aligned so we align it down
-        let off = ptr.as_ptr() as usize & (mem::PAGE_SIZE-1);
+        let off = ptr.as_ptr() as usize & (mem::PAGE_SIZE - 1);
         ptr = ptr.byte_sub(off);
 
-        super::COMBINED_ALLOCATOR.lock().virt_deallocate(ptr, layout);
-        for i in ptr.as_ptr() as usize .. ptr.as_ptr() as usize + layout.size() {
+        super::COMBINED_ALLOCATOR
+            .lock()
+            .virt_deallocate(ptr, layout);
+        for i in ptr.as_ptr() as usize..ptr.as_ptr() as usize + layout.size() {
             let addr = VirtAddr::from_ptr(i as *const u8);
             let _ = mem::mem_map::unmap_and_free(addr); // this is likely to fail, we just want to ensure that the memory isn't mapped
         }
     }
 
-    unsafe fn grow(&self, _ptr: NonNull<u8>, _old_layout: Layout, _new_layout: Layout) -> Result<NonNull<[u8]>, AllocError> {
+    unsafe fn grow(
+        &self,
+        _ptr: NonNull<u8>,
+        _old_layout: Layout,
+        _new_layout: Layout,
+    ) -> Result<NonNull<[u8]>, AllocError> {
         panic!("Not allowed")
     }
 
-    unsafe fn grow_zeroed(&self, _ptr: NonNull<u8>, _old_layout: Layout, _new_layout: Layout) -> Result<NonNull<[u8]>, AllocError> {
+    unsafe fn grow_zeroed(
+        &self,
+        _ptr: NonNull<u8>,
+        _old_layout: Layout,
+        _new_layout: Layout,
+    ) -> Result<NonNull<[u8]>, AllocError> {
         panic!("Not allowed")
     }
 
-    unsafe fn shrink(&self, _ptr: NonNull<u8>, _old_layout: Layout, _new_layout: Layout) -> Result<NonNull<[u8]>, AllocError> {
+    unsafe fn shrink(
+        &self,
+        _ptr: NonNull<u8>,
+        _old_layout: Layout,
+        _new_layout: Layout,
+    ) -> Result<NonNull<[u8]>, AllocError> {
         panic!("Not allowed")
     }
 }

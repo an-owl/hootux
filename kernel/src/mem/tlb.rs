@@ -10,11 +10,12 @@
 //! page table entries are modified (excl setting  "P" flag).
 //! Modules may implement their own TLB synchronization and use the [without_shootdowns] fn to improve performance
 
-use core::ops::Deref;
-use crate::interrupts::apic::Apic;
 use crate::interrupts::apic;
+use crate::interrupts::apic::Apic;
+use core::ops::Deref;
 
-const SHOOTDOWN_VECTOR: crate::interrupts::InterruptIndex = crate::interrupts::InterruptIndex::TlbShootdown; // This uses a u8 because it needs to use a vector not an IRQ. This will use a private kernel API
+const SHOOTDOWN_VECTOR: crate::interrupts::InterruptIndex =
+    crate::interrupts::InterruptIndex::TlbShootdown; // This uses a u8 because it needs to use a vector not an IRQ. This will use a private kernel API
 static SHOOTDOWN_SYNC: ShootdownSyncCounter = ShootdownSyncCounter::new();
 #[thread_local]
 static MASK_SHOOTDOWN: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(true); // default state should be true on bsp and false on ap
@@ -23,12 +24,13 @@ static SHOOTDOWN_WARN: core::sync::atomic::AtomicUsize = core::sync::atomic::Ato
 
 /// This fn is to indicate that page tables are being modified and a shootdown is about to occur.
 /// This will indicate to other CPUs that page faults may occur and should be retried.
-pub fn shootdown_hint<T,F>(f: F) -> T
-    where F: FnOnce() -> T
+pub fn shootdown_hint<T, F>(f: F) -> T
+where
+    F: FnOnce() -> T,
 {
-    SHOOTDOWN_WARN.fetch_add(1,atomic::Ordering::Acquire);
+    SHOOTDOWN_WARN.fetch_add(1, atomic::Ordering::Acquire);
     let rc = f();
-    SHOOTDOWN_WARN.fetch_sub(1,atomic::Ordering::Release);
+    SHOOTDOWN_WARN.fetch_sub(1, atomic::Ordering::Release);
     rc
 }
 
@@ -40,7 +42,15 @@ pub fn shootdown(shootdown_content: ShootdownContent) {
     }
     let _l = SHOOTDOWN_LIST.set(shootdown_content); // not used, dropped at the end of this scope
     SHOOTDOWN_SYNC.sync(crate::mp::num_cpus(), || {
-        unsafe { apic::get_apic().send_ipi(apic::IpiTarget::AllNotThisCpu, apic::InterruptType::Fixed, SHOOTDOWN_VECTOR.as_u8()).unwrap() };
+        unsafe {
+            apic::get_apic()
+                .send_ipi(
+                    apic::IpiTarget::AllNotThisCpu,
+                    apic::InterruptType::Fixed,
+                    SHOOTDOWN_VECTOR.as_u8(),
+                )
+                .unwrap()
+        };
         handle_shootdown(); // handle shootdown here while we're waiting for the others.
     });
 }
@@ -52,7 +62,7 @@ pub fn shootdown(shootdown_content: ShootdownContent) {
 /// Note that the CPU may speculatively cache `shootdown_content`.
 pub fn target_shootdown(targets: crate::mp::bitmap::CpuBMap, shootdown_content: ShootdownContent) {
     if MASK_SHOOTDOWN.load(atomic::Ordering::Relaxed) {
-        return
+        return;
     }
     let c = if let Some(c) = targets.count() {
         c
@@ -71,7 +81,15 @@ pub fn target_shootdown(targets: crate::mp::bitmap::CpuBMap, shootdown_content: 
     SHOOTDOWN_SYNC.sync(c, || {
         for i in targets.iter() {
             // SAFETY: The actions of the other CPU are
-            unsafe { apic::get_apic().send_ipi(apic::IpiTarget::Other(i), apic::InterruptType::Fixed, SHOOTDOWN_VECTOR.as_u8()).unwrap() }
+            unsafe {
+                apic::get_apic()
+                    .send_ipi(
+                        apic::IpiTarget::Other(i),
+                        apic::InterruptType::Fixed,
+                        SHOOTDOWN_VECTOR.as_u8(),
+                    )
+                    .unwrap()
+            }
         }
         if tgt_self {
             handle_shootdown();
@@ -88,7 +106,7 @@ impl ShootdownSyncCounter {
     const fn new() -> Self {
         Self {
             lock: core::sync::atomic::AtomicBool::new(false),
-            count: atomic::Atomic::new(0)
+            count: atomic::Atomic::new(0),
         }
     }
 
@@ -97,30 +115,36 @@ impl ShootdownSyncCounter {
     /// This fn will acquire an internal spinlock, once it is acquired `f` is called. `f`
     /// must ensure that [self.shoot] is called `count` times.
     /// This fn will spin until [self.shoot] has been called `count` times.
-    fn sync<T,F>(&self, count: crate::mp::CpuCount, f: F) -> T
-        where F: FnOnce() -> T
+    fn sync<T, F>(&self, count: crate::mp::CpuCount, f: F) -> T
+    where
+        F: FnOnce() -> T,
     {
         loop {
-            match self.lock.compare_exchange_weak(false, true, atomic::Ordering::Acquire, atomic::Ordering::Relaxed) {
+            match self.lock.compare_exchange_weak(
+                false,
+                true,
+                atomic::Ordering::Acquire,
+                atomic::Ordering::Relaxed,
+            ) {
                 Ok(_) => {
-                    self.count.store(count,atomic::Ordering::Release);
+                    self.count.store(count, atomic::Ordering::Release);
                     let rc = f();
                     while self.count.load(atomic::Ordering::Relaxed) != 0 {
                         core::hint::spin_loop();
                     }
-                    self.lock.store(false,atomic::Ordering::Release);
-                    return rc
-                },
+                    self.lock.store(false, atomic::Ordering::Release);
+                    return rc;
+                }
                 Err(_) => {
                     core::hint::spin_loop();
                     continue;
-                },
+                }
             }
         }
     }
 
     fn shoot(&self) {
-        self.count.fetch_sub(1,atomic::Ordering::Release);
+        self.count.fetch_sub(1, atomic::Ordering::Release);
     }
 }
 
@@ -131,17 +155,18 @@ impl ShootdownSyncCounter {
 /// It should be obvious that TLB coherency must be synchronized by `f`.
 /// This does not require a shootdown to be emitted by `f`.
 /// TLBs can remain coherent as long as a CPU never access memory using older TLB entries even of the old entries remain.
-pub unsafe fn without_shootdowns<T,F>(f: F) -> T
-    where F: FnOnce() -> T
+pub unsafe fn without_shootdowns<T, F>(f: F) -> T
+where
+    F: FnOnce() -> T,
 {
-    let state = MASK_SHOOTDOWN.swap(true,atomic::Ordering::Relaxed);
+    let state = MASK_SHOOTDOWN.swap(true, atomic::Ordering::Relaxed);
     let r = f();
-    MASK_SHOOTDOWN.store(state,atomic::Ordering::Release);
+    MASK_SHOOTDOWN.store(state, atomic::Ordering::Release);
     r
 }
 
 pub(crate) fn enable_shootdowns() {
-    MASK_SHOOTDOWN.store(false,atomic::Ordering::Release);
+    MASK_SHOOTDOWN.store(false, atomic::Ordering::Release);
 }
 
 fn handle_shootdown() {
@@ -152,7 +177,7 @@ fn handle_shootdown() {
     SHOOTDOWN_SYNC.shoot();
 }
 
-cfg_if::cfg_if!{
+cfg_if::cfg_if! {
     if #[cfg(target_arch = "x86_64")] {
         #[doc(hidden)]
         pub(crate) extern "x86-interrupt" fn int_shootdown_wrapper(_sf: x86_64::structures::idt::InterruptStackFrame) {
@@ -162,9 +187,6 @@ cfg_if::cfg_if!{
         compile_error!("Arch ot supported");
     }
 }
-
-
-
 
 /// This is an odd mutex, it must be locked by a writer for the data to be read.
 /// ```ignore
@@ -184,7 +206,7 @@ cfg_if::cfg_if!{
 struct ShootdownListMutex {
     master: atomic::Atomic<bool>,
     guest: atomic::Atomic<usize>,
-    data: core::cell::UnsafeCell<ShootdownContent>
+    data: core::cell::UnsafeCell<ShootdownContent>,
 }
 
 // SAFETY: This contains its own synchronization
@@ -192,9 +214,8 @@ unsafe impl Sync for ShootdownListMutex {}
 unsafe impl Send for ShootdownListMutex {}
 
 struct ShootdownMutexMasterGuard<'a> {
-    parent: &'a ShootdownListMutex
+    parent: &'a ShootdownListMutex,
 }
-
 
 impl<'a> Drop for ShootdownMutexMasterGuard<'a> {
     fn drop(&mut self) {
@@ -203,9 +224,9 @@ impl<'a> Drop for ShootdownMutexMasterGuard<'a> {
         while self.parent.guest.load(atomic::Ordering::Relaxed) > 1 {
             core::hint::spin_loop();
         }
-        self.parent.guest.fetch_sub(1,atomic::Ordering::Release);
+        self.parent.guest.fetch_sub(1, atomic::Ordering::Release);
         *unsafe { &mut *self.parent.data.get() } = ShootdownContent::None;
-        self.parent.master.store(false,atomic::Ordering::Release);
+        self.parent.master.store(false, atomic::Ordering::Release);
     }
 }
 
@@ -218,11 +239,16 @@ impl ShootdownListMutex {
         }
     }
     fn set(&self, data: ShootdownContent) -> ShootdownMutexMasterGuard {
-        while let Err(_) = self.master.compare_exchange_weak(false,true,atomic::Ordering::Acquire,atomic::Ordering::Relaxed) {
+        while let Err(_) = self.master.compare_exchange_weak(
+            false,
+            true,
+            atomic::Ordering::Acquire,
+            atomic::Ordering::Relaxed,
+        ) {
             core::hint::spin_loop();
         }
-        unsafe  { self.data.get().write(data) }
-        self.guest.fetch_add(1,atomic::Ordering::Acquire);
+        unsafe { self.data.get().write(data) }
+        self.guest.fetch_add(1, atomic::Ordering::Acquire);
         ShootdownMutexMasterGuard { parent: self }
     }
 
@@ -233,11 +259,13 @@ impl ShootdownListMutex {
             let mut m = self.master.load(atomic::Ordering::Acquire);
             while m && self.guest.load(atomic::Ordering::Acquire) == 0 {
                 // self was released, there is no data to acquire
-                if m == false { return None }
+                if m == false {
+                    return None;
+                }
                 core::hint::spin_loop();
                 m = self.master.load(atomic::Ordering::Acquire);
             }
-            self.guest.fetch_add(1,atomic::Ordering::Acquire);
+            self.guest.fetch_add(1, atomic::Ordering::Acquire);
             Some(ShootdownVisitorGuard { parent: self })
         } else {
             None
@@ -245,9 +273,8 @@ impl ShootdownListMutex {
     }
 }
 
-
 struct ShootdownVisitorGuard<'a> {
-    parent: &'a ShootdownListMutex
+    parent: &'a ShootdownListMutex,
 }
 
 impl<'a> Drop for ShootdownVisitorGuard<'a> {
@@ -263,15 +290,13 @@ impl<'a> Deref for ShootdownVisitorGuard<'a> {
     }
 }
 
-
-
 /// Compressed version of [TlbDropEntry] using only 8bytes. The len of the compressed value has
 /// a limit depending on the page size it represents.
 // The count is stored as count - 1. So a value of 0 is a count of 1
 #[cfg(target_arch = "x86_64")]
 #[derive(Debug, Copy, Clone)]
 pub struct CompressedTlbDropEntry {
-    raw: u64
+    raw: u64,
 }
 
 /// Represents a region of memory to be flushed from the TLB.
@@ -299,7 +324,7 @@ pub enum TlbDropEntry {
     Gib1 {
         addr: x86_64::structures::paging::Page<x86_64::structures::paging::Size4KiB>,
         count: u32,
-    }
+    },
 }
 
 impl TlbDropEntry {
@@ -330,17 +355,35 @@ impl TlbDropEntry {
     /// To succeed both must be the same variant, and `self.count` must not overflow.
     pub fn append(&mut self, other: Self) -> Option<Self> {
         match (self, other) {
-            ( TlbDropEntry::Kib4 { addr,count }, TlbDropEntry::Kib4 { addr: op, count: oc } ) => {
+            (
+                TlbDropEntry::Kib4 { addr, count },
+                TlbDropEntry::Kib4 {
+                    addr: op,
+                    count: oc,
+                },
+            ) => {
                 if *addr + *count as u64 + 1 == op {
                     *count = count.checked_add(oc)?
                 }
             }
-            ( TlbDropEntry::Mib2 { addr,count }, TlbDropEntry::Mib2 { addr: op, count: oc } ) => {
+            (
+                TlbDropEntry::Mib2 { addr, count },
+                TlbDropEntry::Mib2 {
+                    addr: op,
+                    count: oc,
+                },
+            ) => {
                 if *addr + *count as u64 + 1 == op {
                     *count = count.checked_add(oc)?
                 }
             }
-            ( TlbDropEntry::Gib1 { addr,count }, TlbDropEntry::Gib1 { addr: op, count: oc } ) => {
+            (
+                TlbDropEntry::Gib1 { addr, count },
+                TlbDropEntry::Gib1 {
+                    addr: op,
+                    count: oc,
+                },
+            ) => {
                 if *addr + *count as u64 + 1 == op {
                     *count = count.checked_add(oc)?
                 }
@@ -356,61 +399,78 @@ impl From<CompressedTlbDropEntry> for TlbDropEntry {
         match value.raw & 0b11 {
             0 => {
                 // SAFETY: This is safe because the address is always 4K aligned
-                let page = unsafe { x86_64::structures::paging::Page::from_start_address_unchecked(x86_64::VirtAddr::new(value.raw & !((1 << 13) - 1))) };
+                let page = unsafe {
+                    x86_64::structures::paging::Page::from_start_address_unchecked(
+                        x86_64::VirtAddr::new(value.raw & !((1 << 13) - 1)),
+                    )
+                };
                 let count = ((value.raw & ((1 << 11) - 1) << 2) >> 2) as u32;
-                Self::Kib4 {
-                    addr: page,
-                    count,
-                }
+                Self::Kib4 { addr: page, count }
             }
             1 => {
-                let page = unsafe { x86_64::structures::paging::Page::from_start_address_unchecked(x86_64::VirtAddr::new(value.raw & !((1 << 22) - 1))) };
+                let page = unsafe {
+                    x86_64::structures::paging::Page::from_start_address_unchecked(
+                        x86_64::VirtAddr::new(value.raw & !((1 << 22) - 1)),
+                    )
+                };
                 let count = ((value.raw & ((1 << 20) - 1) << 2) >> 2) as u32;
-                Self::Mib2 {
-                    addr: page,
-                    count,
-                }
+                Self::Mib2 { addr: page, count }
             }
             2 => {
-                let page = unsafe { x86_64::structures::paging::Page::from_start_address_unchecked(x86_64::VirtAddr::new(value.raw & !((1 << 31) - 1))) };
+                let page = unsafe {
+                    x86_64::structures::paging::Page::from_start_address_unchecked(
+                        x86_64::VirtAddr::new(value.raw & !((1 << 31) - 1)),
+                    )
+                };
                 let count = ((value.raw & ((1 << 29) - 1) << 2) >> 2) as u32;
-                Self::Gib1 {
-                    addr: page,
-                    count,
-                }
+                Self::Gib1 { addr: page, count }
             }
-            3 => panic!("{} Failed to read {value:x?}", core::any::type_name::<Self>()),
+            3 => panic!(
+                "{} Failed to read {value:x?}",
+                core::any::type_name::<Self>()
+            ),
 
             // SAFETY: This is safe matched value is `& 3` only 0..=3 values are possible
-            _ => unsafe { core::hint::unreachable_unchecked() }
+            _ => unsafe { core::hint::unreachable_unchecked() },
         }
     }
 }
 
-impl<S: x86_64::structures::paging::PageSize + 'static> From<x86_64::structures::paging::Page<S>> for TlbDropEntry {
+impl<S: x86_64::structures::paging::PageSize + 'static> From<x86_64::structures::paging::Page<S>>
+    for TlbDropEntry
+{
     fn from(value: x86_64::structures::paging::Page<S>) -> Self {
         use core::any::TypeId;
         // SAFETY: These unchecked Page constructors ar basically just typecasting from Page<T> into Page<Size#>
         // Comparisons are evaluated at compile time
         if TypeId::of::<S>() == TypeId::of::<x86_64::structures::paging::Size4KiB>() {
             Self::Kib4 {
-                addr: unsafe { x86_64::structures::paging::Page::from_start_address_unchecked(value.start_address()) },
+                addr: unsafe {
+                    x86_64::structures::paging::Page::from_start_address_unchecked(
+                        value.start_address(),
+                    )
+                },
                 count: 1,
             }
-        }
-        else if TypeId::of::<S>() == TypeId::of::<x86_64::structures::paging::Size2MiB>() {
+        } else if TypeId::of::<S>() == TypeId::of::<x86_64::structures::paging::Size2MiB>() {
             Self::Mib2 {
-                addr: unsafe { x86_64::structures::paging::Page::from_start_address_unchecked(value.start_address()) },
+                addr: unsafe {
+                    x86_64::structures::paging::Page::from_start_address_unchecked(
+                        value.start_address(),
+                    )
+                },
                 count: 1,
             }
-        }
-        else if TypeId::of::<S>() == TypeId::of::<x86_64::structures::paging::Size1GiB>() {
+        } else if TypeId::of::<S>() == TypeId::of::<x86_64::structures::paging::Size1GiB>() {
             Self::Gib1 {
-                addr: unsafe { x86_64::structures::paging::Page::from_start_address_unchecked(value.start_address()) },
+                addr: unsafe {
+                    x86_64::structures::paging::Page::from_start_address_unchecked(
+                        value.start_address(),
+                    )
+                },
                 count: 1,
             }
-        }
-        else {
+        } else {
             // This will be dropped by the linker
             unreachable!()
         }
@@ -424,7 +484,13 @@ impl TryInto<CompressedTlbDropEntry> for TlbDropEntry {
             TlbDropEntry::Kib4 { addr, count } => {
                 let mut raw = addr.start_address().as_u64();
                 if count > (0x1000 >> 2) {
-                    Err((CompressedTlbDropEntry { raw }, Self::Kib4 { addr: addr + (0x1000 >> 2), count: count + 0x1000 >> 2 }))
+                    Err((
+                        CompressedTlbDropEntry { raw },
+                        Self::Kib4 {
+                            addr: addr + (0x1000 >> 2),
+                            count: count + 0x1000 >> 2,
+                        },
+                    ))
                 } else {
                     raw &= (count as u64 - 1) << 2;
                     Ok(CompressedTlbDropEntry { raw })
@@ -433,7 +499,13 @@ impl TryInto<CompressedTlbDropEntry> for TlbDropEntry {
             TlbDropEntry::Mib2 { addr, count } => {
                 let mut raw = addr.start_address().as_u64();
                 if count > (0x200000 >> 2) {
-                    Err((CompressedTlbDropEntry { raw }, Self::Kib4 { addr: addr + (0x200000u64 >> 2), count: count + 0x1000 >> 2 }))
+                    Err((
+                        CompressedTlbDropEntry { raw },
+                        Self::Kib4 {
+                            addr: addr + (0x200000u64 >> 2),
+                            count: count + 0x1000 >> 2,
+                        },
+                    ))
                 } else {
                     raw &= (count as u64 - 1) << 2;
 
@@ -444,7 +516,13 @@ impl TryInto<CompressedTlbDropEntry> for TlbDropEntry {
                 let mut raw = addr.start_address().as_u64();
                 if count > (0x10000000 >> 2) {
                     // I'm not entirely sure if this branch is possible
-                    Err((CompressedTlbDropEntry { raw }, Self::Kib4 { addr: addr + (0x10000000u64 >> 2), count: count + 0x1000 >> 2 }))
+                    Err((
+                        CompressedTlbDropEntry { raw },
+                        Self::Kib4 {
+                            addr: addr + (0x10000000u64 >> 2),
+                            count: count + 0x1000 >> 2,
+                        },
+                    ))
                 } else {
                     raw &= (count as u64 - 1) << 2;
                     Ok(CompressedTlbDropEntry { raw })
@@ -474,7 +552,7 @@ impl ShootdownContent {
     /// Invalidates TLB entries which `self` represents.
     fn invalidate(&self) {
         match self {
-            ShootdownContent::None => {}, // do nothing
+            ShootdownContent::None => {} // do nothing
             ShootdownContent::Short(t) => t.flush(),
             ShootdownContent::Long(l) => {
                 for i in l {
@@ -502,7 +580,9 @@ impl ShootdownContent {
     }
 }
 
-impl<S: x86_64::structures::paging::PageSize + 'static> From<x86_64::structures::paging::Page<S>> for ShootdownContent {
+impl<S: x86_64::structures::paging::PageSize + 'static> From<x86_64::structures::paging::Page<S>>
+    for ShootdownContent
+{
     fn from(value: x86_64::structures::paging::Page<S>) -> Self {
         Self::Short(value.into())
     }

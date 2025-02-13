@@ -52,15 +52,23 @@ pub struct FrameBuffer {
 }
 
 impl FrameBuffer {
-
-    pub fn new(width: usize, height: usize, stride: usize, buff: &'static mut [u8], format: PixelFormat) -> Self {
-        assert!(height * width * (format.bytes_per_pixel() as usize) >= buff.len(), "Frame buffer is smaller than resolution requires");
+    pub fn new(
+        width: usize,
+        height: usize,
+        stride: usize,
+        buff: &'static mut [u8],
+        format: PixelFormat,
+    ) -> Self {
+        assert!(
+            height * width * (format.bytes_per_pixel() as usize) >= buff.len(),
+            "Frame buffer is smaller than resolution requires"
+        );
         Self {
             height,
             width,
             stride,
             format,
-            data: buff
+            data: buff,
         }
     }
 

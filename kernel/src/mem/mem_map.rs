@@ -34,7 +34,12 @@ pub unsafe fn map_range<'a, S: PageSize + core::fmt::Debug, I: Iterator<Item = P
     let b = allocator::COMBINED_ALLOCATOR.lock();
 
     for page in pages {
-        let frame_addr = b.phys_alloc().allocate(alloc::alloc::Layout::from_size_align(S::SIZE as usize, S::SIZE as usize).unwrap(),MemRegion::Mem64)
+        let frame_addr = b
+            .phys_alloc()
+            .allocate(
+                alloc::alloc::Layout::from_size_align(S::SIZE as usize, S::SIZE as usize).unwrap(),
+                MemRegion::Mem64,
+            )
             .expect("System ran out of memory");
         let frame = PhysFrame::from_start_address(PhysAddr::new(frame_addr as u64)).unwrap();
 
@@ -62,7 +67,6 @@ pub unsafe fn map_range<'a, S: PageSize + core::fmt::Debug, I: Iterator<Item = P
 /// This fn is unsafe because it can be used to unmap in use pages that contain in use data.
 pub unsafe fn unmap_range<'a, S: PageSize + core::fmt::Debug, I: Iterator<Item = Page<S>>>(pages: I)
 where
-
     offset_page_table::OffsetPageTable: Mapper<S>,
 {
     use x86_64::structures::paging::mapper::UnmapError;
@@ -96,7 +100,12 @@ where
 {
     let b = allocator::COMBINED_ALLOCATOR.lock();
 
-    let frame_addr = b.phys_alloc().allocate(alloc::alloc::Layout::from_size_align(S::SIZE as usize, S::SIZE as usize).unwrap(),MemRegion::Mem64)
+    let frame_addr = b
+        .phys_alloc()
+        .allocate(
+            alloc::alloc::Layout::from_size_align(S::SIZE as usize, S::SIZE as usize).unwrap(),
+            MemRegion::Mem64,
+        )
         .expect("System ran out of memory");
     let frame = PhysFrame::from_start_address(PhysAddr::new(frame_addr as u64)).unwrap();
 
@@ -135,14 +144,16 @@ where
     }
 }
 
-pub(crate) unsafe fn unmap_and_free(addr: VirtAddr) -> Result<(),()>{
-
+pub(crate) unsafe fn unmap_and_free(addr: VirtAddr) -> Result<(), ()> {
     let page = Page::<Size4KiB>::containing_address(addr);
 
-    let free = |entry: x86_64::structures::paging::page_table::PageTableEntry,len| {
-        if entry.flags().contains(frame_attribute_table::FRAME_ATTR_ENTRY_FLAG) {
+    let free = |entry: x86_64::structures::paging::page_table::PageTableEntry, len| {
+        if entry
+            .flags()
+            .contains(frame_attribute_table::FRAME_ATTR_ENTRY_FLAG)
+        {
             let op = frame_attribute_table::FatOperation::UnAlias;
-            let fae = frame_attribute_table::ATTRIBUTE_TABLE_HEAD.do_op_phys(entry.addr(),op);
+            let fae = frame_attribute_table::ATTRIBUTE_TABLE_HEAD.do_op_phys(entry.addr(), op);
 
             let free = if let Some(ref fae) = fae {
                 // if not aliased
@@ -158,7 +169,6 @@ pub(crate) unsafe fn unmap_and_free(addr: VirtAddr) -> Result<(),()>{
                 l.phys_alloc().dealloc(entry.addr().as_u64() as usize, len)
             }
         };
-
     };
 
     // We need to determine the size of the frame before we free it.
@@ -166,11 +176,11 @@ pub(crate) unsafe fn unmap_and_free(addr: VirtAddr) -> Result<(),()>{
         Ok(e) => {
             // Only necessary for 4k pages higher ones will return NotMapped
             if !e.flags().contains(PageTableFlags::PRESENT) {
-                return Err(())
+                return Err(());
             }
             unmap_page(Page::<Size4KiB>::containing_address(addr));
-            free(e,0x1000);
-        },
+            free(e, 0x1000);
+        }
         Err(GetEntryErr::NotMapped) => return Err(()),
         Err(GetEntryErr::ParentHugePage) => {
             let page = Page::<Size2MiB>::containing_address(addr);
@@ -178,9 +188,8 @@ pub(crate) unsafe fn unmap_and_free(addr: VirtAddr) -> Result<(),()>{
             match get_entry(page) {
                 Ok(e) => {
                     unmap_page(Page::<Size2MiB>::containing_address(addr));
-                    free(e,0x200000);
-
-                },
+                    free(e, 0x200000);
+                }
                 // SAFETY: The 4K NotMapped arm will be taken not this one.
                 Err(GetEntryErr::NotMapped) => unsafe { core::hint::unreachable_unchecked() },
                 Err(GetEntryErr::ParentHugePage) => {
@@ -240,11 +249,10 @@ pub fn translate_ptr<T>(ptr: *const T) -> Option<u64> {
 /// Updates the page flags of the given page
 /// Only supports 4k pages atm
 pub(crate) fn set_flags<S>(page: Page<S>, flags: PageTableFlags) -> Result<(), UpdateFlagsErr>
-    where
-        Page<S>: Copy,
-        S: PageSize,
-        offset_page_table::OffsetPageTable: Mapper<S>,
-
+where
+    Page<S>: Copy,
+    S: PageSize,
+    offset_page_table::OffsetPageTable: Mapper<S>,
 {
     let r = unsafe {
         SYS_MAPPER.get().update_flags(
@@ -266,7 +274,9 @@ pub(crate) use offset_page_table::GetEntryErr;
 
 /// Retrieves the page table entry for the given page.
 /// This can be used to update the entries flags.
-pub(crate) fn get_entry<S: PageSize + core::fmt::Debug + 'static>(page: Page<S>) -> Result<x86_64::structures::paging::page_table::PageTableEntry, GetEntryErr> {
+pub(crate) fn get_entry<S: PageSize + core::fmt::Debug + 'static>(
+    page: Page<S>,
+) -> Result<x86_64::structures::paging::page_table::PageTableEntry, GetEntryErr> {
     let l = allocator::COMBINED_ALLOCATOR.lock();
 
     // This can be completely removed by the compiler.
@@ -289,10 +299,21 @@ pub(crate) fn get_entry<S: PageSize + core::fmt::Debug + 'static>(page: Page<S>)
 /// `addr` will be automatically aligned.
 ///
 /// An `invdpg` is not run on the updated page. This is because if `page` is present this will return an error.
-pub(crate) fn map_frame_to_page<S: PageSize + core::fmt::Debug>(page: VirtAddr, frame: PhysFrame<S>, flags: PageTableFlags) -> Result<(),x86_64::structures::paging::mapper::MapToError<S>> where offset_page_table::OffsetPageTable: Mapper<S> {
+pub(crate) fn map_frame_to_page<S: PageSize + core::fmt::Debug>(
+    page: VirtAddr,
+    frame: PhysFrame<S>,
+    flags: PageTableFlags,
+) -> Result<(), x86_64::structures::paging::mapper::MapToError<S>>
+where
+    offset_page_table::OffsetPageTable: Mapper<S>,
+{
     let page = Page::<S>::containing_address(page);
     let mut l = allocator::COMBINED_ALLOCATOR.lock();
-    unsafe { l.mapper_mut().map_to(page,frame, flags, &mut DummyFrameAlloc) }.map(|f| f.ignore())
+    unsafe {
+        l.mapper_mut()
+            .map_to(page, frame, flags, &mut DummyFrameAlloc)
+    }
+    .map(|f| f.ignore())
 }
 
 /// Updates page table flags regardless of page size.
@@ -311,36 +332,52 @@ macro_rules! update_flags {
         $crate::mem::mem_map::set_flags($addr.into(), $flags)
     };
     ($flags:expr, $start_addr:expr, $end_addr:expr) => {
-
         match $crate::mem::mem_map::set_flags_iter(
-            x86_64::structures::paging::page::PageRangeInclusive::<x86_64::structures::paging::Size4KiB>{
+            x86_64::structures::paging::page::PageRangeInclusive::<
+                x86_64::structures::paging::Size4KiB,
+            > {
                 start: x86_64::structures::paging::page::Page::containing_address($start_addr),
-                end: x86_64::structures::paging::page::Page::containing_address($end_addr)},
-            $flags)
-        {
-            Err($crate::mem::mem_map::UpdateFlagsErr::ParentHugePage(p)) if $start_addr.as_u64() == p => {
-
+                end: x86_64::structures::paging::page::Page::containing_address($end_addr),
+            },
+            $flags,
+        ) {
+            Err($crate::mem::mem_map::UpdateFlagsErr::ParentHugePage(p))
+                if $start_addr.as_u64() == p =>
+            {
                 match $crate::mem::mem_map::set_flags_iter(
-                    x86_64::structures::paging::page::PageRangeInclusive::<x86_64::structures::paging::Size2MiB>{
-                        start: x86_64::structures::paging::page::Page::containing_address($start_addr),
-                        end: x86_64::structures::paging::page::Page::containing_address($end_addr)},
-                    $flags) {
-                    Err($crate::mem::mem_map::UpdateFlagsErr::ParentHugePage(p)) if $start_addr.as_u64() == p => {
-
-
+                    x86_64::structures::paging::page::PageRangeInclusive::<
+                        x86_64::structures::paging::Size2MiB,
+                    > {
+                        start: x86_64::structures::paging::page::Page::containing_address(
+                            $start_addr,
+                        ),
+                        end: x86_64::structures::paging::page::Page::containing_address($end_addr),
+                    },
+                    $flags,
+                ) {
+                    Err($crate::mem::mem_map::UpdateFlagsErr::ParentHugePage(p))
+                        if $start_addr.as_u64() == p =>
+                    {
                         $crate::mem::mem_map::set_flags_iter(
-                            x86_64::structures::paging::page::PageRangeInclusive::<x86_64::structures::paging::Size1GiB>{
-                                start: x86_64::structures::paging::page::Page::containing_address($start_addr),
-                                end: x86_64::structures::paging::page::Page::containing_address($end_addr)},
-                            $flags)
-
+                            x86_64::structures::paging::page::PageRangeInclusive::<
+                                x86_64::structures::paging::Size1GiB,
+                            > {
+                                start: x86_64::structures::paging::page::Page::containing_address(
+                                    $start_addr,
+                                ),
+                                end: x86_64::structures::paging::page::Page::containing_address(
+                                    $end_addr,
+                                ),
+                            },
+                            $flags,
+                        )
                     }
                     e => e,
                 }
             }
             e => e,
         }
-    }
+    };
 }
 pub use update_flags;
 
@@ -350,7 +387,9 @@ pub(crate) fn set_flags_iter<P: PageSize, T: Iterator<Item = Page<P>>>(
     iter: T,
     flags: PageTableFlags,
 ) -> Result<(), UpdateFlagsErr>
-    where offset_page_table::OffsetPageTable: Mapper<P> {
+where
+    offset_page_table::OffsetPageTable: Mapper<P>,
+{
     for p in iter {
         set_flags(p, flags)?
     }

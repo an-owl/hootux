@@ -1,6 +1,6 @@
+use quote::quote;
 use quote::ToTokens;
 use syn::Token;
-use quote::quote;
 
 /// Stores the highest possible vector.
 ///
@@ -15,10 +15,15 @@ pub(crate) struct InterruptConfig {
 
 impl InterruptConfig {
     fn con_count(&self) -> u32 {
-        if let syn::Expr::Lit(syn::ExprLit{lit: syn::Lit::Int(i), .. }) = &*self.cosnt.expr {
-            i.base10_parse().expect(&format!("Failed to parse {i} into u32"))
+        if let syn::Expr::Lit(syn::ExprLit {
+            lit: syn::Lit::Int(i),
+            ..
+        }) = &*self.cosnt.expr
+        {
+            i.base10_parse()
+                .expect(&format!("Failed to parse {i} into u32"))
         } else {
-            panic!("Expected {} to be integer",self.cosnt.ident)
+            panic!("Expected {} to be integer", self.cosnt.ident)
         }
     }
 
@@ -27,7 +32,7 @@ impl InterruptConfig {
         let mut r = quote!();
 
         for i in c..MAX_VECTOR {
-            let byte = syn::LitInt::new(&*i.to_string(),proc_macro2::Span::call_site());
+            let byte = syn::LitInt::new(&*i.to_string(), proc_macro2::Span::call_site());
             let f_name = quote::format_ident!("interrupt_stub_fn_{i:}");
             r = quote!(
                 #r
@@ -53,7 +58,7 @@ impl InterruptConfig {
 impl Into<proc_macro::TokenStream> for InterruptConfig {
     fn into(self) -> proc_macro::TokenStream {
         let mut ts = self.cosnt.to_token_stream();
-        let f_name = quote::format_ident!("{}",self.func.to_string());
+        let f_name = quote::format_ident!("{}", self.func.to_string());
 
         let bindings = self.gen_vector_bindings();
 

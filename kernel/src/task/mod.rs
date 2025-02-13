@@ -10,8 +10,9 @@ pub mod mp_executor;
 pub mod simple_executor;
 pub mod util;
 
-static SYS_EXECUTOR: spin::RwLock<alloc::collections::BTreeMap<crate::mp::CpuIndex,mp_executor::LocalExec>> =
-    spin::RwLock::new(alloc::collections::BTreeMap::new());
+static SYS_EXECUTOR: spin::RwLock<
+    alloc::collections::BTreeMap<crate::mp::CpuIndex, mp_executor::LocalExec>,
+> = spin::RwLock::new(alloc::collections::BTreeMap::new());
 
 /// InterruptQueue is the type to pass interrupt message to drivers. The exact type used is
 /// unimportant however it is wrapped in an [alloc::sync::Arc], so it may be shared between multiple places.
@@ -51,7 +52,6 @@ impl TaskId {
     }
 }
 
-
 #[derive(Debug, Clone, Copy)]
 /// Return type returned by all top-level tasks.
 /// The variant indicates what state the task exited in and may cause the kernel to take action.
@@ -79,11 +79,12 @@ pub fn run_task(fut: Pin<Box<dyn Future<Output = TaskResult> + Send>>) {
     let t = mp_executor::Task::new(fut);
 
     let b = SYS_EXECUTOR.upgradeable_read();
-    if let Some(e) = b.get(&crate::who_am_i()) { // You started an AP without reworking the executor for MP if this panics
+    if let Some(e) = b.get(&crate::who_am_i()) {
+        // You started an AP without reworking the executor for MP if this panics
         e.spawn(t);
     } else {
         let mut w = b.upgrade();
-        w.insert(crate::who_am_i(),mp_executor::LocalExec::new());
+        w.insert(crate::who_am_i(), mp_executor::LocalExec::new());
         w.get(&crate::who_am_i()).unwrap().spawn(t);
     }
 }
@@ -99,7 +100,9 @@ pub fn run_exec() -> ! {
 /// This fn will panic if it has already been called on this CPU.
 #[track_caller]
 pub(crate) fn ap_setup_exec() {
-    let rc = SYS_EXECUTOR.write().insert(crate::who_am_i(),mp_executor::LocalExec::new());
+    let rc = SYS_EXECUTOR
+        .write()
+        .insert(crate::who_am_i(), mp_executor::LocalExec::new());
     if let Some(_) = rc {
         panic!("Attempted to initialize CPU executor when it is already initialized")
     }

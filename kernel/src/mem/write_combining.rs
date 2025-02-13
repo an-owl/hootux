@@ -105,7 +105,11 @@ pub fn set_wc_data(
                 | PageTableFlags::WRITE_THROUGH
         };
 
-        crate::mem::mem_map::update_flags!(flags, x86_64::VirtAddr::new(start as u64), x86_64::VirtAddr::new(end as u64))
+        crate::mem::mem_map::update_flags!(
+            flags,
+            x86_64::VirtAddr::new(start as u64),
+            x86_64::VirtAddr::new(end as u64)
+        )
         //super::mem_map::set_flags_iter(range, flags)
     }
     #[cfg(not(all(

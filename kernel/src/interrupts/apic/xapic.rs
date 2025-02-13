@@ -45,7 +45,7 @@ pub struct xApic {
 
     cmc_vector: AlignedRegister<InternalInt>,
 
-    interrupt_command_register: (AlignedRegister<u32>,AlignedRegister<u32>),
+    interrupt_command_register: (AlignedRegister<u32>, AlignedRegister<u32>),
 
     timer_vector: AlignedRegister<TimerIntVector>,
     thermal_sensor_vector: MaybeExists<AlignedRegister<InternalInt>, ThermalVectorCheck>, // not available on all processors
@@ -159,16 +159,22 @@ impl Apic for xApic {
         id
     }
 
-    unsafe fn send_ipi(&mut self, target: IpiTarget, int_type: InterruptType, vector: u8) -> Result<(), super::IpiError> {
+    unsafe fn send_ipi(
+        &mut self,
+        target: IpiTarget,
+        int_type: InterruptType,
+        vector: u8,
+    ) -> Result<(), super::IpiError> {
         let (dst, short) = match target {
-            IpiTarget::Other(v) => (v,super::DestinationShorthand::NoShorthand),
-            IpiTarget::ThisCpu => (0,super::DestinationShorthand::ThisCpu),
-            IpiTarget::All => (0,super::DestinationShorthand::All),
-            IpiTarget::AllNotThisCpu => (0,super::DestinationShorthand::AllNotSelf),
+            IpiTarget::Other(v) => (v, super::DestinationShorthand::NoShorthand),
+            IpiTarget::ThisCpu => (0, super::DestinationShorthand::ThisCpu),
+            IpiTarget::All => (0, super::DestinationShorthand::All),
+            IpiTarget::AllNotThisCpu => (0, super::DestinationShorthand::AllNotSelf),
         };
 
-        if ((int_type != InterruptType::Fixed) && (int_type != InterruptType::SIPI)) && vector != 0 {
-            return Err(super::IpiError::BadMode)
+        if ((int_type != InterruptType::Fixed) && (int_type != InterruptType::SIPI)) && vector != 0
+        {
+            return Err(super::IpiError::BadMode);
         }
 
         let mut icrl = InterruptCommandRegisterLow::new();
@@ -180,7 +186,11 @@ impl Apic for xApic {
         let mut icrh = InterruptCommandRegisterHigh::new();
         icrh.set_destination(dst.try_into().map_err(|_| super::IpiError::BadTarget)?);
 
-        while InterruptCommandRegisterLow::from_bytes(self.interrupt_command_register.0.data.to_le_bytes()).delivery_status() {
+        while InterruptCommandRegisterLow::from_bytes(
+            self.interrupt_command_register.0.data.to_le_bytes(),
+        )
+        .delivery_status()
+        {
             // todo is this hint necessary?
             core::hint::spin_loop();
         }
@@ -196,8 +206,10 @@ impl Apic for xApic {
     fn block_ipi_delivered(&self, timeout: Duration) -> bool {
         let wakeup_time: crate::time::AbsoluteTime = timeout.into();
         while !wakeup_time.is_future() {
-            if !InterruptCommandRegisterLow::from(self.interrupt_command_register.0.data).delivery_status() {
-                return true
+            if !InterruptCommandRegisterLow::from(self.interrupt_command_register.0.data)
+                .delivery_status()
+            {
+                return true;
             }
             core::hint::spin_loop(); // emits `pause` instruction
         }
@@ -392,7 +404,6 @@ struct ApicReservedRegister {
     _space: MaybeUninit<u128>,
 }
 
-
 // these are defined here because x2apic uses a slightly different definition than the xapic
 #[modular_bitfield::bitfield]
 #[derive(Debug)]
@@ -405,7 +416,6 @@ pub struct InterruptCommandRegisterHigh {
     #[skip(getters)]
     destination: u8,
 }
-
 
 #[modular_bitfield::bitfield]
 #[derive(Debug)]
@@ -432,5 +442,5 @@ pub struct InterruptCommandRegisterLow {
     #[skip(getters)]
     dest_shorthand: super::DestinationShorthand,
     #[skip]
-    _res2: modular_bitfield::specifiers::B12
+    _res2: modular_bitfield::specifiers::B12,
 }

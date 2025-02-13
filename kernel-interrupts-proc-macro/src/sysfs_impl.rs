@@ -1,6 +1,6 @@
 use proc_macro2::TokenStream;
 use quote::TokenStreamExt;
-use syn::{spanned::Spanned,Attribute};
+use syn::{spanned::Spanned, Attribute};
 
 pub struct ImplSysFsRoot {
     struct_def: syn::ItemStruct,
@@ -20,7 +20,7 @@ macro_rules! some_to_err {
             Some(_) => Err($err),
             None => Ok(()),
         }
-    }
+    };
 }
 
 impl From<ImplSysFsRoot> for proc_macro2::TokenStream {
@@ -30,8 +30,17 @@ impl From<ImplSysFsRoot> for proc_macro2::TokenStream {
         let struct_name = &value.struct_def.ident;
 
         // all arms except "root"
-        let file_arms = value.struct_def.fields.iter().map(|field| FileMatchArbBuilder {field}).filter(|i| i.field.ident.as_ref().unwrap() != "root");
-        let file_names = value.struct_def.fields.iter().map(|field| field.ident.as_ref().unwrap().to_string());
+        let file_arms = value
+            .struct_def
+            .fields
+            .iter()
+            .map(|field| FileMatchArbBuilder { field })
+            .filter(|i| i.field.ident.as_ref().unwrap() != "root");
+        let file_names = value
+            .struct_def
+            .fields
+            .iter()
+            .map(|field| field.ident.as_ref().unwrap().to_string());
 
         quote::quote! {
             #verbatim
@@ -135,15 +144,16 @@ impl quote::ToTokens for FileMatchArbBuilder<'_> {
         let field_ident = self.field.ident.as_ref().unwrap().to_string();
         let field_name = self.field.ident.as_ref().unwrap();
 
-        tokens.append_all(quote::quote! { #field_ident => async { Ok(self. #field_name .clone_file()) }.boxed() });
-
+        tokens.append_all(
+            quote::quote! { #field_ident => async { Ok(self. #field_name .clone_file()) }.boxed() },
+        );
     }
 }
 
 pub struct SysfsDirDerive {
     def: syn::DeriveInput,
     files: Vec<DirDeriveFieldHelper>,
-    index: Option<DirDeriveFieldHelper>
+    index: Option<DirDeriveFieldHelper>,
 }
 
 impl syn::parse::Parse for SysfsDirDerive {
@@ -151,7 +161,10 @@ impl syn::parse::Parse for SysfsDirDerive {
         eprintln!("Parsing");
         let def: syn::DeriveInput = input.parse()?;
         let syn::Data::Struct(ref ty_def) = def.data else {
-            return Err(syn::Error::new(input.span(), "SysfsDirDerive only supports structs"));
+            return Err(syn::Error::new(
+                input.span(),
+                "SysfsDirDerive only supports structs",
+            ));
         };
 
         let mut files = Vec::new();
@@ -163,21 +176,18 @@ impl syn::parse::Parse for SysfsDirDerive {
                     if let HelperType::File(_) = field.helper {
                         files.push(field)
                     } else {
-                        some_to_err!(index.replace(field),syn::Error::new(input.span(), "Multiple indexes are not allowed"))?;
+                        some_to_err!(
+                            index.replace(field),
+                            syn::Error::new(input.span(), "Multiple indexes are not allowed")
+                        )?;
                     }
-                },
+                }
                 Err(e) if format!("{e}") == "no-attr" => continue,
                 Err(e) => return Err(e),
             }
         }
 
-        Ok(
-            Self {
-                def,
-                files,
-                index,
-            }
-        )
+        Ok(Self { def, files, index })
     }
 }
 
@@ -185,7 +195,8 @@ impl quote::ToTokens for SysfsDirDerive {
     fn to_tokens(&self, tokens: &mut TokenStream) {
         let derive_ident = &self.def.ident;
         let const_files = self.files.len();
-        let add_index = { // Add len of index into entries
+        let add_index = {
+            // Add len of index into entries
             let mut ts = TokenStream::new();
             if let Some(ref helper) = self.index {
                 let ident = helper.field.ident.as_ref().unwrap();
@@ -196,7 +207,9 @@ impl quote::ToTokens for SysfsDirDerive {
 
         let file_iter = self.files.iter().map(|f| f.pub_name()).flatten();
         let index_list_extend = if let Some(ref index) = self.index {
-            let HelperType::Index(ref args) = index.helper else {unreachable!()};
+            let HelperType::Index(ref args) = index.helper else {
+                unreachable!()
+            };
             let keys = args.keys.as_ref().unwrap(); // expected arg.
             Some(quote::quote! {::core::iter::Extend::extend(&mut v, #keys )})
         } else {
@@ -204,7 +217,11 @@ impl quote::ToTokens for SysfsDirDerive {
         };
 
         // iter over all relevant fields. Index is appended to the end, because it must come last.
-        let match_getters = self.files.iter().map(|f| f.match_getter()).chain(self.index.as_ref().map(|f| f.match_getter()));
+        let match_getters = self
+            .files
+            .iter()
+            .map(|f| f.match_getter())
+            .chain(self.index.as_ref().map(|f| f.match_getter()));
         let store = if let Some(ref index) = self.index {
             let ident = index.field.ident.as_ref().unwrap();
             quote::quote! { self. #ident .store(name,file)}
@@ -226,7 +243,6 @@ impl quote::ToTokens for SysfsDirDerive {
                 #(#file_ident) | * => Err(hootux::fs::IoError::NotSupported),
             }
         }
-
 
         let ts = quote::quote! {
             impl hootux::fs::sysfs::SysfsDirectory for #derive_ident {
@@ -286,31 +302,40 @@ impl syn::parse::Parse for HelperArgs {
                 let _: kw::alias = input.parse()?;
                 let _: syn::Token![=] = input.parse()?;
                 let ident: syn::LitStr = input.parse()?;
-                some_to_err!(alias.replace(ident.value()),syn::Error::new(ident.span(), "Found multiple alias"))?;
-
+                some_to_err!(
+                    alias.replace(ident.value()),
+                    syn::Error::new(ident.span(), "Found multiple alias")
+                )?;
             } else if input.peek(kw::getter) {
                 let _: kw::getter = input.parse()?;
                 let _: syn::Token![=] = input.parse()?;
-                some_to_err!(getter.replace(input.parse()?),syn::Error::new(input.span(), "Found multiple getters"))?;
-
-
+                some_to_err!(
+                    getter.replace(input.parse()?),
+                    syn::Error::new(input.span(), "Found multiple getters")
+                )?;
             } else if input.peek(kw::keys) {
                 let _: kw::keys = input.parse()?;
                 let _: syn::Token![=] = input.parse()?;
-                some_to_err!(keys.replace(input.parse()?),syn::Error::new(input.span(), "Found multiple keys"))?;
-
-
+                some_to_err!(
+                    keys.replace(input.parse()?),
+                    syn::Error::new(input.span(), "Found multiple keys")
+                )?;
             } else {
                 return Err(syn::Error::new(input.span(), "Unexpected token"));
             }
 
             // Skip separator, if none is present then assume end of stream
-            let sep: Result<syn::Token![,],_> = input.parse();
-            if sep.is_err() { break }
+            let sep: Result<syn::Token![,], _> = input.parse();
+            if sep.is_err() {
+                break;
+            }
+        }
 
-        };
-
-        Ok(Self { alias, getter, keys })
+        Ok(Self {
+            alias,
+            getter,
+            keys,
+        })
     }
 }
 impl TryFrom<&syn::Attribute> for HelperType {
@@ -329,10 +354,16 @@ impl TryFrom<&syn::Attribute> for HelperType {
                 return Err(syn::Error::new(value.span(), "`alias` not valid for index"));
             }
             if args.getter.is_none() {
-                return Err(syn::Error::new(value.span(), "`getter` is required for index"));
+                return Err(syn::Error::new(
+                    value.span(),
+                    "`getter` is required for index",
+                ));
             }
             if args.keys.is_none() {
-                return Err(syn::Error::new(value.span(), "`keys` is required for index"));
+                return Err(syn::Error::new(
+                    value.span(),
+                    "`keys` is required for index",
+                ));
             }
             Ok(Self::Index(args))
         } else {
@@ -347,7 +378,6 @@ struct DirDeriveFieldHelper {
 }
 
 impl DirDeriveFieldHelper {
-
     /// Resolves helper type and returns parsed config.
     /// If no helper is found returns error message "no-attr".
     fn new(field: &syn::Field) -> syn::Result<DirDeriveFieldHelper> {
@@ -383,8 +413,12 @@ impl DirDeriveFieldHelper {
     }
 
     fn match_getter(&self) -> TokenStream {
-        let pattern = self.pub_name().map(|s| quote::quote! {#s} ).unwrap_or_else(|| quote::quote! {_});
-        let (HelperType::Index(HelperArgs{ ref getter ,..}) | HelperType::File(HelperArgs{ ref getter ,..})) = self.helper;
+        let pattern = self
+            .pub_name()
+            .map(|s| quote::quote! {#s})
+            .unwrap_or_else(|| quote::quote! {_});
+        let (HelperType::Index(HelperArgs { ref getter, .. })
+        | HelperType::File(HelperArgs { ref getter, .. })) = self.helper;
         quote::quote! {#pattern => #getter}
     }
 }
@@ -397,9 +431,9 @@ mod kw {
 
 #[cfg(test)]
 mod tests {
+    use crate::sysfs_impl::SysfsDirDerive;
     use quote::ToTokens;
     use syn::parse::Parser;
-    use crate::sysfs_impl::SysfsDirDerive;
 
     #[test]
     fn test_sysfs_root_impl() {
@@ -428,7 +462,7 @@ mod tests {
         let derive: SysfsDirDerive = syn::parse2(ts).unwrap();
 
         let out = quote::quote! {#derive};
-        println!("{}", out.to_string() );
+        println!("{}", out.to_string());
     }
 
     #[test]
@@ -442,7 +476,7 @@ mod tests {
         let derive: SysfsDirDerive = syn::parse2(ts).unwrap();
 
         let out = quote::quote! {#derive};
-        println!("{}", out.to_string() );
+        println!("{}", out.to_string());
     }
 
     #[test]
@@ -457,6 +491,6 @@ mod tests {
         let derive: SysfsDirDerive = syn::parse2(ts).unwrap();
 
         let out = quote::quote! {#derive};
-        println!("{}", out.to_string() );
+        println!("{}", out.to_string());
     }
 }

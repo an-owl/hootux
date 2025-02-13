@@ -27,30 +27,31 @@
 //! for DMA, we need some way to detect this and prevent it.
 
 /*
- TODO: This needs a good look at to check for possible UB.
- It contains components that initially interfered with other state machines, which cause recursive page faults.
- I deemed these issued too difficult to fix, because it interfered at a deep enough level that
- regressions were likely even if id did fix it.
+TODO: This needs a good look at to check for possible UB.
+It contains components that initially interfered with other state machines, which cause recursive page faults.
+I deemed these issued too difficult to fix, because it interfered at a deep enough level that
+regressions were likely even if id did fix it.
 
- - When a page is set as COW, to perform the COW may trigger COW again.
- Specifically this can occur when allocating a new page.
- As I mentioned though even if I fix this regressions are likely in the future.
- - Write protection cannot be disabled because it can cause data races when copying.
- - Multiple threads may attempt to COW the same page, this will cause UB.
- This could be fixed by keeping a list of pages being copied, if yours is there then spin.
- */
+- When a page is set as COW, to perform the COW may trigger COW again.
+Specifically this can occur when allocating a new page.
+As I mentioned though even if I fix this regressions are likely in the future.
+- Write protection cannot be disabled because it can cause data races when copying.
+- Multiple threads may attempt to COW the same page, this will cause UB.
+This could be fixed by keeping a list of pages being copied, if yours is there then spin.
+*/
 
 /// Identifies the physical frame in the page table entry as using a frame attribute entry.
 ///
 /// When a page with this flag set causes a page fault or if this page is unmapped, the handler may
 /// need to take action depending on the FAE attributes.
-pub const FRAME_ATTR_ENTRY_FLAG: x86_64::structures::paging::page_table::PageTableFlags =   x86_64::structures::paging::page_table::PageTableFlags::BIT_9;
+pub const FRAME_ATTR_ENTRY_FLAG: x86_64::structures::paging::page_table::PageTableFlags =
+    x86_64::structures::paging::page_table::PageTableFlags::BIT_9;
 
 use alloc::sync::Arc;
-use core::sync::atomic::Ordering;
 use atomic::Atomic;
-use x86_64::{PhysAddr, VirtAddr};
 use core::alloc::Allocator as _;
+use core::sync::atomic::Ordering;
+use x86_64::{PhysAddr, VirtAddr};
 
 // addresses here are to the last entry of the last entry int the highest level page table.
 const BITS48_TABLE_ADDRESS: usize = 0xFFFFFF8000000000;
@@ -64,7 +65,7 @@ pub static ATTRIBUTE_TABLE_HEAD: FrameAttributeTable = FrameAttributeTable::new(
 pub struct FrameAttributeTable {
     // this can probably avoid spinning using rwlock but accesses should be fast as hell anyway
     // It's likely that if only 2 CPUs access this it will never spin more than once.
-    table: spin::Mutex<Option<&'static mut [Option<Arc<FrameAttributesInner,FaeAlloc>>]>>,
+    table: spin::Mutex<Option<&'static mut [Option<Arc<FrameAttributesInner, FaeAlloc>>]>>,
 }
 
 impl FrameAttributeTable {
@@ -76,9 +77,10 @@ impl FrameAttributeTable {
 
     /// Initialized the FAT using either 57 or 48 bit addressing.
     pub(super) fn init(&self) {
-        let is_57_bit = x86_64::registers::control::Cr4::read().contains(x86_64::registers::control::Cr4Flags::from_bits(1<<12).unwrap()); // check la57 bit
+        let is_57_bit = x86_64::registers::control::Cr4::read()
+            .contains(x86_64::registers::control::Cr4Flags::from_bits(1 << 12).unwrap()); // check la57 bit
         let mut l = self.table.lock();
-        let (len,addr) = if is_57_bit {
+        let (len, addr) = if is_57_bit {
             (BITS57_TABLE_SIZE, BITS57_TABLE_ADDRESS)
         } else {
             (BITS48_TABLE_SIZE, BITS48_TABLE_ADDRESS)
@@ -86,10 +88,16 @@ impl FrameAttributeTable {
 
         // Can only fail if this region is already configured for fixup, which it shouldn't.
         // `len` is in num of entries, multiply by size of entry to get len in bytes
-        crate::mem::virt_fixup::set_fixup_region(addr as *const u8,len * core::mem::size_of::<Option<Arc<FrameAttributesInner>>>(),crate::mem::PAGE_SIZE,true).unwrap();
+        crate::mem::virt_fixup::set_fixup_region(
+            addr as *const u8,
+            len * core::mem::size_of::<Option<Arc<FrameAttributesInner>>>(),
+            crate::mem::PAGE_SIZE,
+            true,
+        )
+        .unwrap();
         // SAFETY: Should be safe, I should really write up a memory map to track these things.
         // This memory is not accessible but a fixup will be performed whenever it is accessed which will initialize it to `0`
-        *l = Some( unsafe { core::slice::from_raw_parts_mut(addr as *mut _, len) });
+        *l = Some(unsafe { core::slice::from_raw_parts_mut(addr as *mut _, len) });
     }
 
     /// Fetches a FAE using a physical address.
@@ -97,8 +105,11 @@ impl FrameAttributeTable {
         let l = self.table.lock();
         let table = l.as_ref().unwrap();
 
-        let index = self.select(frame,table);
-        Some(FrameAttributes {inner: table[index].clone()?, addr: frame})
+        let index = self.select(frame, table);
+        Some(FrameAttributes {
+            inner: table[index].clone()?,
+            addr: frame,
+        })
     }
 
     /// Fetches a single FAE from the FAT. The returned FAE will be for the address pointed to by
@@ -109,7 +120,11 @@ impl FrameAttributeTable {
     }
 
     /// Performs an `invlpg` on the required index, returns the index for the address.
-    fn select(&self, frame: PhysAddr, bank: &[Option<Arc<FrameAttributesInner,FaeAlloc>>]) -> usize {
+    fn select(
+        &self,
+        frame: PhysAddr,
+        bank: &[Option<Arc<FrameAttributesInner, FaeAlloc>>],
+    ) -> usize {
         let index = frame.as_u64() as usize >> 12;
 
         // This causes all accesses to be a TLB miss, however this *should* be made up for by the reduced lookup complexity
@@ -129,24 +144,27 @@ impl FrameAttributeTable {
         let mut l = self.table.lock();
         let table = l.as_mut().unwrap();
 
-        self.rm_frame_entry_inner(frame,table);
+        self.rm_frame_entry_inner(frame, table);
     }
 
-    unsafe fn rm_frame_entry_inner(&self, frame: PhysAddr, table: &mut [Option<Arc<FrameAttributesInner,FaeAlloc>>]) {
+    unsafe fn rm_frame_entry_inner(
+        &self,
+        frame: PhysAddr,
+        table: &mut [Option<Arc<FrameAttributesInner, FaeAlloc>>],
+    ) {
         let i = self.select(frame, table);
 
         let _ = table[i].take();
 
         let align = i & !(512 - 1); // 512 is number of entries per page
-        // Will this compile to a `repnz scasq`?
+                                    // Will this compile to a `repnz scasq`?
         if table[align..align + 512].iter().all(|e| e.is_none()) {
             let addr = VirtAddr::from_ptr(&table[align]);
 
             // SAFETY: This struct handles TLB synchronization internally
             crate::mem::tlb::without_shootdowns(||
                 // SAFETY: This page is checked above for data, this only occurs if not useful data is present in the page.
-                crate::mem::mem_map::unmap_page(x86_64::structures::paging::Page::<x86_64::structures::paging::Size4KiB>::containing_address(addr))
-            )
+                crate::mem::mem_map::unmap_page(x86_64::structures::paging::Page::<x86_64::structures::paging::Size4KiB>::containing_address(addr)))
         }
     }
 
@@ -171,7 +189,11 @@ impl FrameAttributeTable {
     // This panics because returning Err(_) requires us to undo all changes from the op, which where not preserved.
     // having `tgt` partially updated can result in UB if other CPUs access `tgt`. This also locks
     // the inner mutex longer than I'd like.
-    pub unsafe fn do_op<T: ?Sized>(&self, tgt: *const T, op: FatOperation) -> Option<alloc::boxed::Box<T,crate::alloc_interface::VirtAlloc>> {
+    pub unsafe fn do_op<T: ?Sized>(
+        &self,
+        tgt: *const T,
+        op: FatOperation,
+    ) -> Option<alloc::boxed::Box<T, crate::alloc_interface::VirtAlloc>> {
         // SAFETY: This is kind of safe. If the size >isize then the slice will overflow into a non-canonical address range.
         // The kernel should not allow slices like these to exist by normal means.
         // If `tgt` does not do this that is a problem with whatever constructed `tgt`, not this.
@@ -184,13 +206,21 @@ impl FrameAttributeTable {
         // Returned pointer when required by `op`
         let virt = if op.req_virt() {
             // I'm pretty sure this is safe.
-            Some(crate::alloc_interface::VirtAlloc.allocate(core::alloc::Layout::from_size_align(len, unsafe { core::mem::align_of_val_raw(tgt) }).unwrap()).unwrap())
+            Some(
+                crate::alloc_interface::VirtAlloc
+                    .allocate(
+                        core::alloc::Layout::from_size_align(len, unsafe {
+                            core::mem::align_of_val_raw(tgt)
+                        })
+                        .unwrap(),
+                    )
+                    .unwrap(),
+            )
         } else {
             None
         };
 
         for offset in (0..len).step_by(4096) {
-
             // Fetch page table entry, we ensure that if it uses memory fixups that it is fixed up.
             let addr = VirtAddr::new((tgt.cast::<u8>() as usize + offset) as u64);
             let (entry, size) = match Self::get_entry(addr) {
@@ -205,18 +235,29 @@ impl FrameAttributeTable {
                 Some(r) => r,
             };
 
-
-            if let FatOperation::NewFae{..} | FatOperation::NewAlias {..} = op {
-                use x86_64::structures::paging::{Size4KiB, Size2MiB, Size1GiB, Page};
+            if let FatOperation::NewFae { .. } | FatOperation::NewAlias { .. } = op {
+                use x86_64::structures::paging::{Page, Size1GiB, Size2MiB, Size4KiB};
 
                 let mut new_flags = entry.flags() | FRAME_ATTR_ENTRY_FLAG;
 
                 new_flags.set(x86_64::structures::paging::PageTableFlags::WRITABLE, false);
                 // unwrap because there is no reason these can throw an error
                 match size {
-                    0x1000 => crate::mem::mem_map::set_flags(Page::<Size4KiB>::containing_address(addr), new_flags).unwrap(),
-                    0x200000 => crate::mem::mem_map::set_flags(Page::<Size2MiB>::containing_address(addr), new_flags).unwrap(),
-                    0x40000000 => crate::mem::mem_map::set_flags(Page::<Size1GiB>::containing_address(addr), new_flags).unwrap(),
+                    0x1000 => crate::mem::mem_map::set_flags(
+                        Page::<Size4KiB>::containing_address(addr),
+                        new_flags,
+                    )
+                    .unwrap(),
+                    0x200000 => crate::mem::mem_map::set_flags(
+                        Page::<Size2MiB>::containing_address(addr),
+                        new_flags,
+                    )
+                    .unwrap(),
+                    0x40000000 => crate::mem::mem_map::set_flags(
+                        Page::<Size1GiB>::containing_address(addr),
+                        new_flags,
+                    )
+                    .unwrap(),
                     _ => panic!("Illegal page size"),
                 }
             };
@@ -233,14 +274,26 @@ impl FrameAttributeTable {
                 OperationIncomplete::Complete => {}
                 OperationIncomplete::RemoveFAE => self.rm_frame_entry_inner(entry.addr(), table), // SAFETY: This is safe, operate() determines if this should be called.
                 OperationIncomplete::ClearPageProperties => {
-                    use x86_64::structures::paging::{Size4KiB, Size2MiB, Size1GiB, Page};
+                    use x86_64::structures::paging::{Page, Size1GiB, Size2MiB, Size4KiB};
                     let mut nflags = entry.flags();
                     nflags.set(x86_64::structures::paging::PageTableFlags::WRITABLE, true);
                     nflags.remove(FRAME_ATTR_ENTRY_FLAG);
                     match size {
-                        0x1000 => crate::mem::mem_map::set_flags(Page::<Size4KiB>::containing_address(addr), nflags).unwrap(),
-                        0x200000 => crate::mem::mem_map::set_flags(Page::<Size2MiB>::containing_address(addr), nflags).unwrap(),
-                        0x40000000 => crate::mem::mem_map::set_flags(Page::<Size1GiB>::containing_address(addr), nflags).unwrap(),
+                        0x1000 => crate::mem::mem_map::set_flags(
+                            Page::<Size4KiB>::containing_address(addr),
+                            nflags,
+                        )
+                        .unwrap(),
+                        0x200000 => crate::mem::mem_map::set_flags(
+                            Page::<Size2MiB>::containing_address(addr),
+                            nflags,
+                        )
+                        .unwrap(),
+                        0x40000000 => crate::mem::mem_map::set_flags(
+                            Page::<Size1GiB>::containing_address(addr),
+                            nflags,
+                        )
+                        .unwrap(),
                         _ => panic!("Illegal page size"),
                     }
                 }
@@ -252,31 +305,40 @@ impl FrameAttributeTable {
                 let mut set_flags = entry.flags();
                 set_flags.remove(x86_64::structures::paging::PageTableFlags::WRITABLE);
                 match size {
-                    0x1000 => {
-                        crate::mem::mem_map::map_frame_to_page(
-                            VirtAddr::from_ptr( unsafe { v.as_ptr().byte_add(offset) }),
-                            unsafe { x86_64::structures::paging::PhysFrame::<x86_64::structures::paging::Size4KiB>::from_start_address_unchecked(entry.addr()) },
-                            set_flags | FRAME_ATTR_ENTRY_FLAG
-                        ).unwrap()
-                    },
-                    0x200000 => {
-                        crate::mem::mem_map::map_frame_to_page(
-                            VirtAddr::from_ptr(unsafe { v.as_ptr().byte_add(offset) }),
-                            unsafe { x86_64::structures::paging::PhysFrame::<x86_64::structures::paging::Size2MiB>::from_start_address_unchecked(entry.addr()) },
-                            set_flags | FRAME_ATTR_ENTRY_FLAG,
-                        ).unwrap()
-                    }
-                    0x40000000 => {
-                        crate::mem::mem_map::map_frame_to_page(
-                            VirtAddr::from_ptr(unsafe { v.as_ptr().byte_add(offset) }),
-                            unsafe { x86_64::structures::paging::PhysFrame::<x86_64::structures::paging::Size2MiB>::from_start_address_unchecked(entry.addr()) },
-                            set_flags | FRAME_ATTR_ENTRY_FLAG,
-                        ).unwrap()
-                    }
+                    0x1000 => crate::mem::mem_map::map_frame_to_page(
+                        VirtAddr::from_ptr(unsafe { v.as_ptr().byte_add(offset) }),
+                        unsafe {
+                            x86_64::structures::paging::PhysFrame::<
+                                x86_64::structures::paging::Size4KiB,
+                            >::from_start_address_unchecked(entry.addr())
+                        },
+                        set_flags | FRAME_ATTR_ENTRY_FLAG,
+                    )
+                    .unwrap(),
+                    0x200000 => crate::mem::mem_map::map_frame_to_page(
+                        VirtAddr::from_ptr(unsafe { v.as_ptr().byte_add(offset) }),
+                        unsafe {
+                            x86_64::structures::paging::PhysFrame::<
+                                x86_64::structures::paging::Size2MiB,
+                            >::from_start_address_unchecked(entry.addr())
+                        },
+                        set_flags | FRAME_ATTR_ENTRY_FLAG,
+                    )
+                    .unwrap(),
+                    0x40000000 => crate::mem::mem_map::map_frame_to_page(
+                        VirtAddr::from_ptr(unsafe { v.as_ptr().byte_add(offset) }),
+                        unsafe {
+                            x86_64::structures::paging::PhysFrame::<
+                                x86_64::structures::paging::Size2MiB,
+                            >::from_start_address_unchecked(entry.addr())
+                        },
+                        set_flags | FRAME_ATTR_ENTRY_FLAG,
+                    )
+                    .unwrap(),
                     #[cfg(target_arch = "x86_64")]
                     _ => unreachable!(),
                     #[cfg(not(target_arch = "x86_64"))]
-                    _ => panic!("Unchecked page size")
+                    _ => panic!("Unchecked page size"),
                 };
             }
         }
@@ -284,11 +346,11 @@ impl FrameAttributeTable {
         // Because T is ?Sized, this copies the metadata of `tgt` onto `addr`
         virt.map(|addr| {
             unsafe {
-                let offset = tgt.cast::<u8>() as usize & (crate::mem::PAGE_SIZE-1);
+                let offset = tgt.cast::<u8>() as usize & (crate::mem::PAGE_SIZE - 1);
 
                 // addr may not be aligned correctly
                 let ptr = addr.as_ptr().with_metadata_of(tgt).byte_add(offset);
-                alloc::boxed::Box::from_raw_in(ptr,crate::alloc_interface::VirtAlloc)
+                alloc::boxed::Box::from_raw_in(ptr, crate::alloc_interface::VirtAlloc)
             }
         })
     }
@@ -313,25 +375,34 @@ impl FrameAttributeTable {
         // We cant complete incomplete ops from here
         let _ = op.operate(&mut table[index], addr);
 
-        let fae = table[index].as_ref().and_then(|e| { Some(e.clone()) });
+        let fae = table[index].as_ref().and_then(|e| Some(e.clone()));
         Some(FrameAttributes { inner: fae?, addr })
     }
 
     /// Returns the page table entry for the given address, alongside the page size.
-    fn get_entry(ptr: VirtAddr) -> Option<(x86_64::structures::paging::page_table::PageTableEntry, usize)> {
+    fn get_entry(
+        ptr: VirtAddr,
+    ) -> Option<(
+        x86_64::structures::paging::page_table::PageTableEntry,
+        usize,
+    )> {
         let page = x86_64::structures::paging::Page::<x86_64::structures::paging::Size4KiB>::containing_address(VirtAddr::new(ptr.as_u64()));
 
         match crate::mem::mem_map::get_entry(page) {
-            Ok(e) => Some((e,0x1000)),
+            Ok(e) => Some((e, 0x1000)),
             Err(crate::mem::mem_map::GetEntryErr::NotMapped) => None,
             Err(crate::mem::mem_map::GetEntryErr::ParentHugePage) => {
                 let page = x86_64::structures::paging::Page::<x86_64::structures::paging::Size2MiB>::containing_address(VirtAddr::new(ptr.as_u64()));
 
                 match crate::mem::mem_map::get_entry(page) {
-                    Ok(e) => Some((e,0x200000)),
+                    Ok(e) => Some((e, 0x200000)),
                     Err(crate::mem::mem_map::GetEntryErr::NotMapped) => None,
                     Err(crate::mem::mem_map::GetEntryErr::ParentHugePage) => {
-                        let page = x86_64::structures::paging::Page::<x86_64::structures::paging::Size1GiB>::containing_address(VirtAddr::new(ptr.as_u64()));
+                        let page = x86_64::structures::paging::Page::<
+                            x86_64::structures::paging::Size1GiB,
+                        >::containing_address(VirtAddr::new(
+                            ptr.as_u64(),
+                        ));
                         // No parent huge pages are possible. This would've returned unmapped on the 4k check. no errors are possible here.
                         Some((crate::mem::mem_map::get_entry(page).unwrap(), 0x40000000))
                     }
@@ -340,10 +411,13 @@ impl FrameAttributeTable {
         }
     }
 
-    pub(crate) fn fixup(&self, addr: VirtAddr) -> Result<(),()> {
-        let (pte,size) = Self::get_entry(addr).ok_or(())?;
+    pub(crate) fn fixup(&self, addr: VirtAddr) -> Result<(), ()> {
+        let (pte, size) = Self::get_entry(addr).ok_or(())?;
         // Check that FAE bit is set.
-        pte.flags().contains(FRAME_ATTR_ENTRY_FLAG).then(||()).ok_or(())?;
+        pte.flags()
+            .contains(FRAME_ATTR_ENTRY_FLAG)
+            .then(|| ())
+            .ok_or(())?;
 
         let mut l = self.table.lock();
         let table = l.as_mut().unwrap();
@@ -353,32 +427,56 @@ impl FrameAttributeTable {
         drop(l);
         let flags = fae.flags.load(Ordering::Relaxed);
 
-        let map_to = |virt,dst,len, flags| {
+        let map_to = |virt, dst, len, flags| {
             let _ = unsafe { crate::mem::mem_map::unmap_and_free(virt) }; // don't care if this fails
             match len {
-                0x1000 => crate::mem::mem_map::map_frame_to_page(virt, x86_64::structures::paging::frame::PhysFrame::<x86_64::structures::paging::Size4KiB>::containing_address(dst), flags),
-                0x200000 => crate::mem::mem_map::map_frame_to_page(virt,x86_64::structures::paging::frame::PhysFrame::<x86_64::structures::paging::Size4KiB>::containing_address(dst),flags),
-                0x40000000 => crate::mem::mem_map::map_frame_to_page(virt,x86_64::structures::paging::frame::PhysFrame::<x86_64::structures::paging::Size4KiB>::containing_address(dst),flags),
-                _ => panic!("Invalid page size")
+                0x1000 => crate::mem::mem_map::map_frame_to_page(
+                    virt,
+                    x86_64::structures::paging::frame::PhysFrame::<
+                        x86_64::structures::paging::Size4KiB,
+                    >::containing_address(dst),
+                    flags,
+                ),
+                0x200000 => crate::mem::mem_map::map_frame_to_page(
+                    virt,
+                    x86_64::structures::paging::frame::PhysFrame::<
+                        x86_64::structures::paging::Size4KiB,
+                    >::containing_address(dst),
+                    flags,
+                ),
+                0x40000000 => crate::mem::mem_map::map_frame_to_page(
+                    virt,
+                    x86_64::structures::paging::frame::PhysFrame::<
+                        x86_64::structures::paging::Size4KiB,
+                    >::containing_address(dst),
+                    flags,
+                ),
+                _ => panic!("Invalid page size"),
             }
         };
 
         // If page is not present and fixups are enabled then copy the frame and update the entry
         if flags.contains(AttributeFlags::COPY_ON_FAULT) {
-            let frame = crate::mem::allocator::COMBINED_ALLOCATOR.lock().phys_alloc().allocate(core::alloc::Layout::from_size_align(size,size).unwrap(),flags.get_mem_region()).expect("System ran out of memory");
+            let frame = crate::mem::allocator::COMBINED_ALLOCATOR
+                .lock()
+                .phys_alloc()
+                .allocate(
+                    core::alloc::Layout::from_size_align(size, size).unwrap(),
+                    flags.get_mem_region(),
+                )
+                .expect("System ran out of memory");
             let dst = PhysAddr::new(frame as u64);
             // SAFETY: `ptr` is to be copied, `dst` is given by the memory allocator. `size` is given as the page size by the mapper.
             unsafe { Self::copy_frame(pte.addr(), dst, size) };
             let mut pt_flags = pte.flags();
-            pt_flags.set(x86_64::structures::paging::PageTableFlags::WRITABLE,true);
+            pt_flags.set(x86_64::structures::paging::PageTableFlags::WRITABLE, true);
             pt_flags.remove(FRAME_ATTR_ENTRY_FLAG);
-            map_to(addr,dst,size,pt_flags).expect("Mapping failed");
+            map_to(addr, dst, size, pt_flags).expect("Mapping failed");
             Ok(())
         } else {
             Err(())
         }
     }
-
 
     /// Copies from the physical address `origin` to `dst` for `len` bytes.
     /// `len` should be a valid page size.
@@ -389,11 +487,15 @@ impl FrameAttributeTable {
     /// The caller must ensure that `dst` is not aliased.
     unsafe fn copy_frame(origin: PhysAddr, dst: PhysAddr, len: usize) {
         // SAFETY: Box is immutable, and memory is not expected to be present in memory.
-        let mut b = alloc::vec::Vec::<u8,_>::new_in(unsafe { crate::alloc_interface::MmioAlloc::new_from_phys_addr(origin) });
+        let mut b = alloc::vec::Vec::<u8, _>::new_in(unsafe {
+            crate::alloc_interface::MmioAlloc::new_from_phys_addr(origin)
+        });
         b.reserve(len);
         // SAFETY: This is safe because the size is set above.
         unsafe { b.set_len(len) }
-        let mut dst = alloc::vec::Vec::new_in(unsafe { crate::alloc_interface::MmioAlloc::new_from_phys_addr(dst) });
+        let mut dst = alloc::vec::Vec::new_in(unsafe {
+            crate::alloc_interface::MmioAlloc::new_from_phys_addr(dst)
+        });
         dst.reserve(len);
         // SAFETY: See above
         dst.set_len(len);
@@ -414,9 +516,7 @@ pub enum FatOperation {
     /// the required operation.
     ///
     /// This operation will return a pointer to the memory alias.
-    NewAlias {
-        attributes: AttributeFlags,
-    },
+    NewAlias { attributes: AttributeFlags },
 
     /// Constructs a new FAE with the given attributes.
     NewFae {
@@ -462,27 +562,43 @@ pub enum FatOperation {
 }
 
 impl FatOperation {
-
     /// Predefined op to configure memory as Copy-On-Write
     // SAFETY: 6 is COPY_ON_FAULT | FIXUP_WRITABLE
-    pub const INIT_COW: Self = Self::NewAlias { attributes: AttributeFlags::from_bits_retain(6) };
+    pub const INIT_COW: Self = Self::NewAlias {
+        attributes: AttributeFlags::from_bits_retain(6),
+    };
 
     /// Performs the requested operation for the given address.
     ///
     /// Returns an action that the caller should complete.
-    fn operate(&self, fae: &mut Option<Arc<FrameAttributesInner,FaeAlloc>>, phys_addr: PhysAddr) -> OperationIncomplete {
+    fn operate(
+        &self,
+        fae: &mut Option<Arc<FrameAttributesInner, FaeAlloc>>,
+        phys_addr: PhysAddr,
+    ) -> OperationIncomplete {
         match self {
-            FatOperation::NewAlias { attributes, .. } => {
-                match fae.as_mut() {
-                    Some(d) => {
-                        d.flags.store(*attributes, Ordering::Relaxed);
-                        d.alias_count.fetch_add(1, Ordering::Relaxed);
-                    }
-                    None => *fae = Some(Arc::new_in(FrameAttributesInner { alias_count: Atomic::new(2), flags: Atomic::new(*attributes) },FaeAlloc::new())),
+            FatOperation::NewAlias { attributes, .. } => match fae.as_mut() {
+                Some(d) => {
+                    d.flags.store(*attributes, Ordering::Relaxed);
+                    d.alias_count.fetch_add(1, Ordering::Relaxed);
                 }
-            }
+                None => {
+                    *fae = Some(Arc::new_in(
+                        FrameAttributesInner {
+                            alias_count: Atomic::new(2),
+                            flags: Atomic::new(*attributes),
+                        },
+                        FaeAlloc::new(),
+                    ))
+                }
+            },
 
-            FatOperation::NewFae { attributes, fallible, alias_count, .. } => {
+            FatOperation::NewFae {
+                attributes,
+                fallible,
+                alias_count,
+                ..
+            } => {
                 match fae.as_mut() {
                     Some(d) if *fallible => d.flags.store(*attributes, Ordering::Relaxed),
                     Some(_) if !*fallible => panic!("New-Frame-Attribute-Entry operation failed entry for {phys_addr:?} is present operation is infallible"),
@@ -493,23 +609,34 @@ impl FatOperation {
             }
 
             FatOperation::Alias => {
-                fae.as_mut().expect("No FAE present for Alias operation").alias_count.fetch_add(1, Ordering::Relaxed);
+                fae.as_mut()
+                    .expect("No FAE present for Alias operation")
+                    .alias_count
+                    .fetch_add(1, Ordering::Relaxed);
             }
             FatOperation::UnAlias => {
                 let fae_ref = fae.as_mut().expect("No FAE present for UnAlias operation");
                 // wierd maths here, fetch sub gets the original value.
                 // If the original value is 2 then new is 1, 2 is the highest value below 3.
                 // So if the old value is below 3 then the new count must be either 1 or 0.
-                if !fae_ref.flags.load(Ordering::Relaxed).contains(AttributeFlags::NO_DROP) && fae_ref.alias_count.fetch_sub(1, Ordering::Relaxed) < 3 {
-                    FrameAttributes { inner: fae_ref.clone(), addr: phys_addr };
-                    return OperationIncomplete::RemoveFAE
+                if !fae_ref
+                    .flags
+                    .load(Ordering::Relaxed)
+                    .contains(AttributeFlags::NO_DROP)
+                    && fae_ref.alias_count.fetch_sub(1, Ordering::Relaxed) < 3
+                {
+                    FrameAttributes {
+                        inner: fae_ref.clone(),
+                        addr: phys_addr,
+                    };
+                    return OperationIncomplete::RemoveFAE;
                 }
             }
             FatOperation::Reclaim => {
                 if let Some(fae_ref) = fae {
                     if fae_ref.alias_count.load(Ordering::Relaxed) <= 1 {
                         fae.take();
-                        return OperationIncomplete::ClearPageProperties
+                        return OperationIncomplete::ClearPageProperties;
                     }
                 }
             }
@@ -522,16 +649,16 @@ impl FatOperation {
     /// # Safety
     ///
     /// See safety sections for [Self] variants.
-    pub unsafe fn do_op(&self, fae: FrameAttributes ) {
+    pub unsafe fn do_op(&self, fae: FrameAttributes) {
         // we ditch the extra info here, this should not be used by anything that may need them
-        let _ = self.operate(&mut Some(fae.inner),fae.addr);
+        let _ = self.operate(&mut Some(fae.inner), fae.addr);
     }
 
     /// Does this operation require returning a pointer.
     fn req_virt(&self) -> bool {
         match self {
             FatOperation::NewAlias { .. } | FatOperation::Alias => true,
-            _ => false
+            _ => false,
         }
     }
 }
@@ -587,7 +714,6 @@ bitflags::bitflags! {
 }
 
 impl AttributeFlags {
-
     /// Fetches the [crate::mem::MemRegion] indicated by `self`.
     ///
     /// If no region is specified then the default variant will be used.
@@ -610,7 +736,6 @@ pub struct FrameAttributes {
 }
 
 impl FrameAttributes {
-
     /// Removes the frame attribute entry from the frame attribute table.
     ///
     /// # Safety
@@ -628,7 +753,7 @@ impl FrameAttributes {
     }
 
     pub fn alias(&self) {
-        self.inner.alias_count.fetch_add(1,Ordering::Relaxed);
+        self.inner.alias_count.fetch_add(1, Ordering::Relaxed);
     }
 
     /// Decrements the alias count by one.
@@ -637,7 +762,7 @@ impl FrameAttributes {
     ///
     /// The caller must ensure that the frame is aliased by the new value of the alias count.
     pub unsafe fn de_alias(&self) {
-        self.inner.alias_count.fetch_sub(1,Ordering::Relaxed);
+        self.inner.alias_count.fetch_sub(1, Ordering::Relaxed);
     }
 
     /// Sets the flags for the physical frame.
@@ -646,7 +771,7 @@ impl FrameAttributes {
     ///
     /// The caller must ensure that all page-aliases expect and handle the new behaviour correctly.
     pub unsafe fn set_flags(&self, flags: AttributeFlags) {
-        self.inner.flags.store(flags,Ordering::Relaxed);
+        self.inner.flags.store(flags, Ordering::Relaxed);
     }
 
     pub fn get_flags(&self) -> AttributeFlags {
@@ -663,8 +788,6 @@ kernel_proc_macro::local_slab_allocator!(
 
 impl FaeAlloc {
     fn new() -> Self {
-        Self {
-            _sealed: (),
-        }
+        Self { _sealed: () }
     }
 }

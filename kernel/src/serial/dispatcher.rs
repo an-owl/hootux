@@ -1,19 +1,19 @@
+use crate::fs::device::{Fifo, OpenMode};
+use crate::fs::file::*;
+use crate::fs::vfs::{DevID, MajorNum};
+use crate::fs::{IoError, IoResult};
+use crate::mem::dma::DmaBuff;
+use crate::serial::Serial;
+use crate::util::ToWritableBuffer;
 use alloc::boxed::Box;
+use core::fmt::Write as _;
+use core::marker::PhantomData;
 use core::pin::Pin;
 use core::task::{Context, Poll};
 use futures_util::future::BoxFuture;
-use futures_util::{FutureExt};
-use crate::fs::device::{Fifo, OpenMode};
-use crate::serial::Serial;
-use crate::fs::file::*;
-use crate::fs::{IoError, IoResult};
-use crate::fs::vfs::{DevID, MajorNum};
-use crate::util::ToWritableBuffer;
-use core::fmt::Write as _;
-use core::marker::PhantomData;
-use x86_64::instructions::interrupts::without_interrupts;
-use crate::mem::dma::{DmaBuff};
+use futures_util::FutureExt;
 use kernel_proc_macro::ok_or_lazy;
+use x86_64::instructions::interrupts::without_interrupts;
 
 // fixme there is a bug in here somewhere causing stack overflows to occur
 // I fixed it partially, it no longer panics the kernel but I'm not sure what the root cause is.
@@ -60,7 +60,7 @@ impl SerialDispatcher {
                 stream: Default::default(),
                 stream_lock: atomic::Atomic::new(false),
 
-                id: DevID::new(*MAJOR,MINOR.fetch_add(1,atomic::Ordering::Relaxed))
+                id: DevID::new(*MAJOR, MINOR.fetch_add(1, atomic::Ordering::Relaxed)),
             }),
             fifo_lock: Default::default(),
         }
@@ -109,14 +109,14 @@ impl SerialDispatcher {
     /// This may break the ordering of the output.
     ///
     /// Has a limit of 128 characters.
-    pub fn write_sync(&self, data: core::fmt::Arguments) -> Result<(),(IoError, usize)> {
+    pub fn write_sync(&self, data: core::fmt::Arguments) -> Result<(), (IoError, usize)> {
         use crate::util::WriteableBuffer;
         let mut self_mut = self.clone();
-        let mut st = [0u8;128];
+        let mut st = [0u8; 128];
 
         let mut stw = st.writable();
-        let _ = core::write!(stw,"{}",data); // idc if this fails
-        self_mut.open(OpenMode::Write).map_err(|e| (e,0))?;
+        let _ = core::write!(stw, "{}", data); // idc if this fails
+        self_mut.open(OpenMode::Write).map_err(|e| (e, 0))?;
         let len = stw.cursor();
         drop(stw);
 
@@ -126,7 +126,8 @@ impl SerialDispatcher {
         // SAFETY: This is unsafe because this may attempt to call deallocate() on &dma_buff. Box::leak() is called below
         let stack_box = unsafe { Box::from_raw(&mut dma_buff) };
         // pos=0: `pos` ignored by this module
-        let (Ok((stack_box,_)) | Err((_,stack_box,_))) = crate::task::util::block_on!(self_mut.write(0,stack_box));
+        let (Ok((stack_box, _)) | Err((_, stack_box, _))) =
+            crate::task::util::block_on!(self_mut.write(0, stack_box));
         // SAFETY: This must be called because of Box::from_raw above.
         let _ = Box::leak(stack_box);
 
@@ -159,9 +160,7 @@ impl File for SerialDispatcher {
 
     fn len(&self) -> crate::fs::IoResult<u64> {
         // We make no expectation that any data is present
-        async {
-            Ok(0)
-        }.boxed()
+        async { Ok(0) }.boxed()
     }
 
     /// 0. Frame control see [FrameCtlBFile]
@@ -171,7 +170,9 @@ impl File for SerialDispatcher {
     ///
     fn b_file(&self, id: u64) -> Option<Box<dyn File>> {
         match id {
-            0 => Some(Box::new(FrameCtlBFile{dispatch: self.clone()})), // frame control
+            0 => Some(Box::new(FrameCtlBFile {
+                dispatch: self.clone(),
+            })), // frame control
             1 => todo!(), // rx-ringbuffer control
             _ => None,
         }
@@ -191,8 +192,13 @@ impl crate::fs::device::Fifo<u8> for SerialDispatcher {
         let _ = self.inner.real.upgrade().ok_or(IoError::MediaError)?; // assert that controller is still there
 
         if mode.is_read() {
-            if let Err(_) = self.inner.stream_lock.compare_exchange_weak(false,true, atomic::Ordering::Acquire, atomic::Ordering::Relaxed) {
-                return Err(IoError::Busy)
+            if let Err(_) = self.inner.stream_lock.compare_exchange_weak(
+                false,
+                true,
+                atomic::Ordering::Acquire,
+                atomic::Ordering::Relaxed,
+            ) {
+                return Err(IoError::Busy);
             }
         }
 
@@ -201,13 +207,14 @@ impl crate::fs::device::Fifo<u8> for SerialDispatcher {
     }
 
     fn close(&mut self) -> Result<(), IoError> {
-
         if self.fifo_lock == OpenMode::Locked {
-            return Err(IoError::NotReady)
+            return Err(IoError::NotReady);
         }
 
         if self.fifo_lock.is_write() {
-            self.inner.stream_lock.store(false,atomic::Ordering::Release);
+            self.inner
+                .stream_lock
+                .store(false, atomic::Ordering::Release);
         }
         self.fifo_lock = OpenMode::Locked;
 
@@ -239,15 +246,17 @@ impl crate::fs::device::Fifo<u8> for SerialDispatcher {
 ///
 /// Note: At the time of writing timers are only accurate to 4ms.
 impl Read<u8> for SerialDispatcher {
-
-    fn read<'f, 'a: 'f,'b: 'f>(&'a self, _: u64, mut dbuff: DmaBuff<'b>) -> BoxFuture<'f, Result<(DmaBuff<'b>, usize), (IoError, DmaBuff<'b>, usize)>> {
-
+    fn read<'f, 'a: 'f, 'b: 'f>(
+        &'a self,
+        _: u64,
+        mut dbuff: DmaBuff<'b>,
+    ) -> BoxFuture<'f, Result<(DmaBuff<'b>, usize), (IoError, DmaBuff<'b>, usize)>> {
         async {
             if self.fifo_lock.is_read() {
                 // cant use ok_or(_) here because of use after free on `dbuff`
                 let real = match self.inner.real.upgrade() {
                     Some(real) => real,
-                    None => return Err((IoError::MediaError,dbuff,0)),
+                    None => return Err((IoError::MediaError, dbuff, 0)),
                 };
 
                 // SAFETY: This is safe because as_mut guarantees that this can be cast safely.
@@ -276,24 +285,25 @@ impl Read<u8> for SerialDispatcher {
                 }) {
                     // cannot move dbuff must resort to stupid shit like this
                     Some(Ok(count)) => return Ok((dbuff, count)),
-                    Some(Err((rc,count))) => return Err((rc,dbuff,count)),
+                    Some(Err((rc, count))) => return Err((rc, dbuff, count)),
                     _ => {}
                 }
-
 
                 let rc = ReadFut {
                     dispatch: self,
                     phantom_buffer: PhantomData,
-                }.await;
+                }
+                .await;
 
                 match rc {
-                    Ok(b) => Ok((dbuff,b.len())),
-                    Err((rc,count)) => Err((rc,dbuff,count)),
+                    Ok(b) => Ok((dbuff, b.len())),
+                    Err((rc, count)) => Err((rc, dbuff, count)),
                 }
             } else {
                 Err((IoError::NotReady, dbuff, 0))
             }
-        }.boxed()
+        }
+        .boxed()
         /*
         async {
             if self.fifo_lock.is_read() {
@@ -361,21 +371,24 @@ impl Read<u8> for SerialDispatcher {
 /// 2. If data is currently being received this will return `Poll::Pending`
 /// 3. If no data has been written to the buffer then `Poll::Pending` is returned.
 /// 4. If data has been received and the line is currently idle this will return `Poll::Ready(_)` with an incomplete buffer.
-struct ReadFut<'a,'b> {
+struct ReadFut<'a, 'b> {
     dispatch: &'a SerialDispatcher,
-    phantom_buffer: PhantomData<&'b mut [u8]>
+    phantom_buffer: PhantomData<&'b mut [u8]>,
 }
 
-impl<'a,'b> core::future::Future for ReadFut<'a,'b> {
-    type Output = Result<&'b mut [u8],(IoError,usize)>;
+impl<'a, 'b> core::future::Future for ReadFut<'a, 'b> {
+    type Output = Result<&'b mut [u8], (IoError, usize)>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let real = if self.dispatch.fifo_lock.is_read() {
-            self.dispatch.inner.real.upgrade().ok_or((IoError::MediaError, 0))?
+            self.dispatch
+                .inner
+                .real
+                .upgrade()
+                .ok_or((IoError::MediaError, 0))?
         } else {
             Err((IoError::NotReady, 0))?
         };
-
 
         without_interrupts(|| {
             let mut l = real.rx_tgt.lock();
@@ -383,28 +396,31 @@ impl<'a,'b> core::future::Future for ReadFut<'a,'b> {
 
             return if *i == buff.len() {
                 Poll::Ready(Ok(unsafe { &mut *l.take().unwrap().0 }))
-
             } else if real.rx_idle.load(atomic::Ordering::Relaxed) && *i > 0 {
                 let len = *i;
-                Poll::Ready(Ok( unsafe { &mut (*l.take().unwrap().0)[..len] }))
-
+                Poll::Ready(Ok(unsafe { &mut (*l.take().unwrap().0)[..len] }))
             } else {
                 self.dispatch.inner.stream.register(cx.waker());
                 Poll::Pending
-            }
+            };
         })
     }
 }
 
 impl Write<u8> for SerialDispatcher {
-    fn write<'f, 'a: 'f,'b: 'f>(&'a self, _: u64, mut dbuff: DmaBuff<'b>) -> BoxFuture<'f, Result<(DmaBuff<'b>, usize), (IoError, DmaBuff<'b>, usize)>> {
+    fn write<'f, 'a: 'f, 'b: 'f>(
+        &'a self,
+        _: u64,
+        mut dbuff: DmaBuff<'b>,
+    ) -> BoxFuture<'f, Result<(DmaBuff<'b>, usize), (IoError, DmaBuff<'b>, usize)>> {
         async {
             if self.fifo_lock.is_write() {
                 // SAFETY: as_mut guarantees that this is safe.
                 let buff = unsafe { &mut *crate::mem::dma::DmaTarget::as_mut(&mut *dbuff) };
                 // Returning here indicates that the driver has closed the controller.
-                let real = ok_or_lazy!(self.inner.real.upgrade() => Err((IoError::MediaError, dbuff, 0)));
-                let run = real.run.swap(true,atomic::Ordering::Acquire);
+                let real =
+                    ok_or_lazy!(self.inner.real.upgrade() => Err((IoError::MediaError, dbuff, 0)));
+                let run = real.run.swap(true, atomic::Ordering::Acquire);
                 let mut write_buff = real.write_buff.lock();
                 let push = write_buff.push(buff);
 
@@ -418,14 +434,14 @@ impl Write<u8> for SerialDispatcher {
                 }
                 push.await;
 
-                Ok((dbuff,buff.len()))
+                Ok((dbuff, buff.len()))
             } else {
-                Err((IoError::NotReady,dbuff,0))
+                Err((IoError::NotReady, dbuff, 0))
             }
-        }.boxed()
+        }
+        .boxed()
     }
 }
-
 
 /// This struct is a B-File for [SerialDispatcher].
 /// This file contains a Unicode text representing the frame control formatted as a typical UART
@@ -446,7 +462,7 @@ impl Write<u8> for SerialDispatcher {
 #[cast_trait_object::dyn_upcast(File)]
 #[cast_trait_object::dyn_cast(File => NormalFile<u8>, Directory, crate::fs::device::FileSystem, crate::fs::device::Fifo<u8>, crate::fs::device::DeviceFile )]
 struct FrameCtlBFile {
-    dispatch: SerialDispatcher
+    dispatch: SerialDispatcher,
 }
 
 impl File for FrameCtlBFile {
@@ -480,17 +496,23 @@ impl NormalFile for FrameCtlBFile {
         async { Ok(crate::mem::PAGE_SIZE as u64) }.boxed()
     }
 
-    fn file_lock<'a>(self: Box<Self>) -> BoxFuture<'a, Result<LockedFile<u8>, (IoError, Box<dyn NormalFile<u8>>)>> {
-        async {Err((IoError::NotSupported,self as Box<dyn NormalFile>))}.boxed()
+    fn file_lock<'a>(
+        self: Box<Self>,
+    ) -> BoxFuture<'a, Result<LockedFile<u8>, (IoError, Box<dyn NormalFile<u8>>)>> {
+        async { Err((IoError::NotSupported, self as Box<dyn NormalFile>)) }.boxed()
     }
 
     unsafe fn unlock_unsafe(&self) -> IoResult<()> {
-        async {Err(IoError::NotSupported)}.boxed()
+        async { Err(IoError::NotSupported) }.boxed()
     }
 }
 
 impl Read<u8> for FrameCtlBFile {
-    fn read<'f, 'a: 'f,'b: 'f>(&'a self, _: u64, mut dbuff: DmaBuff<'b>) -> BoxFuture<'f, Result<(DmaBuff<'b>, usize), (IoError, DmaBuff<'b>, usize)>> {
+    fn read<'f, 'a: 'f, 'b: 'f>(
+        &'a self,
+        _: u64,
+        mut dbuff: DmaBuff<'b>,
+    ) -> BoxFuture<'f, Result<(DmaBuff<'b>, usize), (IoError, DmaBuff<'b>, usize)>> {
         async {
             let buff = unsafe { &mut *crate::mem::dma::DmaTarget::as_mut(&mut *dbuff) };
             let real = ok_or_lazy!(self.dispatch.inner.real.upgrade() => Err((IoError::MediaError, dbuff, 0)));
@@ -515,7 +537,11 @@ impl Read<u8> for FrameCtlBFile {
 }
 
 impl Write<u8> for FrameCtlBFile {
-    fn write<'f, 'a: 'f,'b: 'f>(&'a self, _: u64, mut dbuff: DmaBuff<'b>) -> BoxFuture<'f, Result<(DmaBuff<'b>,usize), (IoError, DmaBuff<'b>, usize)>> {
+    fn write<'f, 'a: 'f, 'b: 'f>(
+        &'a self,
+        _: u64,
+        mut dbuff: DmaBuff<'b>,
+    ) -> BoxFuture<'f, Result<(DmaBuff<'b>, usize), (IoError, DmaBuff<'b>, usize)>> {
         async {
             let buff = unsafe { &mut *crate::mem::dma::DmaTarget::as_mut(&mut *dbuff) };
             let s = match core::str::from_utf8(buff) {

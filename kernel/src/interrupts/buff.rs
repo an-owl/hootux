@@ -35,7 +35,7 @@ struct BufferChonk<T> {
     waker: futures_util::task::AtomicWaker,
     completed: atomic::Atomic<bool>,
     // SAFETY: Reads from chonk are safe, it can only be constructed from a reference, and is a raw pointer to erase the lifetime
-    chonk: *const [T]
+    chonk: *const [T],
 }
 
 impl<T: Copy> ChonkyBuff<T> {
@@ -72,8 +72,12 @@ impl<T: Copy> ChonkyBuff<T> {
         drop(bind);
     }
 
-    pub fn push<'b, 'a: 'b>(&'b mut self, data: &'a [T]) -> Push<'a,T> {
-        let b = alloc::sync::Arc::new(BufferChonk{waker: Default::default(), completed: atomic::Atomic::new(false), chonk: data});
+    pub fn push<'b, 'a: 'b>(&'b mut self, data: &'a [T]) -> Push<'a, T> {
+        let b = alloc::sync::Arc::new(BufferChonk {
+            waker: Default::default(),
+            completed: atomic::Atomic::new(false),
+            chonk: data,
+        });
         self.free();
 
         // skip that shit bruh
@@ -83,15 +87,13 @@ impl<T: Copy> ChonkyBuff<T> {
                 core::any::type_name::<Self>()
             );
             // SAFETY: This is safe because the slice has a len of 0
-            return Push{
+            return Push {
                 phantom_data: Default::default(),
-                buff: alloc::sync::Arc::new(
-                    BufferChonk{
-                        waker: Default::default(),
-                        completed: atomic::Atomic::new(true),
-                        chonk: unsafe { core::slice::from_raw_parts(core::ptr::null(), 0)}
-                    }
-                )
+                buff: alloc::sync::Arc::new(BufferChonk {
+                    waker: Default::default(),
+                    completed: atomic::Atomic::new(true),
+                    chonk: unsafe { core::slice::from_raw_parts(core::ptr::null(), 0) },
+                }),
             };
         }
 
@@ -128,17 +130,16 @@ impl<T: Copy> ChonkyBuff<T> {
             core::mem::swap(&mut bind, &mut l.chonk);
             let completed = bind.front().unwrap();
             completed.waker.wake();
-            completed.completed.store(true,atomic::Ordering::Release);
+            completed.completed.store(true, atomic::Ordering::Release);
 
             let rm_len = bind.back().unwrap().chonk.len();
             l.comp_chonk.append(&mut bind);
-            self.invd_len
-                .fetch_add(rm_len, atomic::Ordering::Release);
+            self.invd_len.fetch_add(rm_len, atomic::Ordering::Release);
 
             // re-tries fetching
             l.chonk_offset = 0;
             self.cleaner.wake();
-            let r = unsafe {  (&*l.chonk.front()?.chonk)[0] };
+            let r = unsafe { (&*l.chonk.front()?.chonk)[0] };
             l.chonk_offset += 1;
 
             Some(r)
@@ -181,12 +182,12 @@ impl<T: Copy> ChonkyBuff<T> {
     }
 }
 
-pub struct Push<'a,T> {
+pub struct Push<'a, T> {
     phantom_data: PhantomData<&'a [T]>,
     buff: alloc::sync::Arc<BufferChonk<T>>,
 }
 
-impl<T> core::future::Future for Push<'_,T> {
+impl<T> core::future::Future for Push<'_, T> {
     type Output = ();
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
@@ -200,5 +201,5 @@ impl<T> core::future::Future for Push<'_,T> {
 }
 
 // SAFETY: This is safe because the shared data is never accessed
-unsafe impl<T> Send for Push<'_,T> where T: Send {}
-unsafe impl<T> Sync for Push<'_,T> where T: Sync {}
+unsafe impl<T> Send for Push<'_, T> where T: Send {}
+unsafe impl<T> Sync for Push<'_, T> where T: Sync {}

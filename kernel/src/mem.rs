@@ -1,3 +1,4 @@
+use crate::mem::allocator::{buddy_alloc, combined_allocator, fixed_size_block};
 use x86_64::{
     structures::paging::{
         frame::PhysFrameRangeInclusive, page::PageRangeInclusive, FrameAllocator, Mapper,
@@ -6,7 +7,6 @@ use x86_64::{
     },
     PhysAddr, VirtAddr,
 };
-use crate::mem::allocator::{buddy_alloc, combined_allocator, fixed_size_block};
 
 // offset 0-11
 // l1 12-2
@@ -17,18 +17,17 @@ use crate::mem::allocator::{buddy_alloc, combined_allocator, fixed_size_block};
 
 pub mod allocator;
 pub mod buddy_frame_alloc;
+pub mod dma;
+pub mod frame_attribute_table;
 mod high_order_alloc;
 pub mod mem_map;
 pub(self) mod offset_page_table;
 pub mod thread_local_storage;
 pub mod tlb;
-pub mod write_combining;
 pub mod virt_fixup;
-pub mod frame_attribute_table;
-pub mod dma;
+pub mod write_combining;
 
 pub const PAGE_SIZE: usize = 4096;
-
 
 /// Run PreInitialization for SYS_FRAME_ALLOC
 pub unsafe fn set_sys_frame_alloc(mem_map: libboot::boot_info::MemoryMap) {
@@ -36,18 +35,26 @@ pub unsafe fn set_sys_frame_alloc(mem_map: libboot::boot_info::MemoryMap) {
 }
 /// This is the page table tree for the higher half kernel is shared by all CPU's. It should be used
 /// in the higher half of all user mode programs too.
-pub(crate) static SYS_MAPPER: SysMapper = SysMapper{};
+pub(crate) static SYS_MAPPER: SysMapper = SysMapper {};
 
 // TODO: remove in favour of re-working memory management.
-pub(crate) struct SysMapper{}
+pub(crate) struct SysMapper {}
 
 impl SysMapper {
     pub fn get(&self) -> MapperWorkaround {
-        MapperWorkaround { inner: allocator::COMBINED_ALLOCATOR.lock() }
+        MapperWorkaround {
+            inner: allocator::COMBINED_ALLOCATOR.lock(),
+        }
     }
 }
-pub (crate) struct MapperWorkaround {
-    inner: crate::util::mutex::ReentrantMutexGuard<'static, combined_allocator::DualHeap<buddy_alloc::BuddyHeap, fixed_size_block::NewFixedBlockAllocator>>,
+pub(crate) struct MapperWorkaround {
+    inner: crate::util::mutex::ReentrantMutexGuard<
+        'static,
+        combined_allocator::DualHeap<
+            buddy_alloc::BuddyHeap,
+            fixed_size_block::NewFixedBlockAllocator,
+        >,
+    >,
 }
 
 impl core::ops::Deref for MapperWorkaround {
@@ -74,7 +81,11 @@ pub struct DummyFrameAlloc;
 
 unsafe impl FrameAllocator<Size4KiB> for DummyFrameAlloc {
     fn allocate_frame(&mut self) -> Option<PhysFrame<Size4KiB>> {
-        allocator::COMBINED_ALLOCATOR.lock().phys_alloc().get().allocate_frame()
+        allocator::COMBINED_ALLOCATOR
+            .lock()
+            .phys_alloc()
+            .get()
+            .allocate_frame()
     }
 }
 unsafe impl FrameAllocator<Size2MiB> for DummyFrameAlloc {
@@ -443,7 +454,7 @@ impl PageTableLevel {
 pub enum MemRegion {
     Mem16,
     Mem32,
-    #[cfg_attr(target_pointer_width = "64",default)]
+    #[cfg_attr(target_pointer_width = "64", default)]
     Mem64,
 }
 

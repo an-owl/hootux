@@ -9,8 +9,7 @@ static BRIEF: &str = r#"\
 Usage `cargo run -- [OPTIONS]`
 "#;
 
-const GRUB_DEFAULT_CONFIG: &str =
-r#"set timeout=0
+const GRUB_DEFAULT_CONFIG: &str = r#"set timeout=0
 set default=0
 
 menuentry hootux {
@@ -88,9 +87,10 @@ impl Subcommand {
 
         match self {
             Subcommand::Uefi | Subcommand::Bios => {
-                command
-                    .arg("-drive")
-                    .arg(format!("format=raw,file={}",drive.as_ref().to_str().unwrap()));
+                command.arg("-drive").arg(format!(
+                    "format=raw,file={}",
+                    drive.as_ref().to_str().unwrap()
+                ));
             }
             Subcommand::NoRun => return None,
         }
@@ -189,7 +189,7 @@ impl Options {
             "Overrides the default grub config with the one given in the path",
             "-g PATH",
             HasArg::Yes,
-            Occur::Optional
+            Occur::Optional,
         );
 
         let matches = match opts.parse(std::env::args_os()) {
@@ -261,7 +261,9 @@ impl Options {
 
         let grub_cfg = {
             if matches.opt_present("g") {
-                let path = matches.opt_str("g").expect("Opt `g` require argument but `None` was returned");
+                let path = matches
+                    .opt_str("g")
+                    .expect("Opt `g` require argument but `None` was returned");
                 match std::fs::read_to_string(path) {
                     Ok(s) => s,
                     Err(e) => {
@@ -287,7 +289,7 @@ impl Options {
                 .unwrap_or("runcfg.toml".to_string()),
             native_dbg_shell: matches.opt_present("n"),
             daemonize: matches.opt_present("daemonize"),
-            grub_cfg
+            grub_cfg,
         }
     }
 
@@ -308,7 +310,7 @@ impl Options {
     }
 
     /// This fn may return a Command for QEMU.  
-    fn build_exec(&self, drive: impl AsRef<std::path::Path>,toml: &Value) -> Option<Command> {
+    fn build_exec(&self, drive: impl AsRef<std::path::Path>, toml: &Value) -> Option<Command> {
         let mut qemu = self.subcommand.build_qemu(drive)?;
         let mut args = Vec::new();
 
@@ -498,12 +500,12 @@ impl Options {
         macro_rules! mkdir {
             ($path:expr) => {
                 match std::fs::create_dir($path) {
-                    Ok(_) => {},
-                    Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {},
+                    Ok(_) => {}
+                    Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
                     Err(e) => {
                         eprintln!("{e}");
                         std::process::exit(0x60)
-                    },
+                    }
                 }
             };
         }
@@ -524,7 +526,7 @@ impl Options {
             std::process::exit(0x61)
         };
 
-        match std::fs::copy(kernel,tgt.join("img/boot/hootux")) {
+        match std::fs::copy(kernel, tgt.join("img/boot/hootux")) {
             Ok(_) => {}
             Err(e) => {
                 eprintln!("Failed to copy kernel {e}");
@@ -535,9 +537,9 @@ impl Options {
         const IMG_NAME: &str = "grub.img";
         let img = tgt.join(IMG_NAME);
         let mut mkrescue = Command::new("grub-mkrescue");
-        mkrescue.args(["-o",IMG_NAME,"img"]);
+        mkrescue.args(["-o", IMG_NAME, "img"]);
         mkrescue.current_dir(tgt);
-        eprintln!("Running {:?}",mkrescue);
+        eprintln!("Running {:?}", mkrescue);
         let mut child = match mkrescue.spawn() {
             Ok(c) => c,
             Err(e) => {
@@ -583,7 +585,10 @@ fn toml_fast(toml: &Value, path: String) -> Option<&Value> {
 fn build_kernel() -> Option<std::path::PathBuf> {
     let mut cargo = Command::new("cargo");
     cargo.current_dir("kernel-bin");
-    cargo.arg("build").arg("--message-format=json").arg("--target=x86_64-unknown-none");
+    cargo
+        .arg("build")
+        .arg("--message-format=json")
+        .arg("--target=x86_64-unknown-none");
     cargo.stdout(Stdio::piped());
 
     let mut child = cargo.spawn().ok()?;
@@ -593,13 +598,13 @@ fn build_kernel() -> Option<std::path::PathBuf> {
         match i {
             Ok(cargo_metadata::Message::CompilerArtifact(m)) => {
                 if m.target.name == "hootux-bin" {
-                    return m.executable.map(|p| p.into())
+                    return m.executable.map(|p| p.into());
                 }
             }
             Ok(_) => continue,
             Err(e) => panic!("Failed to read stdout for cargo: {e}"),
         }
-    };
+    }
     eprintln!("Error: Artifact for `kernel-bin` not found");
     std::process::exit(0x24);
 }

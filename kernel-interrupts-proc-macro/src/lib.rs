@@ -23,7 +23,6 @@ pub fn interrupt_config(input: TokenStream) -> TokenStream {
     i.into()
 }
 
-
 /// Constructs a Multiboot2 header using the given arguments.
 /// It does this by defining a header struct containing any tags which are given to the macro.
 /// A static is constructed using the constructors given as arguments.
@@ -111,7 +110,7 @@ pub fn impl_sysfs_root_traits(_: TokenStream, input: TokenStream) -> TokenStream
 ///
 /// An index will have the methods `len() -> u64`,`remove(&str) -> Result<(),IoError>`,`store(&str,Box<dyn SysfsFile>) -> Result<(),IoError>` called on them.
 /// Using an extension trait is recommended where these are not implemented already is recommended.
-#[proc_macro_derive(SysfsDir, attributes(file,index))]
+#[proc_macro_derive(SysfsDir, attributes(file, index))]
 pub fn derive_sysfs_dir(input: TokenStream) -> TokenStream {
     let s: sysfs_impl::SysfsDirDerive = syn::parse_macro_input!(input);
     let ts = quote::quote! {#s};

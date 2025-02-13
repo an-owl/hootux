@@ -1,3 +1,6 @@
+use super::file::*;
+use crate::fs::device::{DeviceFile, FileSystem};
+use crate::fs::IoError;
 /// This module contains th Virtual File System. The VFS is responsible for operating the system-wide
 /// filesystem. This includes managing pseudo files, like pipes FIFOs and character devices.
 ///
@@ -6,20 +9,15 @@
 /// as reading/writing, these operations are handled directly by a driver.
 ///
 /// As a quirk of how the VFS handles file traversal a path with a trailing `/` will always return a directory.
-
 use alloc::boxed::Box;
 use alloc::collections::BTreeMap;
 use alloc::string::{String, ToString};
-use core::fmt::{Display, Formatter};
 use cast_trait_object::DynCastExt;
+use core::fmt::{Display, Formatter};
 use futures_util::FutureExt as _;
-use crate::fs::IoError;
-use crate::fs::device::{DeviceFile, FileSystem};
-use super::file::*;
 
 pub type VfsFuture<'a, T> = futures_util::future::BoxFuture<'a, Result<T, VfsError>>;
 type FileId = (DevID, u64);
-
 
 pub struct VirtualFileSystem {
     root: Box<dyn FileSystem>,
@@ -30,14 +28,23 @@ impl VirtualFileSystem {
     pub(crate) fn new(root: Box<dyn FileSystem>) -> Self {
         let this = Self {
             root,
-            device_ctl: spin::RwLock::new(DeviceCtl{
-                mounts: MountPoints{ mount_list: BTreeMap::new() },
-                dev_override: DevOverrides::new()
+            device_ctl: spin::RwLock::new(DeviceCtl {
+                mounts: MountPoints {
+                    mount_list: BTreeMap::new(),
+                },
+                dev_override: DevOverrides::new(),
             }),
         };
 
         let mut b = this.device_ctl.write();
-        let _ = b.mounts.insert(MountDescription::new(this.root.clone_file().dyn_cast().unwrap(),"/".to_string(), String::new())).unwrap(); // This is the first entry so this will never return Err(_)
+        let _ = b
+            .mounts
+            .insert(MountDescription::new(
+                this.root.clone_file().dyn_cast().unwrap(),
+                "/".to_string(),
+                String::new(),
+            ))
+            .unwrap(); // This is the first entry so this will never return Err(_)
         drop(b);
         this
         // todo vfs-persistent pseudo filesystems should be mounted here
@@ -94,7 +101,10 @@ impl VirtualFileSystem {
     /// On success this will return the requested directory, the remaining path segment and the depth of the returned file.
     ///
     /// In the path `/usr/lib/share` a depth of `0` refers to `usr` a depth of `2` refers to `share`.
-    fn traverse_to_dir<'a>(&'a self, path: &'a str) -> VfsFuture<'a, (Box<dyn Directory>,&'a str , usize)> {
+    fn traverse_to_dir<'a>(
+        &'a self,
+        path: &'a str,
+    ) -> VfsFuture<'a, (Box<dyn Directory>, &'a str, usize)> {
         async {
             //path.is_absolute()?;
             // p_iter[0] is "" because of leading slash
@@ -105,30 +115,32 @@ impl VirtualFileSystem {
             let last = p_iter.next_back().unwrap(); // is_absolute guarantees that this is always some
             let mut depth = 0;
             let _ = p_iter.next(); // returns "" we ignore this. Using skip() makes this not double ended
-            // Does not consume last element in p_iter
-            // traverses to the directory containing the requested file
+                                   // Does not consume last element in p_iter
+                                   // traverses to the directory containing the requested file
             for f_name in p_iter {
                 depth += 1;
                 if f_name == "." || f_name == "" {
-                    continue
+                    continue;
                 }
 
-
-                match self.traverse_file(&*c_dir,f_name).await {
+                match self.traverse_file(&*c_dir, f_name).await {
                     Ok(f) => {
                         // Directory might be filesystem.
                         c_dir = match f.dyn_cast() {
                             Ok(f) => f,
-                            Err(file) => cast_file!(FileSystem: file).map_err(|_| VfsError::NotADirectory(depth))?.root()
+                            Err(file) => cast_file!(FileSystem: file)
+                                .map_err(|_| VfsError::NotADirectory(depth))?
+                                .root(),
                         }
-                    },
+                    }
                     Err(VfsError::DoesNotExist(_)) => Err(VfsError::DoesNotExist(depth))?,
                     Err(e) => return Err(e), // this would be unreachable_unchecked() if `traverse_file` did not return Err(LowerLevel(_))
                 }
             }
 
-            Ok((c_dir, last ,depth))
-        }.boxed()
+            Ok((c_dir, last, depth))
+        }
+        .boxed()
     }
 
     /// Attempts to fetch `name` from `dir`, recalling the file from the managed-device list where necessary.
@@ -136,7 +148,11 @@ impl VirtualFileSystem {
     /// # Errors
     ///
     /// Errors what return a path depth will contain [usize::MAX], the caller should set this to the appropriate value.
-    fn traverse_file<'a>(&'a self, dir: &'a dyn Directory, name: &'a str) -> VfsFuture<'a, Box<dyn File>> {
+    fn traverse_file<'a>(
+        &'a self,
+        dir: &'a dyn Directory,
+        name: &'a str,
+    ) -> VfsFuture<'a, Box<dyn File>> {
         async move {
             if name == "." || name == "" {
                 return Ok(dir.clone_file())
@@ -174,20 +190,29 @@ impl VirtualFileSystem {
         async {
             path.is_absolute()?;
             let (dir, name, _) = self.traverse_to_dir(path).await?;
-            let t = dir.new_dir(name).await.map_err( |e| VfsError::LowerLevel(e))?;
+            let t = dir
+                .new_dir(name)
+                .await
+                .map_err(|e| VfsError::LowerLevel(e))?;
             Ok(t)
-        }.boxed()
+        }
+        .boxed()
     }
 
-    pub fn new_file<'a,>(&'a self, path: &'a str, file: Option<&'a mut dyn NormalFile<u8>>) -> VfsFuture<'a, ()> {
+    pub fn new_file<'a>(
+        &'a self,
+        path: &'a str,
+        file: Option<&'a mut dyn NormalFile<u8>>,
+    ) -> VfsFuture<'a, ()> {
         async {
             path.is_absolute()?;
             let (dir, name, _) = self.traverse_to_dir(path).await?;
             // The second option is only returned when a source file is copied.
             // This only returns error when one of the inner options are some.
-            let t = dir.new_file(name,file).await;
-            t.map_err(|(e,_)| VfsError::LowerLevel(e.unwrap()))
-        }.boxed()
+            let t = dir.new_file(name, file).await;
+            t.map_err(|(e, _)| VfsError::LowerLevel(e.unwrap()))
+        }
+        .boxed()
     }
 
     /// Attempts to remove the file from the filesystem.
@@ -235,15 +260,24 @@ impl VirtualFileSystem {
     /// - `fs.device()` must not return [DevID::NULL].
     /// - Excluding the last segment `mountpoint` must be a valid accessible location in the filesystem.
     // todo should this be sync?
-    pub fn mount<'a>(&'a self, mut fs: Box<dyn FileSystem>, mountpoint: &'a str, _vfs_options: MountFlags, options: &'a str) -> VfsFuture<'a, ()> {
+    pub fn mount<'a>(
+        &'a self,
+        mut fs: Box<dyn FileSystem>,
+        mountpoint: &'a str,
+        _vfs_options: MountFlags,
+        options: &'a str,
+    ) -> VfsFuture<'a, ()> {
         async {
-
             //log::info!("Mounting {} to {mountpoint} ({})", fs.device(), fs.raw_file().unwrap_or(fs.driver_name()) );
 
             fs.set_opts(options);
-            self.mount_dev( cast_file!(DeviceFile: fs.dyn_upcast()).ok().unwrap(),mountpoint).await
-
-        }.boxed()
+            self.mount_dev(
+                cast_file!(DeviceFile: fs.dyn_upcast()).ok().unwrap(),
+                mountpoint,
+            )
+            .await
+        }
+        .boxed()
     }
 
     /// Mounts a device file into the filesystem at `mountpoint`.
@@ -255,7 +289,11 @@ impl VirtualFileSystem {
     /// - The requested path must allow mounting device files.
     /// - `fs.device()` must not return [DevID::NULL].
     /// - Excluding the last segment `mountpoint` must be a valid accessible location in the filesystem.
-    pub fn mount_dev<'a>(&'a self, dev: Box<dyn DeviceFile>, mountpoint: &'a str) -> VfsFuture<'a, ()> {
+    pub fn mount_dev<'a>(
+        &'a self,
+        dev: Box<dyn DeviceFile>,
+        mountpoint: &'a str,
+    ) -> VfsFuture<'a, ()> {
         async move {
             mountpoint.is_absolute()?;
             let id = dev.device();
@@ -267,7 +305,8 @@ impl VirtualFileSystem {
             // gets index of last path-sep and splits with index
             // absolute path must contain one path-sep this will never return None
             // +1 causes the path-sep to be in `path` not `f_name`
-            let (path, f_name) = mountpoint.split_at(mountpoint.rfind(super::PATH_SEPARATOR).unwrap() + 1);
+            let (path, f_name) =
+                mountpoint.split_at(mountpoint.rfind(super::PATH_SEPARATOR).unwrap() + 1);
             log::debug!("Attempting to mount {} to {path}@{f_name}", id);
 
             log::debug!("{path}");
@@ -281,7 +320,8 @@ impl VirtualFileSystem {
 
             // ensure that filesystem allows mounting device files
             let fs = if let Ok(fs) = cast_file!(FileSystem: fs.file.clone_file().dyn_upcast()) {
-                if fs.get_opt(FsOpts::DEV_ALLOWED).unwrap() == FsOpts::FALSE { // const args are always present
+                if fs.get_opt(FsOpts::DEV_ALLOWED).unwrap() == FsOpts::FALSE {
+                    // const args are always present
                     log::error!("While attempting to mount {} filesystem at {path} {} does not allow mounting device files. Operation was aborted", id, fs.device()); // returning Err is a kernel panic waiting to happen anyway
                     return Err(VfsError::InvalidArg);
                 };
@@ -291,59 +331,85 @@ impl VirtualFileSystem {
             };
 
             // fs may require looking up dev in VFS managed table, so we store it here and remove if an error occurs
-            let new_description = MountDescription::new(dev.clone_file().dyn_cast().ok().unwrap(),mountpoint.to_string(), String::new());
+            let new_description = MountDescription::new(
+                dev.clone_file().dyn_cast().ok().unwrap(),
+                mountpoint.to_string(),
+                String::new(),
+            );
 
             if let Err(_) = l.mounts.insert(new_description) {
                 log::error!("Device already mounted {id}");
-                return Err(VfsError::LowerLevel(IoError::AlreadyExists))
+                return Err(VfsError::LowerLevel(IoError::AlreadyExists));
             }
 
-            let dev_id=  dev.device();
+            let dev_id = dev.device();
             match dir.store(f_name, dev.dyn_upcast()).await {
-
                 // success using native mount
                 Ok(()) => {
-                    log::info!("Mounted {} at {mountpoint} ({}) using native mount",id, fs.device());
+                    log::info!(
+                        "Mounted {} at {mountpoint} ({}) using native mount",
+                        id,
+                        fs.device()
+                    );
                     Ok(())
-                },
+                }
 
                 // Indicates that FS does not support native dev lookups and VFS lookups must be used.
                 Err(IoError::NotSupported) => {
-                    l.dev_override.store((dir.device(), dir.id()), f_name.to_string(), dev_id);
-                    log::info!("Mounted {} at {mountpoint} ({}) using VFS lookup", id, fs.device());
-                    return Ok(())
+                    l.dev_override
+                        .store((dir.device(), dir.id()), f_name.to_string(), dev_id);
+                    log::info!(
+                        "Mounted {} at {mountpoint} ({}) using VFS lookup",
+                        id,
+                        fs.device()
+                    );
+                    return Ok(());
                 }
 
                 // actual error
                 Err(e) => {
                     l.mounts.remove(dev_id);
                     log::error!("While attempting to mount {} to {mountpoint}: {e:?}", id);
-                    return Err(VfsError::LowerLevel(e))
+                    return Err(VfsError::LowerLevel(e));
                 }
             }
-        }.boxed()
+        }
+        .boxed()
     }
 
     pub fn umount(&self, dev: &str) -> Option<Box<dyn DeviceFile>> {
-        self.device_ctl.read().mounts.search(dev).map(|d| d.file.clone_file().dyn_cast().ok().unwrap())
+        self.device_ctl
+            .read()
+            .mounts
+            .search(dev)
+            .map(|d| d.file.clone_file().dyn_cast().ok().unwrap())
     }
 
     pub fn file_list<'a>(&'a self, path: &'a str) -> VfsFuture<'a, alloc::vec::Vec<String>> {
         async {
             path.is_absolute()?;
-            let (dir,name,depth) = self.traverse_to_dir(path).await?;
-            let new_dir = cast_file!(Directory: self.traverse_file(&*dir,name).await?).map_err(|_| VfsError::NotADirectory(depth + 1))?;
+            let (dir, name, depth) = self.traverse_to_dir(path).await?;
+            let new_dir = cast_file!(Directory: self.traverse_file(&*dir,name).await?)
+                .map_err(|_| VfsError::NotADirectory(depth + 1))?;
 
             // fixme requires 2 vec allocations and a realloc.
             // that is too much.
-            let mut list = new_dir.file_list().await.map_err(|e| VfsError::LowerLevel(e))?;
-            if let Some(mut l) = self.device_ctl.read().dev_override.in_dir((new_dir.device(),new_dir.id())) {
+            let mut list = new_dir
+                .file_list()
+                .await
+                .map_err(|e| VfsError::LowerLevel(e))?;
+            if let Some(mut l) = self
+                .device_ctl
+                .read()
+                .dev_override
+                .in_dir((new_dir.device(), new_dir.id()))
+            {
                 list.append(&mut l)
             }
 
             Ok(list)
-
-        }.boxed()
+        }
+        .boxed()
     }
 }
 
@@ -353,7 +419,7 @@ struct DeviceCtl {
     mounts: MountPoints,
 
     /// Used to perform lookups to locate device files that exist with the filesystem.
-    dev_override: DevOverrides
+    dev_override: DevOverrides,
 }
 
 bitflags::bitflags! {
@@ -366,17 +432,16 @@ bitflags::bitflags! {
 }
 
 trait FilePath {
-
     /// Returns whether `self` is an absolute path. Returns `Err(VfsError::PathFramingError)` if it's not.
     ///
     /// The return type is intended to make handling this easier, the caller should be able to use
     /// the `?` operator to handle an error.
-    fn is_absolute(&self) -> Result<(),VfsError>;
+    fn is_absolute(&self) -> Result<(), VfsError>;
 
     /// See [Self::is_absolute] but for relative paths instead.
     #[inline]
     #[allow(dead_code)]
-    fn is_relative(&self) -> Result<(),VfsError> {
+    fn is_relative(&self) -> Result<(), VfsError> {
         if self.is_absolute().is_ok() {
             Err(VfsError::PathFrameError)
         } else {
@@ -386,7 +451,6 @@ trait FilePath {
 }
 
 impl FilePath for str {
-
     #[inline]
     fn is_absolute(&self) -> Result<(), VfsError> {
         if self.starts_with("/") {
@@ -421,11 +485,11 @@ pub struct DevID(usize, usize);
 impl DevID {
     /// Attempting to locate this device from the kernel will always return `None`
     /// This may be used when a driver does not want a device file to appear globally.
-    pub const NULL: Self = Self(0,0);
+    pub const NULL: Self = Self(0, 0);
 
     // todo add make major a private type
     pub fn new(maj: MajorNum, minor: usize) -> Self {
-        Self(maj.0,minor)
+        Self(maj.0, minor)
     }
 }
 
@@ -443,14 +507,14 @@ impl DevID {
 pub struct MajorNum(usize);
 
 impl MajorNum {
-
     /// Lowest value for publicly available Major numbers.
     /// All values below this must be documented in the [Self]'s doc comment.
     const PUBLIC_BASE: usize = 2;
 
     pub fn new() -> Self {
-        static NEXT: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(MajorNum::PUBLIC_BASE); // 0 is not allowed.
-        Self(NEXT.fetch_add(1,atomic::Ordering::Relaxed))
+        static NEXT: core::sync::atomic::AtomicUsize =
+            core::sync::atomic::AtomicUsize::new(MajorNum::PUBLIC_BASE); // 0 is not allowed.
+        Self(NEXT.fetch_add(1, atomic::Ordering::Relaxed))
     }
 
     /// Private constructor for reserved major numbers.
@@ -464,23 +528,23 @@ impl MajorNum {
 
 impl Display for DevID {
     fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
-        core::write!(f, "{}:{}",self.0,self.1)
+        core::write!(f, "{}:{}", self.0, self.1)
     }
 }
 
 // todo add link count, so mountpoints may be used multiple times
 struct MountPoints {
     // todo convert this to BtreeMap<DevID,Vec<_>>, this allows multiple mount points for a single device.
-    mount_list: BTreeMap<DevID,MountDescription>,
+    mount_list: BTreeMap<DevID, MountDescription>,
 }
 
 impl MountPoints {
     fn search(&self, needle: &str) -> Option<&MountDescription> {
-        for (_,element) in self.mount_list.iter() {
+        for (_, element) in self.mount_list.iter() {
             if element.location == needle {
-                return Some(element)
-            } else if element.dev.as_ref().is_some_and(|i| i == needle ) {
-                return Some(element)
+                return Some(element);
+            } else if element.dev.as_ref().is_some_and(|i| i == needle) {
+                return Some(element);
             }
         }
         None
@@ -490,10 +554,10 @@ impl MountPoints {
         self.mount_list.get(&id)
     }
 
-    fn insert(&mut self, desc: MountDescription) -> Result<(),MountDescription> {
-        match self.mount_list.insert(desc.file.device(),desc) {
+    fn insert(&mut self, desc: MountDescription) -> Result<(), MountDescription> {
+        match self.mount_list.insert(desc.file.device(), desc) {
             Some(d) => Err(d),
-            None => Ok(())
+            None => Ok(()),
         }
     }
 
@@ -514,10 +578,10 @@ struct MountDescription {
 }
 
 impl MountDescription {
-    fn new(dev: Box<dyn DeviceFile>, mountpoint: String, options: String, ) -> Self {
+    fn new(dev: Box<dyn DeviceFile>, mountpoint: String, options: String) -> Self {
         let fs = cast_file!(&FileSystem: (&*dev).dyn_upcast());
 
-        let name= if let Ok(f) = fs {
+        let name = if let Ok(f) = fs {
             f.raw_file().map(|s| s.to_string())
         } else {
             None
@@ -535,7 +599,7 @@ impl MountDescription {
 }
 
 struct DevOverrides {
-    map: BTreeMap<FileId, BTreeMap<String, DevID>>
+    map: BTreeMap<FileId, BTreeMap<String, DevID>>,
 }
 
 impl DevOverrides {
@@ -545,7 +609,7 @@ impl DevOverrides {
         }
     }
 
-    fn in_dir(&self, id: FileId ) ->  Option<alloc::vec::Vec<String>> {
+    fn in_dir(&self, id: FileId) -> Option<alloc::vec::Vec<String>> {
         Some(self.map.get(&id)?.keys().map(|s| s.clone()).collect())
     }
 
@@ -554,7 +618,10 @@ impl DevOverrides {
     }
 
     fn store(&mut self, file_id: FileId, name: String, device: DevID) {
-        self.map.entry(file_id).or_insert(BTreeMap::new()).insert(name,device);
+        self.map
+            .entry(file_id)
+            .or_insert(BTreeMap::new())
+            .insert(name, device);
     }
 
     fn remove(&mut self, file_id: FileId, name: &str) -> Option<DevID> {

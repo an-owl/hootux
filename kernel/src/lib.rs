@@ -18,7 +18,6 @@
 #![feature(layout_for_ptr)]
 #![feature(set_ptr_value)]
 #![feature(trait_upcasting)]
-
 #![allow(incomplete_features)]
 #![feature(generic_const_exprs)] // https://github.com/rust-lang/rust/issues/134044#issuecomment-2526396815 for why this is here
 extern crate alloc;
@@ -26,9 +25,11 @@ extern crate self as hootux;
 pub use mem::allocator::alloc_interface;
 
 mod device_check;
+pub mod fs;
 pub mod gdt;
 pub mod graphics;
 pub mod interrupts;
+pub mod llvm;
 mod logger;
 pub mod mem;
 pub mod mp;
@@ -38,8 +39,6 @@ pub mod system;
 pub mod task;
 pub mod time;
 mod util;
-pub mod llvm;
-pub mod fs;
 
 #[thread_local]
 static WHO_AM_I: util::UnlockedStatic<u32> = util::UnlockedStatic::new();
@@ -107,7 +106,9 @@ pub fn init() {
     ctl.set(x86_64::registers::control::Cr0Flags::WRITE_PROTECT, true);
     // SAFETY: This is safe, we enable the write-protect bit here.
     // enabling this prevents erroneous writes to memory
-    unsafe { x86_64::registers::control::Cr0::write(ctl); }
+    unsafe {
+        x86_64::registers::control::Cr0::write(ctl);
+    }
 }
 
 pub fn init_logger() {

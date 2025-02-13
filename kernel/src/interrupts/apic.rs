@@ -4,8 +4,8 @@ use crate::interrupts::apic::pub_apic::SysApic;
 use crate::interrupts::apic::xapic::xApic;
 use crate::util::KernelStatic;
 use alloc::boxed::Box;
-use modular_bitfield::BitfieldSpecifier;
 use apic_structures::registers::ApicError;
+use modular_bitfield::BitfieldSpecifier;
 
 pub mod apic_structures;
 pub(crate) mod ioapic;
@@ -62,7 +62,12 @@ pub trait Apic: crate::time::Timer {
     /// # Safety
     ///
     /// This is unsafe because it causes the target(s) to take actions which may cause UB.
-    unsafe fn send_ipi(&mut self, target: IpiTarget, int_type: InterruptType, vector: u8) -> Result<(),IpiError>;
+    unsafe fn send_ipi(
+        &mut self,
+        target: IpiTarget,
+        int_type: InterruptType,
+        vector: u8,
+    ) -> Result<(), IpiError>;
 
     /// Waits until `timeout` for IPI to be received.
     /// Returns `false` if timeout is exceeded.
@@ -88,10 +93,10 @@ pub enum IpiTarget {
     /// 10: Interrupts all CPUs,
     All,
     /// 11: Interrupts all CPUs but not the issuer.
-    AllNotThisCpu
+    AllNotThisCpu,
 }
 
-#[derive(BitfieldSpecifier,Copy,Clone,Eq,PartialEq)]
+#[derive(BitfieldSpecifier, Copy, Clone, Eq, PartialEq)]
 #[bits = 3]
 pub enum InterruptType {
     /// Raises an interrupt for the vector given in the vector field.
@@ -147,10 +152,16 @@ fn timer_handler() {
 pub fn cal_and_run(time: u32) {
     if !TIMER_IRQ.is_set() {
         // SAFETY: MP not initialized, this cannot cause race conditions
-        unsafe { TIMER_IRQ.write(super::InterruptIndex::Generic(super::reserve_single(0).unwrap())); }
+        unsafe {
+            TIMER_IRQ.write(super::InterruptIndex::Generic(
+                super::reserve_single(0).unwrap(),
+            ));
+        }
     }
 
-    LOCAL_APIC.get().begin_calibration(time, TIMER_IRQ.read().as_u8());
+    LOCAL_APIC
+        .get()
+        .begin_calibration(time, TIMER_IRQ.read().as_u8());
 
     unsafe {
         super::vector_tables::alloc_irq_special(TIMER_IRQ.as_u8(), timer_handler).expect("???");
@@ -164,11 +175,12 @@ pub fn cal_and_run(time: u32) {
 /// # Safety
 ///
 /// This fn **is** safe because it required a pre-existing configuration.
-pub(crate) fn try_start_timer_residual() -> Result<(),()> {
+pub(crate) fn try_start_timer_residual() -> Result<(), ()> {
     unsafe {
-        LOCAL_APIC.get().init_timer(TIMER_IRQ.as_u8(),false);
-        LOCAL_APIC.get().set_timer(TimerMode::Periodic,
-        CALI.ok_or(())? as u32)
+        LOCAL_APIC.get().init_timer(TIMER_IRQ.as_u8(), false);
+        LOCAL_APIC
+            .get()
+            .set_timer(TimerMode::Periodic, CALI.ok_or(())? as u32)
     }
     Ok(())
 }

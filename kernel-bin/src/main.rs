@@ -17,9 +17,9 @@ use hootux::interrupts::apic::Apic;
 use hootux::task::keyboard;
 use hootux::time::kernel_init_timer;
 use hootux::*;
+use libboot::boot_info::PixelFormat;
 use log::debug;
 use x86_64::addr::VirtAddr;
-use libboot::boot_info::PixelFormat;
 
 kernel_proc_macro::multiboot2_header! {
     multiboot2_header::HeaderTagISA::I386,
@@ -53,9 +53,7 @@ fn kernel_main(b: *mut libboot::boot_info::BootInfo) -> ! {
 
     let mapper;
     unsafe {
-        mapper = mem::init(VirtAddr::new(
-            b.physical_address_offset,
-        ));
+        mapper = mem::init(VirtAddr::new(b.physical_address_offset));
 
         init(); // todo break apart
 
@@ -69,13 +67,7 @@ fn kernel_main(b: *mut libboot::boot_info::BootInfo) -> ! {
 
     if let Some(tls) = b.get_tls_template() {
         // SAFETY: this is safe because the data given is correct
-        unsafe {
-            mem::thread_local_storage::init_tls(
-                tls.file.as_ptr(),
-                tls.file.len(),
-                tls.size,
-            )
-        }
+        unsafe { mem::thread_local_storage::init_tls(tls.file.as_ptr(), tls.file.len(), tls.size) }
     }
 
     mem::init_mm_subsys();
@@ -86,7 +78,6 @@ fn kernel_main(b: *mut libboot::boot_info::BootInfo) -> ! {
 
     //initialize graphics
     if let Some(buff) = b.optionals.graphic_info.take() {
-
         let mut fb = NonNull::from(buff.framebuffer);
         mem::write_combining::set_wc_data(&fb).unwrap(); // wont panic
 
@@ -97,17 +88,20 @@ fn kernel_main(b: *mut libboot::boot_info::BootInfo) -> ! {
         };
 
         // SAFETY: This is safe, we need a NonNull above and are just casting it back.
-        graphics::KERNEL_FRAMEBUFFER.init(graphics::FrameBuffer::new(buff.width as usize ,buff.height as usize, buff.stride as usize ,unsafe { fb.as_mut() }, pxmode));
+        graphics::KERNEL_FRAMEBUFFER.init(graphics::FrameBuffer::new(
+            buff.width as usize,
+            buff.height as usize,
+            buff.stride as usize,
+            unsafe { fb.as_mut() },
+            pxmode,
+        ));
         graphics::KERNEL_FRAMEBUFFER.get().clear();
         *graphics::basic_output::WRITER.lock() = Some(BasicTTY::new(&graphics::KERNEL_FRAMEBUFFER));
     };
 
     let acpi_tables = unsafe {
         let t = if let Some(acpi) = b.rsdp_ptr() {
-            acpi::AcpiTables::from_rsdp(
-                system::acpi::AcpiGrabber,
-                acpi.addr(),
-            ).unwrap()
+            acpi::AcpiTables::from_rsdp(system::acpi::AcpiGrabber, acpi.addr()).unwrap()
         } else {
             todo!(); // try alternate ways to locate rsdp
         };
@@ -153,13 +147,7 @@ fn kernel_main(b: *mut libboot::boot_info::BootInfo) -> ! {
     // Should this be started before or after init_static_drivers()?
     {
         let tls = b.get_tls_template().unwrap();
-        unsafe {
-            mp::start_mp(
-                tls.file.as_ptr(),
-                tls.file.len(),
-                tls.size,
-            )
-        }
+        unsafe { mp::start_mp(tls.file.as_ptr(), tls.file.len(), tls.size) }
     }
 
     task::run_task(Box::pin(keyboard::print_key()));
@@ -172,8 +160,6 @@ libboot::kernel_entry!(_libboot_entry);
 pub extern "C" fn _libboot_entry(bi: *mut libboot::boot_info::BootInfo) -> ! {
     kernel_main(bi)
 }
-
-
 
 fn say_hi() {
     println!("Starting Hootux");

@@ -20,14 +20,16 @@ impl alloc::task::Wake for TaskWaker {
     fn wake(self: Arc<Self>) {
         if let Some(task) = self.task.upgrade() {
             let n = task.owner.load(atomic::Ordering::Relaxed).num();
-            super::SYS_EXECUTOR.read().get(&n).unwrap()
+            super::SYS_EXECUTOR
+                .read()
+                .get(&n)
+                .unwrap()
                 .run_queue
                 .push(self.id)
                 .expect("Run queue is full");
         } // return on else because if the upgrade fails then the task has been dropped and cannot be run anyway
     }
 }
-
 
 pub struct Task {
     id: super::TaskId,
@@ -81,7 +83,7 @@ impl Task {
     }
 }
 
-pub(super)struct TaskCache {
+pub(super) struct TaskCache {
     cache: spin::RwLock<alloc::collections::BTreeMap<super::TaskId, Arc<Task>>>,
 }
 
@@ -98,10 +100,11 @@ impl TaskCache {
 
     #[track_caller]
     fn insert(&self, task: Arc<Task>) {
-        let rc = self.cache
-            .write()
-            .insert(task.id, task);
-        assert!(rc.is_none(),"Tried to insert a task to the global task cache twice");
+        let rc = self.cache.write().insert(task.id, task);
+        assert!(
+            rc.is_none(),
+            "Tried to insert a task to the global task cache twice"
+        );
     }
 
     /// Drops the task with `id`
@@ -116,7 +119,7 @@ pub(super) struct LocalExec {
     /// this CPU should invalidate its task cache.
     invalidate: core::sync::atomic::AtomicBool,
     run_queue: crossbeam_queue::ArrayQueue<super::TaskId>, // todo swap with a linked list, each node should point to a waker and never directly allocate/free memory
-    cache: crate::util::mutex::ReentrantMutex<LocalExecCache>
+    cache: crate::util::mutex::ReentrantMutex<LocalExecCache>,
 }
 
 struct LocalExecCache {
@@ -133,14 +136,18 @@ impl LocalExec {
             cache: crate::util::mutex::ReentrantMutex::new(LocalExecCache {
                 waker_cache: alloc::collections::BTreeMap::new(),
                 local_cache: alloc::collections::BTreeMap::new(),
-            })
+            }),
         }
     }
 
     fn run_ready(&self) {
-
         // when another CPU steals a task the cache should be invalidated
-        if let Ok(_) = self.invalidate.compare_exchange_weak(true,false,atomic::Ordering::Relaxed,atomic::Ordering::Relaxed) {
+        if let Ok(_) = self.invalidate.compare_exchange_weak(
+            true,
+            false,
+            atomic::Ordering::Relaxed,
+            atomic::Ordering::Relaxed,
+        ) {
             let mut l = self.cache.lock();
             //l.local_cache.clear();
             l.waker_cache.clear();
@@ -151,7 +158,7 @@ impl LocalExec {
                 task
             } else {
                 // task does not exist (probably dropped)
-                continue
+                continue;
             };
 
             if task.owner.load(atomic::Ordering::Relaxed).num() != self.i {
@@ -163,7 +170,8 @@ impl LocalExec {
 
             let waker = self
                 .cache
-                .try_lock().unwrap() // shouldn't panic
+                .try_lock()
+                .unwrap() // shouldn't panic
                 .waker_cache
                 .entry(id)
                 .or_insert_with(|| task.waker())
@@ -183,8 +191,6 @@ impl LocalExec {
                 }
                 _ => {} // ops normal
             }
-
-
         }
     }
 
@@ -213,8 +219,10 @@ impl LocalExec {
     fn steal() -> Option<super::TaskId> {
         // iterates over all CPUs except for self
         for _ in 0u32..crate::mp::num_cpus().into() {
-            static ARBITRATION: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
-            let target_id = ARBITRATION.fetch_add(1, atomic::Ordering::Relaxed) % crate::mp::num_cpus();
+            static ARBITRATION: core::sync::atomic::AtomicU32 =
+                core::sync::atomic::AtomicU32::new(0);
+            let target_id =
+                ARBITRATION.fetch_add(1, atomic::Ordering::Relaxed) % crate::mp::num_cpus();
             // don't steal from self
             // fixme disabled CPUs may be requested
             if target_id == crate::who_am_i() {
@@ -224,15 +232,15 @@ impl LocalExec {
             let b = super::SYS_EXECUTOR.read();
             if let Some(target) = b.get(&target_id) {
                 if let Some(tid) = target.run_queue.pop() {
-                    target.invalidate.store(true,atomic::Ordering::Relaxed);
+                    target.invalidate.store(true, atomic::Ordering::Relaxed);
 
                     if let Some(i) = GLOBAL_TASK_CACHE.fetch(tid) {
-                        i.owner.store(TaskOwner::Cpu(crate::who_am_i()), atomic::Ordering::Relaxed);
+                        i.owner
+                            .store(TaskOwner::Cpu(crate::who_am_i()), atomic::Ordering::Relaxed);
                     }
                     return Some(tid);
                 }
             }
-
         }
         None
     }
@@ -259,7 +267,7 @@ impl LocalExec {
         let task = Arc::new(task);
         let id = task.id;
         GLOBAL_TASK_CACHE.insert(task.clone());
-        self.cache.lock().local_cache.insert(id,task);
+        self.cache.lock().local_cache.insert(id, task);
         self.run_queue.push(id).expect("Run queue is full");
     }
 }
