@@ -61,19 +61,6 @@ extern "x86-interrupt" fn except_double(stack: InterruptStackFrame, _err: u64) -
     panic!("EXCEPTION: DOUBLE FAULT\n{:#?}\n", stack);
 }
 
-extern "x86-interrupt" fn keyboard_interrupt_handler(_sf: InterruptStackFrame) {
-    use x86_64::instructions::port::Port;
-
-    let mut port = Port::new(0x60);
-    let scancode: u8 = unsafe { port.read() };
-    crate::task::keyboard::add_scancode(scancode);
-
-    unsafe {
-        PICS.lock()
-            .notify_end_of_interrupt(InterruptIndex::Keyboard.as_u8());
-    }
-}
-
 // SAFETY: References to this must not escape the current CPU
 #[thread_local]
 static mut RECURSIVE: bool = false;

@@ -14,7 +14,6 @@ use core::ptr::NonNull;
 use hootux::exit_qemu;
 use hootux::graphics::basic_output::BasicTTY;
 use hootux::interrupts::apic::Apic;
-use hootux::task::keyboard;
 use hootux::time::kernel_init_timer;
 use hootux::*;
 use libboot::boot_info::PixelFormat;
@@ -150,7 +149,6 @@ fn kernel_main(b: *mut libboot::boot_info::BootInfo) -> ! {
         unsafe { mp::start_mp(tls.file.as_ptr(), tls.file.len(), tls.size) }
     }
 
-    task::run_task(Box::pin(keyboard::print_key()));
     task::run_exec(); //executor.run();
 }
 
