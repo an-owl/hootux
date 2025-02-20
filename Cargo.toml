@@ -3,9 +3,9 @@ name = "hootux-loader"
 version = "0.1.0"
 edition = "2021"
 readme = "README.md"
- 
- [workspace]
-members = ["x86_msr","kernel","kernel-bin","drivers/ahci","lib/ata", "lib/libboot", "drivers/ps2"]
+
+[workspace]
+members = ["x86_msr", "kernel", "kernel-bin", "drivers/ahci", "lib/ata", "lib/libboot", "lib/ps2"]
 
 [profile.dev]
 opt-level = 0
