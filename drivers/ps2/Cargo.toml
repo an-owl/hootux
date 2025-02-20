@@ -4,6 +4,5 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-hootux = { path = "../../kernel" }
 bitflags = "2.8.0"
 log = "0.4.25"
