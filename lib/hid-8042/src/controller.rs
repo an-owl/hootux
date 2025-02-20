@@ -18,17 +18,34 @@ impl PS2Controller {
     /// Read data from data port, if it's currently full.
     pub fn read_data(&self) -> Option<u8> {
         if self.read_status().contains(StatusFlags::OUTPUT_BUFFER_FULL) {
-            let ret: u8;
-            unsafe {
-                asm!(
-                    "in al, 0x60",
-                    out("al") ret,
-                    options(nomem, preserves_flags)
-                )
-            }
-            Some(ret)
+            // SAFETY: We checked ^^
+            unsafe { Some(self.read_unchecked()) }
         } else {
             None
+        }
+    }
+
+    pub unsafe fn send_data_unchecked(&self, value: u8) {
+        let ret: u8;
+        unsafe {
+            asm!(
+            "in al, 0x60",
+            out("al") ret,
+            options(nomem, preserves_flags)
+            )
+        }
+    }
+
+    /// Attempts to write data to the input register.
+    ///
+    /// Returns `Err(())` when the data register is empty.
+    pub fn send_data(&self, data: u8) -> Result<(), ()> {
+        if !self.read_status().contains(StatusFlags::INPUT_BUFFER_FULL) {
+            // SAFETY: We checked ^^
+            unsafe { self.send_data_unchecked(data) }
+            Ok(())
+        } else {
+            Err(())
         }
     }
 
@@ -42,24 +59,6 @@ impl PS2Controller {
             );
         }
         StatusFlags::from_bits_truncate(read)
-    }
-
-    /// Attempts to write data to the input register.
-    ///
-    /// Returns `Err(())` when the data register is empty.
-    pub fn send_data(&self, data: u8) -> Result<(), ()> {
-        if !self.read_status().contains(StatusFlags::INPUT_BUFFER_FULL) {
-            unsafe {
-                asm!(
-                    "out 0x60,al",
-                    in("al") data,
-                    options(nomem, preserves_flags)
-                )
-            }
-            Ok(())
-        } else {
-            Err(())
-        }
     }
 
     /// Writes the `command` to the controller with the data byte if one is given.
