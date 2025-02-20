@@ -48,8 +48,8 @@ impl PS2Controller {
         if !self.read_status().contains(StatusFlags::INPUT_BUFFER_FULL) {
             unsafe {
                 asm!(
-                    "out 0x60,al"
-                    in("al") data
+                    "out 0x60,al",
+                    in("al") data,
                 )
             }
             Ok(())
@@ -266,10 +266,10 @@ impl core::fmt::Debug for RawCommand {
 
         match self.second_byte {
             Some(second_byte) => {
-                dt.field(&format!("{}", &[self.first_byte, second_byte]));
+                dt.field(&format!("{:?}", &[self.first_byte, second_byte]));
             }
             None => {
-                dt.field(&format!("{}", &[self.first_byte]));
+                dt.field(&format!("{:?}", &[self.first_byte]));
             }
         }
         dt.finish()
