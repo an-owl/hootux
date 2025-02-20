@@ -129,12 +129,31 @@ pub enum ScanCodeSetSubcommand {
 #[derive(Copy, Clone, Debug)]
 #[repr(u8)]
 pub enum Response {
-    Ack,
-    Resend,
-    Echo,
-    BISTSuccess,
-    BISTFailure,
+    Ack = 0xfa,
+    Resend = 0xfe,
+    Echo = 0xee,
+    BISTSuccess = 0xaa,
+    BISTFailure = 0xfc,
+    Error = 0xff,
 }
+
+impl TryFrom<u8> for Response {
+    type Error = UnknownResponse;
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        match value {
+            0x00 | 0xff => Ok(Response::Error),
+            0xfa => Ok(Response::Ack),
+            0xfe => Ok(Response::Resend),
+            0xee => Ok(Response::Echo),
+            0xaa => Ok(Response::BISTSuccess),
+            0xfc | 0xfd => Ok(Response::BISTFailure),
+            _ => Err(UnknownResponse),
+        }
+    }
+}
+
+#[derive(Copy, Clone, Debug)]
+struct UnknownResponse;
 
 #[derive(Copy, Clone)]
 pub struct RepeatCtl(u8);
