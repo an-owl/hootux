@@ -252,6 +252,18 @@ pub struct RawCommand {
     second_byte: Option<u8>,
 }
 
+impl RawCommand {
+    /// Constructs a new raw command.
+    ///
+    /// This is intended for when more control than [Command] provides is required.
+    pub fn new(first_byte: u8, second_byte: Option<u8>) -> Self {
+        Self {
+            first_byte,
+            second_byte,
+        }
+    }
+}
+
 macro_rules! n_command {
     ($first:expr) => {
         RawCommand {
