@@ -1,9 +1,9 @@
 use core::arch::asm;
 
-struct PS2Controller;
+pub struct PS2Controller;
 
 impl PS2Controller {
-    unsafe fn read_unchecked(&self) -> u8 {
+    pub unsafe fn read_unchecked(&self) -> u8 {
         let ret: u8;
         unsafe {
             asm!(
@@ -16,7 +16,7 @@ impl PS2Controller {
     }
 
     /// Read data from data port, if it's currently full.
-    fn read_data(&self) -> Option<u8> {
+    pub fn read_data(&self) -> Option<u8> {
         if self.read_status().contains(StatusFlags::OUTPUT_BUFFER_FULL) {
             let ret: u8;
             unsafe {
@@ -32,7 +32,7 @@ impl PS2Controller {
         }
     }
 
-    fn read_status(&self) -> StatusFlags {
+    pub fn read_status(&self) -> StatusFlags {
         let read: u8;
         unsafe {
             asm!(
@@ -47,7 +47,7 @@ impl PS2Controller {
     /// Attempts to write data to the input register.
     ///
     /// Returns `Err(())` when the data register is empty.
-    fn send_data(&self, data: u8) -> Result<(), ()> {
+    pub fn send_data(&self, data: u8) -> Result<(), ()> {
         if !self.read_status().contains(StatusFlags::INPUT_BUFFER_FULL) {
             unsafe {
                 asm!(
@@ -63,7 +63,7 @@ impl PS2Controller {
     }
 
     /// Writes the `command` to the controller with the data byte if one is given.
-    fn send_command(&self, command: impl Into<RawCommand>) {
+    pub fn send_command(&self, command: impl Into<RawCommand>) {
         let c = command.into();
         let byte_1 = c.first_byte;
         let byte_2 = c.second_byte.unwrap_or(0);
@@ -126,7 +126,7 @@ bitflags::bitflags! {
 
 #[repr(u8)]
 #[derive(Copy, Clone, Debug)]
-enum Command {
+pub enum Command {
     /// Reads byte from internal memory at specified address.
     ///
     /// Address 0 contains controller configuration, the caller should cast this to [ConfigurationByte]
@@ -214,12 +214,12 @@ bitflags::bitflags! {
 }
 
 #[derive(Copy, Clone, Debug)]
-struct Address {
+pub struct Address {
     data: u8,
 }
 
 impl Address {
-    const fn new(address: u8) -> Option<Self> {
+    pub const fn new(address: u8) -> Option<Self> {
         if address > 32 {
             None
         } else {
@@ -247,7 +247,7 @@ bitflags::bitflags! {
     }
 }
 
-struct RawCommand {
+pub struct RawCommand {
     first_byte: u8,
     second_byte: Option<u8>,
 }
