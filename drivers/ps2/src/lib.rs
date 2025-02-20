@@ -42,7 +42,7 @@ enum DeviceType {
 #[derive(Copy, Clone, Debug)]
 struct BadBuffer;
 
-impl TryFrom<&[u8]> for DeviceType {
+impl TryFrom<[u8; 2]> for DeviceType {
     type Error = DeviceType;
 
     fn try_from(value: [u8; 2]) -> Result<Self, Self::Error> {
