@@ -1,8 +1,8 @@
 #[cfg_attr(not(test), no_std)]
 extern crate alloc;
 
-mod controller;
-mod keyboard;
+pub mod controller;
+pub mod keyboard;
 
 enum DeviceType {
     /// Very old keyboard which cannot identify itself.
