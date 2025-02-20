@@ -60,6 +60,29 @@ impl PS2Controller {
 
     fn send_command(&self, command: impl Into<RawCommand>) {
         let c = command.into();
+        let byte_1 = c.first_byte;
+        let byte_2 = c.second_byte.unwrap_or(0);
+        let multiple = c.second_byte.is_some() as u16;
+
+        // Writes command byte
+        // If multiple bytes are to be written {
+        //      move `{sec}` into `al`
+        //      send data byte
+        // }
+        // End
+        unsafe {
+            asm!(
+                "out 0x64,al",
+                "jxcz 2f"
+                "mov al, {sec}",
+                "out 0x60",
+                "2:",
+                _ = in("al") byte_1,
+                sec = in(reg_byte) byte_2,
+                do_data = in("cx") multiple,
+                options(nomem, preserves_flags)
+            )
+        }
     }
 }
 
