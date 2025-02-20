@@ -110,7 +110,7 @@ bitflags::bitflags! {
     ///
     /// These are not restricted to bits 0-2, devices may have more than these 3, however are not specifically defined.
     #[derive(Copy, Clone, Debug)]
-    struct KeyboardLed: u8 {
+    pub struct KeyboardLed: u8 {
         const SCROLL_LOCK = 1;
         const NUM_LOCK = 1 << 1;
         const CAPS_LOCK = 1 << 2;
@@ -139,7 +139,7 @@ pub enum Response {
 
 impl TryFrom<u8> for Response {
     type Error = UnknownResponse;
-    fn try_from(value: u8) -> Result<Self, Self::Error> {
+    fn try_from(value: u8) -> Result<Self, UnknownResponse> {
         match value {
             0x00 | 0xff => Ok(Response::Error),
             0xfa => Ok(Response::Ack),
@@ -153,7 +153,7 @@ impl TryFrom<u8> for Response {
 }
 
 #[derive(Copy, Clone, Debug)]
-struct UnknownResponse;
+pub struct UnknownResponse;
 
 #[derive(Copy, Clone)]
 pub struct RepeatCtl(u8);

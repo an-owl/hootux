@@ -78,13 +78,13 @@ impl PS2Controller {
         unsafe {
             asm!(
                 "out 0x64,al",
-                "jxcz 2f"
-                "mov al, {sec}",
+                "jxcz 2f",
+                "mov al,{sec}",
                 "out 0x60",
                 "2:",
-                _ = in("al") byte_1,
+                in("al") byte_1,
                 sec = in(reg_byte) byte_2,
-                do_data = in("cx") multiple,
+                in("cx") multiple,
                 options(nomem, preserves_flags)
             )
         }
@@ -97,7 +97,7 @@ bitflags::bitflags! {
     ///
     /// Note that Output/Inpput terms are from the controllers perspective.
     /// e.g. we read data when [Self::OUTPUT_BUFFER_FULL] is set.
-    struct StatusFlags: u8 {
+    pub struct StatusFlags: u8 {
         /// Indicates that data is ready to be read form the controller.
         ///
         /// When this flag is set, the data register may be read.
@@ -203,7 +203,7 @@ pub enum Command {
 
 bitflags::bitflags! {
     /// Configuration byte contained in address `0` in internal memory.
-    struct ConfigurationByte: u8 {
+    pub struct ConfigurationByte: u8 {
         const PORT_ONE_INT = 1;
         const PORT_TWO_INT = 1 << 1;
         const SYSTEM_FLAG = 1 << 2;
@@ -230,7 +230,7 @@ impl Address {
 
 bitflags::bitflags! {
     #[derive(Copy, Clone, Debug)]
-    struct ControllerOutput: u8 {
+    pub struct ControllerOutput: u8 {
         /// Reset pin status.
         ///
         /// <div class="warning"> This is attached to the CPU and must not be cleared </div>
@@ -312,10 +312,10 @@ impl core::fmt::Debug for RawCommand {
 
         match self.second_byte {
             Some(second_byte) => {
-                dt.field(&format!("{:?}", &[self.first_byte, second_byte]));
+                dt.field(&alloc::format!("{:?}", &[self.first_byte, second_byte]));
             }
             None => {
-                dt.field(&format!("{:?}", &[self.first_byte]));
+                dt.field(&alloc::format!("{:?}", &[self.first_byte]));
             }
         }
         dt.finish()

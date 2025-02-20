@@ -1,10 +1,10 @@
-#[cfg_attr(not(test), no_std)]
+#![cfg_attr(not(test), no_std)]
 extern crate alloc;
 
 pub mod controller;
 pub mod keyboard;
 
-enum DeviceType {
+pub enum DeviceType {
     /// Very old keyboard which cannot identify itself.
     ///
     // The actual code is not 0xfe, this is the resend byte which is otherwise unused.
@@ -38,9 +38,6 @@ enum DeviceType {
 
     Unknown,
 }
-
-#[derive(Copy, Clone, Debug)]
-struct BadBuffer;
 
 impl TryFrom<[u8; 2]> for DeviceType {
     type Error = DeviceType;
