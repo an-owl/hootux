@@ -338,6 +338,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bf151400ff0baff5465007dd2f3e717f3fe502074ca563069ce3a6629d07b289"
 
 [[package]]
+name = "hid-8042"
+version = "0.1.0"
+dependencies = [
+ "bitflags 2.8.0",
+]
+
+[[package]]
 name = "hootux"
 version = "0.1.0"
 dependencies = [
@@ -665,14 +672,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "60946a68e5f9d28b0dc1c21bb8a97ee7d018a8b322fa57838ba31cc878e22d99"
 dependencies = [
  "unicode-ident",
-]
-
-[[package]]
-name = "ps2"
-version = "0.1.0"
-dependencies = [
- "bitflags 2.8.0",
- "log",
 ]
 
 [[package]]

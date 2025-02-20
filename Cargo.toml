@@ -5,7 +5,7 @@ edition = "2021"
 readme = "README.md"
 
 [workspace]
-members = ["x86_msr", "kernel", "kernel-bin", "drivers/ahci", "lib/ata", "lib/libboot", "lib/ps2"]
+members = ["x86_msr", "kernel", "kernel-bin", "drivers/ahci", "lib/ata", "lib/libboot", "lib/hid-8042"]
 
 [profile.dev]
 opt-level = 0

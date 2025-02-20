@@ -1,5 +1,5 @@
 [package]
-name = "ps2"
+name = "hid-8042"
 version = "0.1.0"
 edition = "2024"
 
