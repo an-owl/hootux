@@ -9,6 +9,7 @@ impl PS2Controller {
             asm!(
                "in al, 0x60",
                 out("al") ret,
+                options(nomem, nostack)
             )
         }
         ret
@@ -22,6 +23,7 @@ impl PS2Controller {
                 asm!(
                     "in al, 0x60",
                     out("al") ret,
+                    options(nomem, preserves_flags)
                 )
             }
             Some(ret)
@@ -35,7 +37,8 @@ impl PS2Controller {
         unsafe {
             asm!(
                 "in al, 0x60",
-                out("al") read
+                out("al") read,
+                options(nomem, preserves_flags)
             );
         }
         StatusFlags::from_bits_truncate(read)
@@ -50,6 +53,7 @@ impl PS2Controller {
                 asm!(
                     "out 0x60,al",
                     in("al") data,
+                    options(nomem, preserves_flags)
                 )
             }
             Ok(())
@@ -58,6 +62,7 @@ impl PS2Controller {
         }
     }
 
+    /// Writes the `command` to the controller with the data byte if one is given.
     fn send_command(&self, command: impl Into<RawCommand>) {
         let c = command.into();
         let byte_1 = c.first_byte;
