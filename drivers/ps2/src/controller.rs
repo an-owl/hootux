@@ -83,10 +83,12 @@ bitflags::bitflags! {
         /// Cleared by software on reset and set after completing POST
         // what's the point in that?
         // yes we passed POST, what a shock
-        /// Should be set at runtime.
+        /// Should be set at runtime, however on modern hardware this may not be set.
         const SYSTEM_FLAG = 1 << 2;
 
         /// Indicates that the controller is expecting a data byte to follow a command.
+        ///
+        /// This is cleared after writing to the input register.
         const TRANSMIT_COMMAND = 1 << 3;
         const TIME_OUT = 1 << 6;
         const _ = 3 << 4;
@@ -161,9 +163,13 @@ enum Command {
     /// Writes the payload to the second port input buffer.
     WriteToSecondInput(u8),
 
-    /// Lowers the indicated pins for 6ms.
+    /// Lowers the indicated pins.
     ///
-    /// Please read [ControllerOutput::SYSTEM_RESET]
+    /// The duration of the pulse differs depending on the hardware.
+    /// On the original i8042 this was 6ms,
+    /// for a SCH311x SuperIO chip this is 500ns.
+    ///
+    /// Please read [ControllerOutput::SYSTEM_RESET].
     PulseOutputPins(ControllerOutput),
 }
 
