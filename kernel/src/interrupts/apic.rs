@@ -8,7 +8,7 @@ use apic_structures::registers::ApicError;
 use modular_bitfield::BitfieldSpecifier;
 
 pub mod apic_structures;
-pub(crate) mod ioapic;
+pub mod ioapic;
 pub mod pub_apic;
 pub mod xapic;
 
