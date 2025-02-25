@@ -206,8 +206,8 @@ bitflags::bitflags! {
         const PORT_ONE_INT = 1;
         const PORT_TWO_INT = 1 << 1;
         const SYSTEM_FLAG = 1 << 2;
-        const PORT_ONE_CLOCK = 1 << 4;
-        const PORT_TWO_CLOCK = 1 << 5;
+        const PORT_ONE_CLOCK_DISABLED = 1 << 4;
+        const PORT_TWO_CLOCK_DISABLED = 1 << 5;
         const PORT_TRANSLATION = 1 << 6;
     }
 }
@@ -224,6 +224,13 @@ impl Address {
         } else {
             Some(Self { data: address })
         }
+    }
+}
+
+impl TryFrom<u8> for Address {
+    type Error = ();
+    fn try_from(data: u8) -> Result<Self, Self::Error> {
+        Self::new(data).ok_or(())
     }
 }
 
