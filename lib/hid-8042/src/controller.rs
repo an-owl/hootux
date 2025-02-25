@@ -327,3 +327,19 @@ impl core::fmt::Debug for RawCommand {
         dt.finish()
     }
 }
+
+bitflags::bitflags! {
+    #[derive(Copy, Clone, Debug)]
+    pub struct PortTestResult: u8 {
+        const CLOCK_LOW = 1;
+        const CLOCK_HIGH = 1 << 1;
+        const DATA_LOW = 1 << 2;
+        const DATA_HIGH = 1 << 3;
+    }
+}
+
+impl PortTestResult {
+    pub const fn is_good(&self) -> bool {
+        self.is_empty()
+    }
+}
