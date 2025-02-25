@@ -1,0 +1,13 @@
+[package]
+name = "hid-ps2"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+hid-8042 = { path = "../../lib/hid-8042" }
+log = "0.4.25"
+hootux = { path = "../../kernel" }
+pc-keyboard = "0.8.0"
+futures-util = { version = "0.3.31", default-features = false, features = ["alloc", "async-await-macro"] }
+x86_64 = "0.15.2"
+spin = "0.9.8"
