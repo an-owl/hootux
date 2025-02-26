@@ -39,6 +39,34 @@ pub enum DeviceType {
     Unknown,
 }
 
+impl DeviceType {
+    /// Returns whether we believe this device is a keyboard.
+    // We require is_kb and is_rodent because Self::Unknown is neither.
+    pub const fn is_keyboard(&self) -> bool {
+        match self {
+            Self::StandardMouse
+            | Self::MouseWithScrollWheel
+            | Self::Mouse5Button
+            | Self::Unknown => false,
+            _ => true,
+        }
+    }
+
+    /// Returns whether we believe this device is a rodent.
+    ///
+    /// We do not have enough information to determine if this is a mouse or a hamster.
+    /// However, this is a PS/2 device so it is almost definitely a mouse we do not want to assume,
+    /// but it should be fine to treat this as a mouse regardless.
+    ///
+    /// If the caller can determine that the device is their mother then it is a hamster.
+    pub const fn is_rodent(&self) -> bool {
+        match self {
+            Self::StandardMouse | Self::MouseWithScrollWheel | Self::Mouse5Button => true,
+            _ => false,
+        }
+    }
+}
+
 impl TryFrom<[u8; 2]> for DeviceType {
     type Error = DeviceType;
 
