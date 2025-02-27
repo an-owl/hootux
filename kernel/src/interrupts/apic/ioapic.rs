@@ -269,6 +269,8 @@ pub enum PinPolarity {
 /// interrupt configuration.
 ///
 /// **Note:** The default mask value is true i.e. interrupts will not occur
+// todo disallow setting target CPU.
+// Instead give vague configuration mode. Single, Group, All, Low priority, ect.
 #[derive(Clone, Debug)]
 pub struct GlobalSystemInterrupt {
     vector: u8,

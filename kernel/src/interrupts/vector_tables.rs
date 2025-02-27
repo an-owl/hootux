@@ -123,10 +123,7 @@ impl HandleRegistry {
         core::mem::swap(&mut *self.arr[vector.as_usize()].write(), &mut e);
         match e {
             InterruptHandleContainer::Empty => Err(()),
-            InterruptHandleContainer::Reserved => Ok(()),
-            InterruptHandleContainer::SpecialHandle(_) => Ok(()),
-            InterruptHandleContainer::Generic(_) => Ok(()),
-            InterruptHandleContainer::HighPerfCascading(_) => Ok(()),
+            _ => Ok(()),
         }
     }
 
@@ -160,6 +157,11 @@ impl HandleRegistry {
     ///
     /// On success returns a vector number. `ret..ret+req` vectors are guaranteed to be unused.
     /// On fail returns the highest number contiguous vectors found
+    ///
+    /// # Deadlocks
+    ///
+    /// If an interrupt occurs on this CPU while this function executes a deadlock may occur,
+    /// the caller must block interrupts.
     pub(crate) fn reserve_contiguous(&self, start: u8, req: u8) -> Result<u8, u8> {
         let mut max = 0;
         let mut found_start = None;
@@ -279,6 +281,11 @@ pub enum InterruptHandleContainer {
     /// Generic handlers will wake a kernel task and push a vector number onto the tasks work queue
     Generic(InterruptHandle),
     HighPerfCascading(alloc::vec::Vec<alloc::boxed::Box<dyn Fn()>>),
+
+    /// For interrupts handlers that need to do work to handle immediately to handle an interrupt.
+    ///
+    /// The first argument indicates the producer vector number, the second may be given by the driver.
+    HighPerf(alloc::boxed::Box<dyn Fn(u64, u64)>, u64, u64),
 }
 
 impl InterruptHandleContainer {
@@ -289,6 +296,7 @@ impl InterruptHandleContainer {
             InterruptHandleContainer::SpecialHandle(_) => Some(self),
             InterruptHandleContainer::Generic(_) => Some(self),
             InterruptHandleContainer::HighPerfCascading(_) => Some(self),
+            InterruptHandleContainer::HighPerf(..) => Some(self),
         }
     }
 
@@ -301,6 +309,7 @@ impl InterruptHandleContainer {
                     i()
                 }
             }
+            InterruptHandleContainer::HighPerf(v, vec, arg) => v(*vec, *arg),
             _ => {}
         }
     }

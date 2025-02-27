@@ -34,7 +34,6 @@ pub fn init_exceptions() {
             .set_stack_index(gdt::DOUBLE_FAULT_IST_INDEX);
     }
 
-    idt[InterruptIndex::Keyboard.as_u8()].set_handler_fn(keyboard_interrupt_handler);
     idt.general_protection_fault
         .set_handler_fn(except_general_protection);
     idt.segment_not_present
@@ -180,7 +179,6 @@ fn test_breakpoint() {
 #[derive(Clone, Copy, Debug)]
 #[repr(u8)]
 pub enum InterruptIndex {
-    Keyboard,
     TlbShootdown, // 0x21
     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
     Generic(u8),
@@ -195,7 +193,6 @@ impl From<u8> for InterruptIndex {
 impl InterruptIndex {
     pub(crate) fn as_u8(self) -> u8 {
         match self {
-            Self::Keyboard => PIC_0_OFFSET + 1,
             Self::TlbShootdown => 0x20,
             Self::Generic(n) => n,
         }
@@ -252,6 +249,25 @@ impl InterruptIndex {
     pub fn set(&self, handler: vector_tables::InterruptHandleContainer) {
         assert!(handler.callable().is_some(), "Tried to set invalid handler");
         vector_tables::IHR.set(self.as_u8(), handler).unwrap() // ?
+    }
+
+    /// Installs a [vector_tables::InterruptHandleContainer::HighPerf] interrupt handler into the
+    /// IHR at the vector owned by `self`.
+    ///
+    /// # Deadlocks
+    ///
+    /// The caller must ensure that the interrupt `self` will not be raised.
+    ///
+    /// # Safety
+    ///
+    /// The caller must ensure that `handler` correctly handles the interrupt, and calls EOI
+    pub unsafe fn set_high_perf(&mut self, handler: alloc::boxed::Box<dyn Fn(u64, u64)>) {
+        vector_tables::IHR
+            .set(
+                self.as_u8(),
+                vector_tables::InterruptHandleContainer::HighPerf(handler, 0, 0),
+            )
+            .unwrap();
     }
 }
 
@@ -310,6 +326,17 @@ pub unsafe fn alloc_irq(
     )
 }
 
+/// Other interrupt config fns are stupid, use this one.
+///
+/// Reserves an interrupt vector and returns an [InterruptIndex].
+pub fn alloc_interrupt() -> Option<InterruptIndex> {
+    x86_64::instructions::interrupts::without_interrupts(|| {
+        Some(InterruptIndex::Generic(
+            vector_tables::IHR.reserve_contiguous(32, 1).ok()?,
+        ))
+    })
+}
+
 /// Frees the given IRQ.
 ///
 /// # Safety
@@ -335,4 +362,61 @@ pub fn load_idt() {
     unsafe {
         (&*(&raw const IDT)).load();
     }
+}
+
+/// Declares that the raised interrupt has been handled to the interrupt controller.
+///
+/// This does not explicitly declare EOI to any producers, the caller must ensure that producers receive EOI.
+pub unsafe fn eoi() {
+    #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+    apic::apic_eoi()
+}
+
+/// Indicates how the interrupt is received or handled by the CPU.
+enum DeliveryMode {
+    /// Fixed vector, normal interrupt mode.
+    Fixed,
+
+    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+    /// In logical mode this will be accepted by the CPU with the lowest task priority.
+    LowestPriority,
+
+    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+    /// System Management Interrupt (im not actually sure what this does).
+    /// The delivery mode must use edge.
+    /// The local vector must be set to `0` all other values are UB.
+    Smi,
+
+    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+    /// Delivers a Non-Maskable Interrupt.
+    /// This is edge triggered regardless of the trigger mode bit.
+    /// Vector information is ignored.
+    Nmi,
+
+    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+    /// Deliver the interrupt as an external PIC8259 compatible device.
+    ExtInt,
+}
+
+/// Indicates which CPUs interrupts will be sent to.
+#[non_exhaustive]
+#[derive(Debug, Copy, Clone, Default)]
+pub enum Target {
+    /// Only a single CPU will ever handle this interrupt.
+    #[default]
+    Single,
+
+    /// All CPUs will be interrupted when this is raised.
+    All,
+
+    /// Any CPU many handle this interrupt.
+    Any,
+
+    /// Interrupt will be handled on a single CPU within a preconfigured group.
+    Group,
+
+    /// Any CPU may handle this interrupt, only the lowest priority one will handle it.
+    ///
+    /// This will be handled as [Self::Any] when hardware does not support this mode.
+    LowPriority,
 }
