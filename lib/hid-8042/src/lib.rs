@@ -4,6 +4,7 @@ extern crate alloc;
 pub mod controller;
 pub mod keyboard;
 
+#[derive(Copy, Clone, Debug)]
 pub enum DeviceType {
     /// Very old keyboard which cannot identify itself.
     ///
