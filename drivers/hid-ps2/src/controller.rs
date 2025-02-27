@@ -1,11 +1,14 @@
-use core::task::{Context, Poll};
-use hid_8042::keyboard::Response;
+use core::task::Poll;
+use futures_util::FutureExt;
 use hootux::task::util::sleep;
 use hootux::time::{AbsoluteTime, Duration};
 
 const TIMEOUT_DURATION_MS: u64 = 100;
 const PORT_ONE_ISA_IRQ: u8 = 0x01;
 const PORT_TWO_ISA_IRQ: u8 = 0x12;
+
+/// Defines the number of retries until we determine the device will not respond correctly.
+const RETRIES: usize = 3;
 
 pub(crate) struct Controller {
     ctl_raw: hid_8042::controller::PS2Controller,
@@ -30,14 +33,15 @@ enum CommandError {
 }
 
 macro_rules! interrupt_init_body {
-    ($port:ident, $isa_irq:literal, $fail:literal) => {
-        let this = alloc::sync::Arc::downgrade(self);
+    ($self:ident,$port:ident, $isa_irq:literal, $fail:literal) => {{
+        let this = alloc::sync::Arc::downgrade($self);
 
-        let int_handler = || {
+        let int_handler = move |_, _| {
             // None indicates a driver bug, The interrupt should've been disabled.
             // This will just continue to handle the interrupts without doing anything.
             let Some(ctl) = this.upgrade() else {
                 unsafe { hootux::interrupts::eoi() }
+                return;
             };
 
             let mut in_buff = [0; 8];
@@ -51,8 +55,8 @@ macro_rules! interrupt_init_body {
                 }
             }
 
-            if let Ok(_) = TryFrom::<hid_8042::keyboard::Response>::try_from(*in_buff[0]) {
-                self.$port
+            if let Ok(_) = TryInto::<hid_8042::keyboard::Response>::try_into(in_buff[0]) {
+                ctl.$port
                     .ack_buffer
                     .borrow_mut()
                     .copy_from_slice(&in_buff[0..4]);
@@ -82,35 +86,182 @@ macro_rules! interrupt_init_body {
         unsafe {
             gsi.set().expect("???");
         }
-    };
+    }};
+}
+macro_rules! init_port {
+    ($this:ident,$port_name:ident,$port_command:ident,$port_lit:literal) => {{
+        use hid_8042::keyboard::*;
+
+        log::info!("Initializing {port}", port = $port_lit);
+
+        for r in 0..RETRIES {
+            match $this.$port_command(Command::ResetAndBIST).await {
+                Ok([const { Response::Resend as u8 }, ..]) if r == RETRIES - 1 => {
+                    log::warn!(
+                        "Unable to initialize {port}: exceeded retries",
+                        port = $port_lit
+                    );
+                    $this.$port_name.port_status = PortState::Nuisance;
+                    return;
+                }
+                Ok([const { Response::Resend as u8 }, ..]) => continue,
+                Ok(
+                    [
+                        const { Response::Ack as u8 },
+                        const { Response::BISTSuccess as u8 },
+                        ..,
+                    ],
+                ) => break,
+                Ok(
+                    [
+                        const { Response::Ack as u8 },
+                        const { Response::BISTFailure as u8 },
+                        ..,
+                    ],
+                ) => {
+                    log::error!("Device: BIST failed");
+                    return;
+                }
+                Ok(_) => {
+                    log::error!("Unknown BIST test response");
+                    if r == 2 {
+                        $this.$port_name.port_status = PortState::Nuisance;
+                        return;
+                    }
+                }
+                Err(CommandError::PortTimeout) => {
+                    $this.$port_name.port_status = PortState::Down;
+                    return; // no device, dont retry
+                }
+                // SAFETY: Port 1 commands cannot return controller timeout or SinglePortDevice
+                Err(CommandError::SinglePortDevice) => {
+                    log::error!("Attempted to initialize port 2 when not present");
+                    return;
+                },
+                Err(CommandError::ControllerTimeout) => {
+                    controller_timeout_handler();
+                    return;
+                }
+            }
+        }
+
+        log::trace!("test success");
+
+        for r in 0..RETRIES {
+            match $this.$port_command(Command::IdentifyDevice).await {
+                Ok([const { Response::Resend as u8 }, ..]) if r == RETRIES - 1 => {
+                    log::warn!("Unable to identify device: exceeded retries");
+                    $this.$port_name.port_status = PortState::Nuisance;
+                    return;
+                }
+                Ok([const { Response::Resend as u8 }, ..]) => continue,
+                Ok([const { Response::Ack as u8 }, content @ .., _]) if r == 1 => {
+                    match hid_8042::DeviceType::try_from(content) {
+                        Ok(device_type) => {
+                            $this.$port_name.port_status = PortState::Device(device_type);
+                            break;
+                        }
+                        Err(_) => {
+                            log::warn!("Unable to identify device: invalid type");
+                            $this.$port_name.port_status =
+                                PortState::Device(hid_8042::DeviceType::Unknown);
+                            return;
+                        }
+                    }
+                }
+                Ok(_) => {
+                    log::error!("Unknown bad response");
+                    $this.$port_name.set_state(PortState::Nuisance);
+                }
+                Err(CommandError::PortTimeout) => {
+                    log::error!("Timeout fetching device type");
+                    $this.$port_name.port_status = PortState::Down;
+                    return;
+                }
+
+                Err(CommandError::ControllerTimeout) => {
+                    controller_timeout_handler()
+                }
+                Err(CommandError::SinglePortDevice) => {
+                    // SAFETY: We cannot hit this because it will be returned above when reset and BIST is sent.
+                    unsafe { core::hint::unreachable_unchecked() }
+                }
+            }
+        }
+
+        // set scancode set
+        match $this
+            .$port_command(Command::ScanCodeSet(
+                ScanCodeSetSubcommand::SetScancodeSetTwo,
+            ))
+            .await
+        {
+            Ok([const { Response::Ack as u8 }, ..]) => {
+                $this.$port_name.dev_meta = DevMeta::ScanCodeSetTwo;
+            }
+
+            Ok([const { Response::Resend as u8 }, ..]) => {
+                match $this
+                    .$port_command(Command::ScanCodeSet(
+                        ScanCodeSetSubcommand::SetScancodeSetOne,
+                    ))
+                    .await
+                {
+                    Ok([const { Response::Ack as u8 }, ..]) => {
+                        $this.$port_name.dev_meta = DevMeta::ScanCodeSetOne;
+                    }
+
+                    Err(CommandError::PortTimeout) => {
+                        $this.$port_name.port_status = PortState::Down;
+                        return;
+                    }
+
+                    _ => $this.$port_name.set_state(PortState::Nuisance),
+                }
+            }
+            Err(CommandError::PortTimeout) => {
+                $this.$port_name.port_status = PortState::Down;
+                return;
+            }
+            Err(CommandError::SinglePortDevice) => {
+                core::unreachable!()
+            }
+            _ => {
+                log::warn!("Bad response when querying device type");
+                $this.$port_name.set_state(PortState::Nuisance);
+            },
+        }
+    }};
 }
 
 impl Controller {
-    /// Initializes the controller.
-    const fn new() -> Option<Self> {
-        static INITIALIZED: core::sync::atomic::AtomicBool =
-            core::sync::atomic::AtomicBool::new(false);
-        let mut this = Self {
+    fn new() -> Self {
+        Self {
             ctl_raw: hid_8042::controller::PS2Controller,
             multi_port: true,
             port_1: PortComplex::new(),
             port_2: PortComplex::new(),
-        };
+        }
+    }
+    /// Initializes the controller.
+    async fn init(mut self) -> Result<Self, ()> {
+        static INITIALIZED: core::sync::atomic::AtomicBool =
+            core::sync::atomic::AtomicBool::new(false);
 
         log::info!("Initializing controller...");
 
         use hid_8042::controller::*;
         // disable devices
 
-        this.set_operation(false);
+        self.set_operation(false);
         // clear buffer
-        while let Some(_) = this.ctl_raw.read_data() {}
+        while let Some(_) = self.ctl_raw.read_data() {}
 
-        this.ctl_raw
+        self.ctl_raw
             .send_command(Command::ReadByte(0.try_into().unwrap()));
 
         let mut cfg_byte = ConfigurationByte::from_bits_retain(loop {
-            match this.ctl_raw.read_data() {
+            match self.ctl_raw.read_data() {
                 Some(r) => break r,
                 None => {}
             }
@@ -123,35 +274,41 @@ impl Controller {
             true,
         );
 
-        this.ctl_raw
+        self.ctl_raw
             .send_command(Command::WriteByte(0.try_into().unwrap(), cfg_byte.bits()));
-        this.ctl_raw.send_command(Command::TestController);
+        self.ctl_raw.send_command(Command::TestController);
 
         // Perform controller self test.
-        match this.read_data_with_timeout(Duration::millis(TIMEOUT_DURATION_MS)) {
+        match self
+            .read_data_with_timeout(Duration::millis(TIMEOUT_DURATION_MS))
+            .await
+        {
             Some(0x55) => {}
             Some(e) => {
                 log::error!("8042 Initialization failed: BIST returned {e:#x}");
-                return None;
+                return Err(());
             }
             None => {
                 log::error!("8042 Initialization failed: BIST timed out");
-                return None;
+                return Err(());
             }
         }
 
-        // check if this is multi-port
-        this.ctl_raw.send_command(Command::EnablePort2);
-        this.ctl_raw.send_command(Command::ReadByte(0.into()));
+        // check if self is multi-port
+        self.ctl_raw.send_command(Command::EnablePort2);
+        self.ctl_raw
+            .send_command(Command::ReadByte(0u8.try_into().unwrap()));
         let t = ConfigurationByte::from_bits_retain(
-            this.read_data_with_timeout(Duration::millis(TIMEOUT_DURATION_MS))?,
+            self.read_data_with_timeout(Duration::millis(TIMEOUT_DURATION_MS))
+                .await
+                .ok_or(())?,
         );
-        this.multi_port = !t.contains(ConfigurationByte::PORT_TWO_CLOCK_DISABLED);
-        if this.multi_port {
-            this.ctl_raw.send_command(Command::DisablePort2);
+        self.multi_port = !t.contains(ConfigurationByte::PORT_TWO_CLOCK_DISABLED);
+        if self.multi_port {
+            self.ctl_raw.send_command(Command::DisablePort2);
         }
 
-        if this.multi_port {
+        if self.multi_port {
             log::info!("8042 is mult-port")
         } else {
             log::info!("8042 is not mult-port");
@@ -159,29 +316,33 @@ impl Controller {
 
         // test ports
         {
-            this.ctl_raw.send_command(Command::TestPort1);
+            self.ctl_raw.send_command(Command::TestPort1);
             let r = PortTestResult::from_bits_retain(
-                this.read_data_with_timeout(Duration::millis(TIMEOUT_DURATION_MS))?,
+                self.read_data_with_timeout(Duration::millis(TIMEOUT_DURATION_MS))
+                    .await
+                    .ok_or(())?,
             );
             if !r.is_good() {
-                log::warn!("8042 Port one test failure: {r}"); // I think this can indicate that nothing is connected.
+                log::warn!("8042 Port one test failure: {r:?}"); // I think self can indicate that nothing is connected.
             }
-            this.ctl_raw.send_command(Command::TestPort1);
+            self.ctl_raw.send_command(Command::TestPort1);
             let r = PortTestResult::from_bits_retain(
-                this.read_data_with_timeout(Duration::millis(TIMEOUT_DURATION_MS))?,
+                self.read_data_with_timeout(Duration::millis(TIMEOUT_DURATION_MS))
+                    .await
+                    .ok_or(())?,
             );
             if !r.is_good() {
-                log::warn!("8042 Port two test failure: {r}")
+                log::warn!("8042 Port two test failure: {r:?}")
             }
         }
 
         // we are done initializing the controller, enable ports.
-        this.ctl_raw.send_command(Command::EnablePort1);
-        this.ctl_raw.send_command(Command::EnablePort2);
+        self.ctl_raw.send_command(Command::EnablePort1);
+        self.ctl_raw.send_command(Command::EnablePort2);
 
         log::trace!("initialization completed");
 
-        Some(this)
+        Ok(self)
     }
 
     /// For receiving data after sending a command to the controller.
@@ -214,11 +375,11 @@ impl Controller {
             }
         }
 
-        let mut timeout = sleep(TIMEOUT_DURATION_MS);
-        let mut cmd_ret = self.port_1.cmd_wait();
+        let timeout = sleep(TIMEOUT_DURATION_MS);
+        let cmd_ret = self.port_1.cmd_wait();
         let ret = futures_util::select_biased! {
-            _ = timeout => return Err(CommandError::PortTimeout),
-            ret = cmd_ret => ret,
+            _ = timeout.fuse() => return Err(CommandError::PortTimeout),
+            ret = cmd_ret.fuse() => ret,
         };
 
         Ok(ret)
@@ -227,8 +388,9 @@ impl Controller {
     pub async fn port_2_command(
         &mut self,
         cmd: hid_8042::keyboard::Command,
-    ) -> Result<(), CommandError> {
+    ) -> Result<[u8; 4], CommandError> {
         const WRITE_PORT_2_CMD: u8 = 0xd3;
+
         for payload in cmd.raw_iter() {
             self.ctl_raw
                 .send_command(hid_8042::controller::RawCommand::new(
@@ -246,11 +408,28 @@ impl Controller {
                 hootux::suspend!()
             }
         }
-        Ok(())
+
+        let timeout = sleep(TIMEOUT_DURATION_MS);
+        let cmd_ret = self.port_1.cmd_wait();
+        let ret = futures_util::select_biased! {
+            _ = timeout.fuse() => return Err(CommandError::PortTimeout),
+            ret = cmd_ret.fuse() => ret,
+        };
+
+        Ok(ret)
+    }
+
+    async fn init_port1(&mut self) {
+        init_port!(self, port_1, port_1_command, "port 1");
+    }
+
+    async fn init_port2(&mut self) {
+        init_port!(self, port_2, port_2_command, "port 2")
     }
 
     fn cfg_interrupt_port1(self: &alloc::sync::Arc<Self>) {
         interrupt_init_body!(
+            self,
             port_1,
             1,
             "Failed to allocate interrupt for 8042 port-. Aborting"
@@ -259,6 +438,7 @@ impl Controller {
 
     fn cfg_interrupt_port2(self: &alloc::sync::Arc<Self>) {
         interrupt_init_body!(
+            self,
             port_2,
             12,
             "Failed to allocate interrupt for 8042 port-2. Aborting"
@@ -286,7 +466,8 @@ impl Controller {
 }
 
 struct PortComplex {
-    dev_type: spin::Mutex<Option<hid_8042::DeviceType>>,
+    port_status: PortState,
+    dev_meta: DevMeta,
     ack_buffer: core::cell::RefCell<[u8; 4]>,
     cmd_ack: futures_util::task::AtomicWaker,
 }
@@ -294,10 +475,16 @@ struct PortComplex {
 impl PortComplex {
     const fn new() -> PortComplex {
         Self {
-            dev_type: spin::Mutex::new(None),
+            port_status: PortState::Down,
+            dev_meta: DevMeta::ScanCodeSetOne,
             ack_buffer: core::cell::RefCell::new([0; 4]),
-            cmd_ack: Default::default(),
+            cmd_ack: futures_util::task::AtomicWaker::new(),
         }
+    }
+
+    fn set_state(&mut self, state: PortState) {
+        log::trace!("set device to {:?}", state);
+        self.port_status = state;
     }
 
     /// Clear command buffer
@@ -332,8 +519,6 @@ impl PortComplex {
         b.copy_from_slice(buff);
         self.cmd_ack.wake()
     }
-
-    fn set_device(&mut self, dev_type: Option<hid_8042::DeviceType>) {}
 }
 
 struct CmdFut<'a> {
@@ -356,4 +541,28 @@ impl<'a> Future for CmdFut<'a> {
             }
         })
     }
+}
+
+#[derive(Debug, Copy, Clone)]
+enum PortState {
+    /// Link state is down.
+    Down,
+    /// A device is detected but is acting improperly. Don't talk to it, pretend it isn't there
+    Nuisance,
+    /// Device is detected and working correctly.
+    Device(hid_8042::DeviceType),
+}
+
+/// Contains device operation metadata.
+#[non_exhaustive]
+enum DevMeta {
+    ScanCodeSetOne,
+    ScanCodeSetTwo,
+    ScanCodeSetThree,
+}
+
+fn controller_timeout_handler() {
+    log::error!("Controller timed out: driver should be disabled.");
+    // fixme Remove panic and replace with a driver-kill
+    panic!("8042 controller timed out");
 }
