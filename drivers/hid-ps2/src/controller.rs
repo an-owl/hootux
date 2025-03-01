@@ -519,6 +519,10 @@ impl PortComplex {
         b.copy_from_slice(buff);
         self.cmd_ack.wake()
     }
+
+    pub fn state(&self) -> PortState {
+        self.port_status
+    }
 }
 
 struct CmdFut<'a> {
@@ -543,7 +547,7 @@ impl<'a> Future for CmdFut<'a> {
     }
 }
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
 enum PortState {
     /// Link state is down.
     Down,
