@@ -4,7 +4,6 @@
 extern crate alloc;
 
 mod controller;
-mod device_detect;
 
 extern "C" fn init() {
     log::warn!("[hid-ps2] Initializing 8042 without checking ACPI FADT");
