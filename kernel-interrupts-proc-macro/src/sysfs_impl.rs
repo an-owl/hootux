@@ -271,6 +271,10 @@ impl quote::ToTokens for SysfsDirDerive {
                         r => #remove
                     }
                 }
+
+                fn as_any(self: ::alloc::boxed::Box<Self>) -> ::alloc::boxed::Box<dyn ::core::any::Any> {
+                    self
+                }
             }
         };
 

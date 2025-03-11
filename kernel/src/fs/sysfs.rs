@@ -143,6 +143,9 @@ pub trait SysfsDirectory: Directory + File {
     ///
     /// Remove `file` implementations may return [IoError::DeviceError] if it does not want to allow this.
     fn remove(&self, name: &str) -> Result<(), IoError>;
+
+    // todo consider moving this the the File impl
+    fn as_any(self: Box<Self>) -> Box<dyn core::any::Any>;
 }
 
 impl<T> Directory for T
