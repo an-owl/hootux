@@ -114,8 +114,7 @@ impl TmpFsRootInner {
 }
 
 #[derive(Clone)]
-#[cast_trait_object::dyn_cast(File => NormalFile<u8>, Directory, super::device::FileSystem, super::device::Fifo<u8>, super::device::DeviceFile )]
-#[cast_trait_object::dyn_upcast(File)]
+#[kernel_proc_macro::file]
 pub struct TmpFsRoot {
     inner: Arc<TmpFsRootInner>,
 }
@@ -250,8 +249,7 @@ impl TmpFsFile for DirAccessor {
 }
 
 #[derive(Clone)]
-#[cast_trait_object::dyn_cast(File => NormalFile<u8>, Directory, super::device::FileSystem, super::device::Fifo<u8>, super::device::DeviceFile )]
-#[cast_trait_object::dyn_upcast(File)]
+#[kernel_proc_macro::file]
 struct Dir {
     accessor: Arc<DirAccessor>,
     fs: Weak<TmpFsRootInner>,
@@ -483,8 +481,7 @@ impl TmpFsFile for FileAccessor {
 }
 
 #[derive(Clone)]
-#[cast_trait_object::dyn_cast(File => NormalFile<u8>, Directory, super::device::FileSystem, super::device::Fifo<u8>, super::device::DeviceFile )]
-#[cast_trait_object::dyn_upcast(File)]
+#[kernel_proc_macro::file]
 struct TmpFsNormalFile {
     accessor: Arc<FileAccessor>,
     fs: Weak<TmpFsRootInner>,

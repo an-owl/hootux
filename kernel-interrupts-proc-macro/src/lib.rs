@@ -117,16 +117,90 @@ pub fn derive_sysfs_dir(input: TokenStream) -> TokenStream {
     ts.into()
 }
 
-/// Returns [dyn_cast](https://docs.rs/cast_trait_object/0.1.4/cast_trait_object/) attributes required by `File` trait.
+/// Returns [dyn_cast](https://docs.rs/cast_trait_object/0.1.4/cast_trait_object/) implementations required by `File` trait.
 ///
 /// Requires `use crate::fs::file::*`
 #[proc_macro_attribute]
 pub fn file(_: TokenStream, input: TokenStream) -> TokenStream {
-    let t: proc_macro2::TokenStream = input.into();
-    let t = quote::quote! {
-        #[::cast_trait_object::dyn_cast(File => ::hootux::fs::file::NormalFile<u8>, ::hootux::fs::file::Directory, ::hootux::fs::device::FileSystem, ::hootux::fs::device::Fifo<u8>,  ::hootux::fs::device::DeviceFile)]
-        #[::cast_trait_object::dyn_upcast(File)]
-        #t
-    };
-    t.into()
+    let f: file::FileCastImplParser = syn::parse_macro_input!(input);
+    quote::quote! {#f}.into()
+}
+
+mod file {
+    use quote::TokenStreamExt;
+    use syn::parse::ParseStream;
+    use syn::ItemStruct;
+
+    pub struct FileCastImplParser {
+        ty: ItemStruct,
+    }
+
+    impl syn::parse::Parse for FileCastImplParser {
+        fn parse(input: ParseStream) -> syn::Result<Self> {
+            Ok(Self { ty: input.parse()? })
+        }
+    }
+
+    impl quote::ToTokens for FileCastImplParser {
+        fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
+            let ident = &self.ty.ident;
+            // fixme: potential to optimize later to reduce compile times
+            let cast_cfg = [
+                quote::quote! {::hootux::fs::file::CastFileToFile},
+                quote::quote! {::hootux::fs::file::CastFileToNormalFile},
+                quote::quote! {::hootux::fs::file::CastFileToDirectory},
+                quote::quote! {::hootux::fs::file::CastFileToFilesystem},
+                quote::quote! {::hootux::fs::file::CastFileToFifo},
+                quote::quote! {::hootux::fs::file::CastFileToDevice},
+            ];
+
+            let verbatim = &self.ty;
+
+            let ts = quote::quote! {
+
+                ::cast_trait_object::impl_dyn_cast!(#ident => #(#cast_cfg),*);
+
+                #verbatim
+            };
+
+            tokens.append_all(ts);
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        #[test]
+        fn field_struct() {
+            let ts = quote::quote! {
+                struct Foo {
+                    field_a: u8,
+                    field_b: u8,
+                }
+            };
+
+            let f: FileCastImplParser = syn::parse2(ts).unwrap();
+        }
+
+        #[test]
+        fn tuple_struct() {
+            let ts = quote::quote! {
+                struct Foo(u8, u8);
+            };
+
+            let f: FileCastImplParser = syn::parse2(ts).unwrap();
+        }
+
+        #[test]
+        fn returns_correct() {
+            let ts = quote::quote! {
+                struct Foo {
+                    field_a: u8,
+                    field_b: u8,
+                }
+            };
+            let f: FileCastImplParser = syn::parse2(ts).unwrap();
+            println!("{}", quote::quote!(#f).to_string());
+        }
+    }
 }

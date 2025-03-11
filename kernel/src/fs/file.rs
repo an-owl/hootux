@@ -39,11 +39,20 @@
 use crate::fs::{IoError, IoResult};
 use crate::mem::dma::DmaBuff;
 use alloc::string::ToString;
+use cast_trait_object::DynCast;
 use core::fmt::Formatter;
 use core::future::Future;
 use futures_util::FutureExt;
+pub use kernel_proc_macro::file;
 
 self::file_derive_debug!(File);
+
+cast_trait_object::create_dyn_cast_config!(pub CastFileToFile = File => File);
+cast_trait_object::create_dyn_cast_config!(pub CastFileToNormalFile = File => NormalFile<u8>);
+cast_trait_object::create_dyn_cast_config!(pub CastFileToDirectory = File => Directory);
+cast_trait_object::create_dyn_cast_config!(pub CastFileToFilesystem = File => super::device::FileSystem);
+cast_trait_object::create_dyn_cast_config!(pub CastFileToFifo = File => super::device::Fifo<u8>);
+cast_trait_object::create_dyn_cast_config!(pub CastFileToDevice = File => super::device::DeviceFile);
 
 /// Represents a file. This trait should not actually be implemented on filesystem "file" primitives,
 /// instead implementors should act more like a file descriptor where the implementor is
@@ -56,9 +65,16 @@ self::file_derive_debug!(File);
 /// A file may require that previous asynchronous calls are polled to completion before calling a new one.
 /// If this is the case then the function should return [super::IoError::Busy].
 /// Implementations should make a best effort to avoid this behaviour where it is reasonable.
-#[cast_trait_object::dyn_upcast]
-#[cast_trait_object::dyn_cast(NormalFile<u8>, Directory, super::device::FileSystem, super::device::Fifo<u8>, super::device::DeviceFile )]
-pub trait File: Send + Sync {
+pub trait File:
+    Send
+    + Sync
+    + DynCast<CastFileToFile>
+    + DynCast<CastFileToNormalFile>
+    + DynCast<CastFileToDirectory>
+    + DynCast<CastFileToFilesystem>
+    + DynCast<CastFileToFifo>
+    + DynCast<CastFileToDevice>
+{
     /*
     /// Upcasts `self` into either a [NormalFile] or [Directory].
     ///

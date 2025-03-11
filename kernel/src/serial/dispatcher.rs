@@ -29,6 +29,7 @@ static MINOR: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize:
 ///
 /// This is the file object representing a [Serial] device.
 #[derive(Clone)]
+#[kernel_proc_macro::file]
 pub struct SerialDispatcher {
     inner: alloc::sync::Arc<SerialDispatcherInner>,
     fifo_lock: OpenMode,
@@ -135,8 +136,6 @@ impl SerialDispatcher {
     }
 }
 
-#[cast_trait_object::dyn_upcast]
-#[cast_trait_object::dyn_cast(NormalFile<u8>, Directory, crate::fs::device::FileSystem, crate::fs::device::Fifo<u8>, crate::fs::device::DeviceFile )]
 impl File for SerialDispatcher {
     fn file_type(&self) -> FileType {
         FileType::CharDev
@@ -459,8 +458,7 @@ impl Write<u8> for SerialDispatcher {
 /// 3. A Parity bit normally "N" (None). Accepted characters are NOMES.
 /// 5. Number of stop bits either 1 or 2. (note: 5_2 actually uses 1.5 stop bits)
 #[derive(Clone)]
-#[cast_trait_object::dyn_upcast(File)]
-#[cast_trait_object::dyn_cast(File => NormalFile<u8>, Directory, crate::fs::device::FileSystem, crate::fs::device::Fifo<u8>, crate::fs::device::DeviceFile )]
+#[kernel_proc_macro::file]
 struct FrameCtlBFile {
     dispatch: SerialDispatcher,
 }
