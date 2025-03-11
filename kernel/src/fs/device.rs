@@ -85,6 +85,8 @@ pub trait Fifo<T>: File + Read<T> + Write<T> {
 
     /// Returns the number of times that this file may be locked with this particular mode.
     ///
+    /// The return value is undefined when `mode` is [OpenMode::Locked]
+    ///
     /// Returning [usize::MAX] may indicate that this file can be locked an unlimited number of times.
     fn locks_remain(&self, mode: OpenMode) -> usize;
 
