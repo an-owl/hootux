@@ -158,7 +158,6 @@ pub struct SysfsDirDerive {
 
 impl syn::parse::Parse for SysfsDirDerive {
     fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
-        eprintln!("Parsing");
         let def: syn::DeriveInput = input.parse()?;
         let syn::Data::Struct(ref ty_def) = def.data else {
             return Err(syn::Error::new(
@@ -296,7 +295,6 @@ impl syn::parse::Parse for HelperArgs {
         let mut getter = None;
         let mut keys = None;
 
-        eprintln!("parsing helper arguments");
         while !input.is_empty() {
             if input.peek(kw::alias) {
                 let _: kw::alias = input.parse()?;
