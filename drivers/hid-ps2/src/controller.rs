@@ -15,6 +15,7 @@ pub(crate) struct Controller {
     multi_port: bool,
     port_1: PortComplex,
     port_2: PortComplex,
+    driver_major: hootux::fs::vfs::MajorNum, // We keep just the major num this is basically the driver root. the portnum is the minor num
 }
 
 enum CommandError {
@@ -235,16 +236,17 @@ macro_rules! init_port {
 }
 
 impl Controller {
-    fn new() -> Self {
+    pub fn new() -> Self {
         Self {
             ctl_raw: hid_8042::controller::PS2Controller,
             multi_port: true,
             port_1: PortComplex::new(),
             port_2: PortComplex::new(),
+            driver_major: hootux::fs::vfs::MajorNum::new(),
         }
     }
     /// Initializes the controller.
-    async fn init(mut self) -> Result<Self, ()> {
+    pub async fn init(mut self) -> Result<Self, ()> {
         static INITIALIZED: core::sync::atomic::AtomicBool =
             core::sync::atomic::AtomicBool::new(false);
 
@@ -470,7 +472,16 @@ struct PortComplex {
     dev_meta: DevMeta,
     ack_buffer: core::cell::RefCell<[u8; 4]>,
     cmd_ack: futures_util::task::AtomicWaker,
+    open: bool,
+
+    // The *mut [u8] must be constructed from DmaTarget::as_mut()
+    tgt: spin::Mutex<Option<alloc::sync::Arc<(*mut [u8], core::sync::atomic::AtomicUsize)>>>, // change arc to atomic
+    io_waker: futures_util::task::AtomicWaker,
 }
+
+// SAFETY: This is required because of the *mut[u8] in `self.tgt`, which is behind a mutex.
+unsafe impl Send for PortComplex {}
+unsafe impl Sync for PortComplex {}
 
 impl PortComplex {
     const fn new() -> PortComplex {
@@ -479,6 +490,9 @@ impl PortComplex {
             dev_meta: DevMeta::ScanCodeSetOne,
             ack_buffer: core::cell::RefCell::new([0; 4]),
             cmd_ack: futures_util::task::AtomicWaker::new(),
+            open: false,
+            tgt: spin::Mutex::new(None),
+            io_waker: futures_util::task::AtomicWaker::new(),
         }
     }
 
@@ -507,7 +521,16 @@ impl PortComplex {
         if let Ok(_) = TryInto::<hid_8042::keyboard::Response>::try_into(data[0]) {
             self.ack(&data[..4]);
         } else {
-            todo!()
+            let mut l = self.tgt.lock();
+            if let Some(tgt) = l.take() {
+                drop(l); // free mutex as soon as possible.
+                // SAFETY: DmaTarget pointer is provided by a DmaTarget which data may be cast to reference as long as it is not mutably aliased.
+                let dma_tgt = unsafe { &mut *tgt.0 };
+                dma_tgt[..data.len()].copy_from_slice(data);
+                tgt.1
+                    .fetch_add(data.len(), core::sync::atomic::Ordering::Relaxed);
+                self.io_waker.wake();
+            }
         }
     }
 
@@ -559,6 +582,7 @@ enum PortState {
 
 /// Contains device operation metadata.
 #[non_exhaustive]
+#[derive(Copy, Clone, Debug)]
 enum DevMeta {
     ScanCodeSetOne,
     ScanCodeSetTwo,
@@ -569,4 +593,317 @@ fn controller_timeout_handler() {
     log::error!("Controller timed out: driver should be disabled.");
     // fixme Remove panic and replace with a driver-kill
     panic!("8042 controller timed out");
+}
+
+pub(crate) mod file {
+    use crate::controller::Controller;
+    use alloc::boxed::Box;
+    use core::fmt::Write as _;
+    use core::pin::{Pin, pin};
+    use core::task::{Context, Poll};
+    use futures_util::FutureExt;
+    use futures_util::future::BoxFuture;
+    use hootux::WriteableBuffer;
+    use hootux::fs::vfs::MajorNum;
+    use hootux::fs::{IoError, IoResult, device::*, file::*};
+    use hootux::mem::dma::{DmaBuff, DmaTarget};
+
+    #[derive(Debug, Copy, Clone)]
+    enum PortNum {
+        One,
+        Two,
+    }
+
+    #[file]
+    struct PortFileObject {
+        port: PortNum,
+        ctl: alloc::sync::Arc<async_lock::Mutex<super::Controller>>,
+        dev: DevID,
+        mode: OpenMode,
+    }
+
+    impl PortFileObject {
+        pub(super) fn new(
+            controller: alloc::sync::Arc<async_lock::Mutex<Controller>>,
+            port: PortNum,
+            major_num: MajorNum,
+        ) -> Self {
+            let id = DevID::new(major_num, match port {
+                PortNum::One => 1,
+                PortNum::Two => 2,
+            });
+
+            Self {
+                port,
+                ctl: controller,
+                dev: id,
+                mode: OpenMode::Locked,
+            }
+        }
+    }
+
+    impl Clone for PortFileObject {
+        fn clone(&self) -> Self {
+            Self {
+                port: self.port,
+                ctl: self.ctl.clone(),
+                dev: self.dev.clone(),
+                mode: OpenMode::Locked,
+            }
+        }
+    }
+
+    impl File for PortFileObject {
+        fn file_type(&self) -> FileType {
+            FileType::CharDev
+        }
+
+        fn block_size(&self) -> u64 {
+            8
+        }
+
+        fn device(&self) -> DevID {
+            self.dev
+        }
+
+        fn clone_file(&self) -> Box<dyn File> {
+            Box::new(self.clone())
+        }
+
+        fn id(&self) -> u64 {
+            match self.port {
+                PortNum::One => 1,
+                PortNum::Two => 2,
+            }
+        }
+
+        fn len(&self) -> IoResult<u64> {
+            async { Ok(8) }.boxed()
+        }
+    }
+
+    impl DeviceFile for PortFileObject {}
+
+    impl Fifo<u8> for PortFileObject {
+        fn open(&mut self, mode: OpenMode) -> Result<(), IoError> {
+            let t = async {
+                let mut ctl = self.ctl.lock().await;
+                let port = match self.port {
+                    PortNum::One => &mut ctl.port_1,
+                    PortNum::Two => &mut ctl.port_2,
+                };
+
+                if core::mem::replace(&mut port.open, true) {
+                    return Err(IoError::DeviceError);
+                }
+
+                self.mode = mode;
+                Ok(())
+            };
+
+            // todo, this shouldn't block
+            hootux::block_on!(pin![t]);
+            Ok(())
+        }
+
+        fn close(&mut self) -> Result<(), IoError> {
+            if self.mode == OpenMode::Locked {
+                return Err(IoError::DeviceError);
+            };
+            let mut ctl = hootux::block_on!(self.ctl.lock().boxed());
+            let port = match self.port {
+                PortNum::One => &mut ctl.port_1,
+                PortNum::Two => &mut ctl.port_2,
+            };
+            port.open = false;
+
+            self.mode = OpenMode::Locked;
+            Ok(())
+        }
+
+        fn locks_remain(&self, _mode: OpenMode) -> usize {
+            let mut ctl = hootux::block_on!(pin![self.ctl.lock()]);
+            let port = match self.port {
+                PortNum::One => &mut ctl.port_1,
+                PortNum::Two => &mut ctl.port_2,
+            };
+
+            if port.open == false { 1 } else { 0 }
+        }
+
+        fn is_master(&self) -> Option<usize> {
+            None
+        }
+    }
+
+    impl hootux::fs::file::Write<u8> for PortFileObject {
+        fn write<'f, 'a: 'f, 'b: 'f>(
+            &'a self,
+            _pos: u64,
+            buff: DmaBuff<'b>,
+        ) -> BoxFuture<'f, Result<(DmaBuff<'b>, usize), (IoError, DmaBuff<'b>, usize)>> {
+            async { Err((IoError::NotSupported, buff, 0)) }.boxed()
+        }
+    }
+
+    impl hootux::fs::file::Read<u8> for PortFileObject {
+        fn read<'f, 'a: 'f, 'b: 'f>(
+            &'a self,
+            pos: u64,
+            mut buff: DmaBuff<'b>,
+        ) -> BoxFuture<'f, Result<(DmaBuff<'b>, usize), (IoError, DmaBuff<'b>, usize)>> {
+            async move {
+                if !self.mode.is_read() {
+                    return Err((IoError::DeviceError, buff, 0));
+                }
+
+                match pos {
+                    0 => {
+                        let mut xfer_buff: [u8; 16] = [0; 16];
+                        let mut xfer_buff_writable =
+                            hootux::ToWritableBuffer::writable(&mut xfer_buff[..]);
+                        let lock = self.ctl.lock().await;
+                        let meta = match self.port {
+                            PortNum::One => lock.port_1.dev_meta,
+                            PortNum::Two => lock.port_2.dev_meta,
+                        };
+
+                        let (mut b, len) = IoFuture::new(lock, buff, self.port).await;
+                        let b_ref = unsafe { &mut *DmaTarget::as_mut(&mut *b) };
+
+                        let mut decoder = pc_keyboard::EventDecoder::new(
+                            pc_keyboard::layouts::Us104Key,
+                            pc_keyboard::HandleControl::Ignore,
+                        );
+                        let mut set1 = pc_keyboard::ScancodeSet1::new();
+                        let mut set2 = pc_keyboard::ScancodeSet2::new();
+
+                        let use_set: &mut dyn pc_keyboard::ScancodeSet = match meta {
+                            super::DevMeta::ScanCodeSetOne => &mut set1,
+                            super::DevMeta::ScanCodeSetTwo => &mut set2,
+                            _ => return Err((IoError::MediaError, b, len)),
+                        };
+
+                        for i in &b_ref[0..len] {
+                            match use_set.advance_state(*i) {
+                                Ok(None) => continue,
+                                Ok(Some(e)) => {
+                                    let Some(pc_keyboard::DecodedKey::Unicode(ch)) =
+                                        decoder.process_keyevent(e)
+                                    else {
+                                        continue;
+                                    };
+                                    if xfer_buff_writable.write_char(ch).is_err() {
+                                        break;
+                                    };
+                                }
+                                Err(e) => {
+                                    log::warn!("failed to decode scancode {e:?}");
+                                    return Err((IoError::MediaError, b, len));
+                                }
+                            }
+                        }
+
+                        let xfer_len = xfer_buff_writable.cursor();
+                        drop(xfer_buff_writable);
+                        b_ref[..xfer_len].copy_from_slice(&xfer_buff[..xfer_len]);
+
+                        return Ok((b, xfer_len));
+                    }
+
+                    // Raw output
+                    1 => {
+                        let r = IoFuture::new(self.ctl.lock().await, buff, self.port).await;
+                        Ok(r)
+                    }
+                    2 => {
+                        let ctl = self.ctl.lock().await;
+                        let t = DmaTarget::as_mut(&mut *buff);
+                        let mut b = unsafe { hootux::ToWritableBuffer::writable(&mut *t) };
+
+                        let port = match self.port {
+                            PortNum::One => &ctl.port_1,
+                            PortNum::Two => &ctl.port_2,
+                        };
+
+                        match write!(b, "{:?}", port.port_status) {
+                            Ok(()) => Ok((buff, b.cursor())),
+                            Err(_) => Err((IoError::EndOfFile, buff, b.cursor())),
+                        }
+                    }
+                    _ => Err((IoError::EndOfFile, buff, 0)),
+                }
+            }
+            .boxed()
+        }
+    }
+
+    struct IoFuture<'a, 'b> {
+        ctl: Option<async_lock::MutexGuard<'a, super::Controller>>,
+        buff: Option<Box<dyn DmaTarget + 'b>>,
+        tgt: alloc::sync::Arc<(*mut [u8], core::sync::atomic::AtomicUsize)>,
+        port_num: PortNum,
+    }
+
+    // SAFETY: Required because IoFuture contains *mut [u8]
+    // The pointer points to data which IoFuture contains exclusive access to.
+    unsafe impl Sync for IoFuture<'_, '_> {}
+    unsafe impl Send for IoFuture<'_, '_> {}
+
+    impl<'a, 'b> IoFuture<'a, 'b> {
+        fn new(
+            ctl: async_lock::MutexGuard<'a, super::Controller>,
+            mut buff: Box<dyn DmaTarget + 'b>,
+            port_num: PortNum,
+        ) -> Self {
+            let tgt = alloc::sync::Arc::new((
+                DmaTarget::as_mut(&mut *buff),
+                core::sync::atomic::AtomicUsize::new(0),
+            ));
+
+            Self {
+                ctl: Some(ctl),
+                buff: Some(buff),
+                tgt,
+                port_num,
+            }
+        }
+    }
+    impl<'a, 'b> Future for IoFuture<'a, 'b> {
+        type Output = (Box<dyn DmaTarget + 'b>, usize);
+
+        /// Inserts `self.tgt` into the [super::PortComplex], and waits for data to be present.
+        ///
+        /// The [super::PortComplex] will drop its end ot the [alloc::sync::Arc] reducing the strong count indicating the data is ready.
+        ///
+        /// The caller must block interrupts prior to polling this initially and re-enable them after this is called once.
+        /// Not blocking interrupts may cause a data-race. Not enabling interrupts may cause this future to never return [Poll::Ready]
+        fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+            // We drop this immediately to free the mutex.
+            let Some(mut ctl) = self.ctl.take() else {
+                return if alloc::sync::Arc::strong_count(&self.tgt) > 1 {
+                    Poll::Pending
+                } else {
+                    Poll::Ready((
+                        self.buff
+                            .take()
+                            .expect("Called Future::poll after returning Poll::Ready(_)"),
+                        self.tgt.1.load(core::sync::atomic::Ordering::Relaxed),
+                    ))
+                };
+            };
+
+            let port = match self.port_num {
+                PortNum::One => &mut ctl.port_1,
+                PortNum::Two => &mut ctl.port_2,
+            };
+
+            *port.tgt.lock() = Some(self.tgt.clone());
+            port.cmd_ack.register(cx.waker());
+
+            Poll::Pending
+        }
+    }
+
+    impl hootux::fs::sysfs::SysfsFile for PortFileObject {}
 }
