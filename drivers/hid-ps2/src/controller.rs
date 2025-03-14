@@ -246,8 +246,16 @@ impl Controller {
     }
     /// Initializes the controller.
     pub async fn init(mut self) -> Result<Self, ()> {
+        #[cfg(debug_assertions)]
         static INITIALIZED: core::sync::atomic::AtomicBool =
             core::sync::atomic::AtomicBool::new(false);
+
+        #[cfg(debug_assertions)]
+        if INITIALIZED.load(Ordering::Relaxed) {
+            panic!("Attempted to initialize i8042 twice")
+        } else {
+            INITIALIZED.store(true, Ordering::Relaxed);
+        }
 
         log::info!("Initializing controller...");
 
