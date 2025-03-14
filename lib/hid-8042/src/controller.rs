@@ -26,7 +26,7 @@ impl PS2Controller {
     }
 
     pub unsafe fn send_data_unchecked(&self, value: u8) {
-        unsafe { asm!("in al, 0x60", options(nomem, preserves_flags)) }
+        unsafe { asm!("in al, 0x60", in("al") value, options(nomem, preserves_flags)) }
     }
 
     /// Attempts to write data to the input register.
