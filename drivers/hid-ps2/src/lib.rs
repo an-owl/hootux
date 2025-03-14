@@ -49,7 +49,7 @@ async fn i8042_bringup() -> hootux::task::TaskResult {
     bus.insert_device(Box::new(port_1));
 
     if multi {
-        let port_2 = controller::file::PortFileObject::new(ctl.clone(), PortNum::One, major);
+        let port_2 = controller::file::PortFileObject::new(ctl.clone(), PortNum::Two, major);
         log::info!("created sys/bus/i8042/port-2");
 
         bus.insert_device(Box::new(port_2));
