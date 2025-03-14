@@ -878,7 +878,7 @@ pub(crate) mod file {
                             PortNum::Two => &ctl.port_2,
                         };
 
-                        match write!(b, "{:?}", port.port_status) {
+                        match write!(b, "{:?}", port.state()) {
                             Ok(()) => Ok((buff, b.cursor())),
                             Err(_) => Err((IoError::EndOfFile, buff, b.cursor())),
                         }
