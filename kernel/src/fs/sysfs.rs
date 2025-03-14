@@ -44,7 +44,7 @@ pub fn init() {
 #[kernel_proc_macro::file]
 #[kernel_proc_macro::impl_sysfs_root_traits]
 pub struct SysFsRoot {
-    bus: bus::SysfsBus, // inode 1
+    pub bus: bus::SysfsBus, // inode 1
 }
 
 impl SysFsRoot {
