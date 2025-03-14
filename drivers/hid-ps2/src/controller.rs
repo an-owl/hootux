@@ -614,6 +614,7 @@ enum PortState {
 pub enum DevMeta {
     ScanCodeSetOne,
     ScanCodeSetTwo,
+    #[allow(dead_code)]
     ScanCodeSetThree,
 }
 
