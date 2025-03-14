@@ -589,7 +589,10 @@ impl<'a> Future for CmdFut<'a> {
         x86_64::instructions::interrupts::without_interrupts(|| {
             let b = self.port.ack_buffer.borrow();
             if b[0] != 0 {
-                Poll::Ready(*b)
+                let buff = b.clone();
+                drop(b);
+                self.port.cmd_clear();
+                Poll::Ready(buff)
             } else {
                 self.port.cmd_ack.register(cx.waker());
                 Poll::Pending
