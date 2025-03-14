@@ -607,7 +607,7 @@ enum PortState {
 /// Contains device operation metadata.
 #[non_exhaustive]
 #[derive(Copy, Clone, Debug)]
-enum DevMeta {
+pub enum DevMeta {
     ScanCodeSetOne,
     ScanCodeSetTwo,
     ScanCodeSetThree,
