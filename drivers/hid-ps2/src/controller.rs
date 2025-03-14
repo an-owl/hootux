@@ -401,6 +401,10 @@ impl Controller {
     ) -> Result<[u8; 4], CommandError> {
         const WRITE_PORT_2_CMD: u8 = 0xd3;
 
+        if !self.is_multi_port() {
+            return Err(CommandError::SinglePortDevice);
+        }
+
         for payload in cmd.raw_iter() {
             self.ctl_raw
                 .send_command(hid_8042::controller::RawCommand::new(
