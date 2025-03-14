@@ -37,7 +37,7 @@ async fn i8042_bringup() -> hootux::task::TaskResult {
 
     if multi {
         l.cfg_interrupt_port2().await;
-        ctl.lock().await;
+        l.init_port2().await;
     }
 
     let sysfs = sysfs::SysFsRoot::new();
