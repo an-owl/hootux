@@ -932,6 +932,7 @@ pub(crate) mod file {
         /// Not blocking interrupts may cause a data-race. Not enabling interrupts may cause this future to never return [Poll::Ready]
         fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
             // We drop this immediately to free the mutex.
+            // Also indicates that the future was polled once.
             let Some(mut ctl) = self.ctl.take() else {
                 return if alloc::sync::Arc::strong_count(&self.tgt) > 1 {
                     Poll::Pending
