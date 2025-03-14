@@ -40,6 +40,8 @@ pub mod task;
 pub mod time;
 mod util;
 
+pub use util::{ToWritableBuffer, WriteableBuffer};
+
 #[thread_local]
 static WHO_AM_I: util::UnlockedStatic<u32> = util::UnlockedStatic::new();
 
