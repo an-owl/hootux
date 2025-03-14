@@ -1,3 +1,4 @@
+use core::sync::atomic::Ordering;
 use core::task::Poll;
 use futures_util::FutureExt;
 use hootux::task::util::sleep;
@@ -13,8 +14,8 @@ const RETRIES: usize = 3;
 pub(crate) struct Controller {
     ctl_raw: hid_8042::controller::PS2Controller,
     multi_port: bool,
-    port_1: PortComplex,
-    port_2: PortComplex,
+    port_1: alloc::sync::Arc<PortComplex>,
+    port_2: alloc::sync::Arc<PortComplex>,
     driver_major: hootux::fs::vfs::MajorNum, // We keep just the major num this is basically the driver root. the portnum is the minor num
 }
 
@@ -34,34 +35,33 @@ enum CommandError {
 }
 
 macro_rules! interrupt_init_body {
-    ($self:ident,$port:ident, $isa_irq:literal, $fail:literal) => {{
-        let this = alloc::sync::Arc::downgrade($self);
+    ($self:ident,$port:ident, $isa_irq:expr, $fail:literal) => {{
+        let this = alloc::sync::Arc::downgrade(&$self.$port);
 
         let int_handler = move |_, _| {
             // None indicates a driver bug, The interrupt should've been disabled.
             // This will just continue to handle the interrupts without doing anything.
-            let Some(ctl) = this.upgrade() else {
+            let Some(port) = this.upgrade() else {
                 unsafe { hootux::interrupts::eoi() }
                 return;
             };
 
+            let ctl_raw = hid_8042::controller::PS2Controller;
+
             let mut in_buff = [0; 8];
+            let mut in_len = 0;
 
             // SAFETY: Interrupt indicates that the register is full, first read is safe
-            in_buff[0] = unsafe { ctl.ctl_raw.read_unchecked() };
+            in_buff[0] = unsafe { ctl_raw.read_unchecked() };
             for i in in_buff.iter_mut().skip(1) {
-                match ctl.ctl_raw.read_data() {
+                match ctl_raw.read_data() {
                     Some(d) => *i = d,
                     None => break,
                 }
+                in_len += 1;
             }
 
-            if let Ok(_) = TryInto::<hid_8042::keyboard::Response>::try_into(in_buff[0]) {
-                ctl.$port
-                    .ack_buffer
-                    .borrow_mut()
-                    .copy_from_slice(&in_buff[0..4]);
-            }
+            port.new_data(&in_buff[..in_len]);
 
             unsafe { hootux::interrupts::eoi() } // declare EOI
         };
@@ -102,7 +102,7 @@ macro_rules! init_port {
                         "Unable to initialize {port}: exceeded retries",
                         port = $port_lit
                     );
-                    $this.$port_name.port_status = PortState::Nuisance;
+                    $this.$port_name.set_state(PortState::Nuisance);
                     return;
                 }
                 Ok([const { Response::Resend as u8 }, ..]) => continue,
@@ -126,12 +126,12 @@ macro_rules! init_port {
                 Ok(_) => {
                     log::error!("Unknown BIST test response");
                     if r == 2 {
-                        $this.$port_name.port_status = PortState::Nuisance;
+                        $this.$port_name.set_state(PortState::Nuisance);
                         return;
                     }
                 }
                 Err(CommandError::PortTimeout) => {
-                    $this.$port_name.port_status = PortState::Down;
+                    $this.$port_name.set_state(PortState::Down);
                     return; // no device, dont retry
                 }
                 // SAFETY: Port 1 commands cannot return controller timeout or SinglePortDevice
@@ -152,20 +152,19 @@ macro_rules! init_port {
             match $this.$port_command(Command::IdentifyDevice).await {
                 Ok([const { Response::Resend as u8 }, ..]) if r == RETRIES - 1 => {
                     log::warn!("Unable to identify device: exceeded retries");
-                    $this.$port_name.port_status = PortState::Nuisance;
+                    $this.$port_name.set_state(PortState::Nuisance);
                     return;
                 }
                 Ok([const { Response::Resend as u8 }, ..]) => continue,
                 Ok([const { Response::Ack as u8 }, content @ .., _]) if r == 1 => {
                     match hid_8042::DeviceType::try_from(content) {
                         Ok(device_type) => {
-                            $this.$port_name.port_status = PortState::Device(device_type);
+                            $this.$port_name.set_state(PortState::Device(device_type));
                             break;
                         }
                         Err(_) => {
                             log::warn!("Unable to identify device: invalid type");
-                            $this.$port_name.port_status =
-                                PortState::Device(hid_8042::DeviceType::Unknown);
+                            $this.$port_name.set_state(PortState::Device(hid_8042::DeviceType::Unknown));
                             return;
                         }
                     }
@@ -176,7 +175,7 @@ macro_rules! init_port {
                 }
                 Err(CommandError::PortTimeout) => {
                     log::error!("Timeout fetching device type");
-                    $this.$port_name.port_status = PortState::Down;
+                    $this.$port_name.set_state(PortState::Down);
                     return;
                 }
 
@@ -198,7 +197,7 @@ macro_rules! init_port {
             .await
         {
             Ok([const { Response::Ack as u8 }, ..]) => {
-                $this.$port_name.dev_meta = DevMeta::ScanCodeSetTwo;
+                $this.$port_name.set_meta(DevMeta::ScanCodeSetTwo);
             }
 
             Ok([const { Response::Resend as u8 }, ..]) => {
@@ -209,11 +208,11 @@ macro_rules! init_port {
                     .await
                 {
                     Ok([const { Response::Ack as u8 }, ..]) => {
-                        $this.$port_name.dev_meta = DevMeta::ScanCodeSetOne;
+                        $this.$port_name.set_meta(DevMeta::ScanCodeSetOne);
                     }
 
                     Err(CommandError::PortTimeout) => {
-                        $this.$port_name.port_status = PortState::Down;
+                        $this.$port_name.set_state(PortState::Down);
                         return;
                     }
 
@@ -221,7 +220,7 @@ macro_rules! init_port {
                 }
             }
             Err(CommandError::PortTimeout) => {
-                $this.$port_name.port_status = PortState::Down;
+                $this.$port_name.set_state(PortState::Down);
                 return;
             }
             Err(CommandError::SinglePortDevice) => {
@@ -240,8 +239,8 @@ impl Controller {
         Self {
             ctl_raw: hid_8042::controller::PS2Controller,
             multi_port: true,
-            port_1: PortComplex::new(),
-            port_2: PortComplex::new(),
+            port_1: alloc::sync::Arc::new(PortComplex::new()),
+            port_2: alloc::sync::Arc::new(PortComplex::new()),
             driver_major: hootux::fs::vfs::MajorNum::new(),
         }
     }
@@ -268,6 +267,7 @@ impl Controller {
                 None => {}
             }
         });
+
         // Disable translation.
         cfg_byte.set(ConfigurationByte::PORT_TRANSLATION, false);
         // Enable interrupts.
@@ -362,7 +362,7 @@ impl Controller {
     /// Sends a command to the device on port 1.
     ///
     /// Returns the raw command response as a null terminated `[u8;4]`.
-    pub async fn port_1_command(
+    async fn port_1_command(
         &mut self,
         cmd: hid_8042::keyboard::Command,
     ) -> Result<[u8; 4], CommandError> {
@@ -387,7 +387,7 @@ impl Controller {
         Ok(ret)
     }
 
-    pub async fn port_2_command(
+    async fn port_2_command(
         &mut self,
         cmd: hid_8042::keyboard::Command,
     ) -> Result<[u8; 4], CommandError> {
@@ -421,28 +421,28 @@ impl Controller {
         Ok(ret)
     }
 
-    async fn init_port1(&mut self) {
+    pub(crate) async fn init_port1(&mut self) {
         init_port!(self, port_1, port_1_command, "port 1");
     }
 
-    async fn init_port2(&mut self) {
+    pub(crate) async fn init_port2(&mut self) {
         init_port!(self, port_2, port_2_command, "port 2")
     }
 
-    fn cfg_interrupt_port1(self: &alloc::sync::Arc<Self>) {
+    pub(crate) async fn cfg_interrupt_port1(&mut self) {
         interrupt_init_body!(
             self,
             port_1,
-            1,
+            PORT_ONE_ISA_IRQ,
             "Failed to allocate interrupt for 8042 port-. Aborting"
         )
     }
 
-    fn cfg_interrupt_port2(self: &alloc::sync::Arc<Self>) {
+    pub(crate) async fn cfg_interrupt_port2(&mut self) {
         interrupt_init_body!(
             self,
             port_2,
-            12,
+            PORT_TWO_ISA_IRQ,
             "Failed to allocate interrupt for 8042 port-2. Aborting"
         )
     }
@@ -465,18 +465,26 @@ impl Controller {
             }
         }
     }
+
+    pub(crate) fn major(&self) -> hootux::fs::vfs::MajorNum {
+        self.driver_major
+    }
+
+    pub(crate) fn is_multi_port(&self) -> bool {
+        self.multi_port
+    }
 }
 
 struct PortComplex {
-    port_status: PortState,
-    dev_meta: DevMeta,
+    port_status: atomic::Atomic<PortState>,
+    dev_meta: atomic::Atomic<DevMeta>,
+    open: core::sync::atomic::AtomicBool,
+
     ack_buffer: core::cell::RefCell<[u8; 4]>,
     cmd_ack: futures_util::task::AtomicWaker,
-    open: bool,
-
     // The *mut [u8] must be constructed from DmaTarget::as_mut()
-    tgt: spin::Mutex<Option<alloc::sync::Arc<(*mut [u8], core::sync::atomic::AtomicUsize)>>>, // change arc to atomic
-    io_waker: futures_util::task::AtomicWaker,
+    out_buff: spin::Mutex<Option<alloc::sync::Arc<(*mut [u8], core::sync::atomic::AtomicUsize)>>>,
+    o_waker: futures_util::task::AtomicWaker,
 }
 
 // SAFETY: This is required because of the *mut[u8] in `self.tgt`, which is behind a mutex.
@@ -484,21 +492,29 @@ unsafe impl Send for PortComplex {}
 unsafe impl Sync for PortComplex {}
 
 impl PortComplex {
-    const fn new() -> PortComplex {
+    fn new() -> PortComplex {
         Self {
-            port_status: PortState::Down,
-            dev_meta: DevMeta::ScanCodeSetOne,
+            port_status: atomic::Atomic::new(PortState::Down),
+            dev_meta: atomic::Atomic::new(DevMeta::ScanCodeSetOne),
+            open: core::sync::atomic::AtomicBool::new(false),
             ack_buffer: core::cell::RefCell::new([0; 4]),
             cmd_ack: futures_util::task::AtomicWaker::new(),
-            open: false,
-            tgt: spin::Mutex::new(None),
-            io_waker: futures_util::task::AtomicWaker::new(),
+            out_buff: spin::Mutex::new(None),
+            o_waker: futures_util::task::AtomicWaker::new(),
         }
     }
 
-    fn set_state(&mut self, state: PortState) {
+    fn set_state(&self, state: PortState) {
         log::trace!("set device to {:?}", state);
-        self.port_status = state;
+        self.port_status.store(state, Ordering::Relaxed);
+    }
+
+    fn set_meta(&self, meta: DevMeta) {
+        self.dev_meta.store(meta, Ordering::Relaxed);
+    }
+
+    fn meta(&self) -> DevMeta {
+        self.dev_meta.load(Ordering::Relaxed)
     }
 
     /// Clear command buffer
@@ -521,15 +537,15 @@ impl PortComplex {
         if let Ok(_) = TryInto::<hid_8042::keyboard::Response>::try_into(data[0]) {
             self.ack(&data[..4]);
         } else {
-            let mut l = self.tgt.lock();
+            let mut l = self.out_buff.lock();
             if let Some(tgt) = l.take() {
-                drop(l); // free mutex as soon as possible.
+                // Drop lock ASAP
+                drop(l);
                 // SAFETY: DmaTarget pointer is provided by a DmaTarget which data may be cast to reference as long as it is not mutably aliased.
                 let dma_tgt = unsafe { &mut *tgt.0 };
                 dma_tgt[..data.len()].copy_from_slice(data);
-                tgt.1
-                    .fetch_add(data.len(), core::sync::atomic::Ordering::Relaxed);
-                self.io_waker.wake();
+                tgt.1.fetch_add(data.len(), Ordering::Relaxed);
+                self.o_waker.wake();
             }
         }
     }
@@ -544,7 +560,7 @@ impl PortComplex {
     }
 
     pub fn state(&self) -> PortState {
-        self.port_status
+        self.port_status.load(Ordering::Relaxed)
     }
 }
 
@@ -598,24 +614,35 @@ fn controller_timeout_handler() {
 pub(crate) mod file {
     use crate::controller::Controller;
     use alloc::boxed::Box;
-    use core::fmt::Write as _;
+    use core::any::Any;
+    use core::fmt::{Arguments, Formatter, Write as _};
     use core::pin::{Pin, pin};
     use core::task::{Context, Poll};
     use futures_util::FutureExt;
     use futures_util::future::BoxFuture;
     use hootux::WriteableBuffer;
+    use hootux::fs::sysfs::SysfsFile;
     use hootux::fs::vfs::MajorNum;
     use hootux::fs::{IoError, IoResult, device::*, file::*};
     use hootux::mem::dma::{DmaBuff, DmaTarget};
 
     #[derive(Debug, Copy, Clone)]
-    enum PortNum {
+    pub enum PortNum {
         One,
         Two,
     }
 
+    impl core::fmt::Display for PortNum {
+        fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
+            match self {
+                PortNum::One => write!(f, "1"),
+                PortNum::Two => write!(f, "2"),
+            }
+        }
+    }
+
     #[file]
-    struct PortFileObject {
+    pub struct PortFileObject {
         port: PortNum,
         ctl: alloc::sync::Arc<async_lock::Mutex<super::Controller>>,
         dev: DevID,
@@ -623,7 +650,7 @@ pub(crate) mod file {
     }
 
     impl PortFileObject {
-        pub(super) fn new(
+        pub(crate) fn new(
             controller: alloc::sync::Arc<async_lock::Mutex<Controller>>,
             port: PortNum,
             major_num: MajorNum,
@@ -683,6 +710,7 @@ pub(crate) mod file {
     }
 
     impl DeviceFile for PortFileObject {}
+    impl SysfsFile for PortFileObject {}
 
     impl Fifo<u8> for PortFileObject {
         fn open(&mut self, mode: OpenMode) -> Result<(), IoError> {
@@ -693,8 +721,13 @@ pub(crate) mod file {
                     PortNum::Two => &mut ctl.port_2,
                 };
 
-                if core::mem::replace(&mut port.open, true) {
-                    return Err(IoError::DeviceError);
+                if let Ok(_) = &mut port.open.compare_exchange(
+                    true,
+                    false,
+                    atomic::Ordering::Acquire,
+                    atomic::Ordering::Relaxed,
+                ) {
+                    return Err(IoError::Busy);
                 }
 
                 self.mode = mode;
@@ -715,7 +748,7 @@ pub(crate) mod file {
                 PortNum::One => &mut ctl.port_1,
                 PortNum::Two => &mut ctl.port_2,
             };
-            port.open = false;
+            port.open.store(false, atomic::Ordering::Release);
 
             self.mode = OpenMode::Locked;
             Ok(())
@@ -728,7 +761,11 @@ pub(crate) mod file {
                 PortNum::Two => &mut ctl.port_2,
             };
 
-            if port.open == false { 1 } else { 0 }
+            if port.open.load(atomic::Ordering::Relaxed) == false {
+                1
+            } else {
+                0
+            }
         }
 
         fn is_master(&self) -> Option<usize> {
@@ -764,8 +801,8 @@ pub(crate) mod file {
                             hootux::ToWritableBuffer::writable(&mut xfer_buff[..]);
                         let lock = self.ctl.lock().await;
                         let meta = match self.port {
-                            PortNum::One => lock.port_1.dev_meta,
-                            PortNum::Two => lock.port_2.dev_meta,
+                            PortNum::One => lock.port_1.meta(),
+                            PortNum::Two => lock.port_2.meta(),
                         };
 
                         let (mut b, len) = IoFuture::new(lock, buff, self.port).await;
@@ -898,12 +935,27 @@ pub(crate) mod file {
                 PortNum::Two => &mut ctl.port_2,
             };
 
-            *port.tgt.lock() = Some(self.tgt.clone());
+            *port.out_buff.lock() = Some(self.tgt.clone());
             port.cmd_ack.register(cx.waker());
 
             Poll::Pending
         }
     }
 
-    impl hootux::fs::sysfs::SysfsFile for PortFileObject {}
+    impl hootux::fs::sysfs::bus::BusDeviceFile for PortFileObject {
+        fn bus(&self) -> &'static str {
+            "i8042"
+        }
+
+        fn id(&self) -> Arguments {
+            match self.port {
+                PortNum::One => format_args!("port-1"),
+                PortNum::Two => format_args!("port-2"),
+            }
+        }
+
+        fn as_any(self: Box<Self>) -> Box<dyn Any> {
+            self
+        }
+    }
 }
