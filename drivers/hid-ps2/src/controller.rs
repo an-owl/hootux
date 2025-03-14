@@ -743,8 +743,7 @@ pub(crate) mod file {
             };
 
             // todo, this shouldn't block
-            hootux::block_on!(pin![t]);
-            Ok(())
+            hootux::block_on!(pin![t])
         }
 
         fn close(&mut self) -> Result<(), IoError> {
