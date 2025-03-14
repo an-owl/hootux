@@ -205,7 +205,7 @@ impl UniqueBus {
 /// A bus device file may export files into the kernel by including the [crate::fs::PATH_SEPARATOR]
 /// character in the filename. If a driver does this my must ensure that these filenames are not
 /// returned by [Directory::file_type] or counted by [Directory::entries].
-pub trait BusDeviceFile: SysfsDirectory + SysfsFile {
+pub trait BusDeviceFile: SysfsFile {
     /// Returns the name of the bus.
     fn bus(&self) -> &'static str;
 
