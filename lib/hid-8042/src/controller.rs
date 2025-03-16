@@ -70,13 +70,13 @@ impl PS2Controller {
         unsafe {
             asm!(
                 "out 0x64,al",
-                "jxcz 2f",
+                "jecxz 2f",
                 "mov al,{sec}",
-                "out 0x60",
+                "out 0x60,al",
                 "2:",
                 in("al") byte_1,
                 sec = in(reg_byte) byte_2,
-                in("cx") multiple,
+                in("ecx") multiple,
                 options(nomem, preserves_flags)
             )
         }
