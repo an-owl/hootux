@@ -60,14 +60,17 @@ impl SysFsRoot {
     ///
     /// This will panic if it has already been called.
     unsafe fn init() {
-        core::ptr::replace(
-            &raw mut SYSFS_ROOT,
-            Some(Self {
-                //firmware: SysfsFirmware {},
-                bus: bus::SysfsBus::init(),
-            }),
+        assert!(
+            core::ptr::replace(
+                &raw mut SYSFS_ROOT,
+                Some(Self {
+                    //firmware: SysfsFirmware {},
+                    bus: bus::SysfsBus::init(),
+                }),
+            )
+            .is_none(),
+            "SYSFS_ROOT already initialized"
         )
-        .expect("SYSFS_ROOT already initialized");
     }
 
     /// Fetches a new SysfsRoot file-object.

@@ -123,6 +123,7 @@ fn kernel_main(b: *mut libboot::boot_info::BootInfo) -> ! {
     {
         let tmpfs = fs::tmpfs::TmpFsRoot::new();
         fs::init_fs(tmpfs);
+        fs::sysfs::init()
     }
 
     let madt = acpi_tables.find_table::<acpi::madt::Madt>().unwrap();
