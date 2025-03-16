@@ -330,16 +330,22 @@ impl Controller {
             let r = PortTestResult::from_bits_retain(
                 self.read_data_with_timeout(Duration::millis(TIMEOUT_DURATION_MS))
                     .await
-                    .ok_or(())?,
+                    .unwrap_or_else(|| {
+                        log::trace!("port-1 test timed out, are ew in a VM? Assuming Ok");
+                        0
+                    }),
             );
             if !r.is_good() {
                 log::warn!("8042 Port one test failure: {r:?}"); // I think self can indicate that nothing is connected.
             }
-            self.ctl_raw.send_command(Command::TestPort1);
+            self.ctl_raw.send_command(Command::TestPort2);
             let r = PortTestResult::from_bits_retain(
                 self.read_data_with_timeout(Duration::millis(TIMEOUT_DURATION_MS))
                     .await
-                    .ok_or(())?,
+                    .unwrap_or_else(|| {
+                        log::trace!("port-2 test timed out, are ew in a VM? Assuming Ok");
+                        0
+                    }),
             );
             if !r.is_good() {
                 log::warn!("8042 Port two test failure: {r:?}")
