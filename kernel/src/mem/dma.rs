@@ -26,6 +26,19 @@ impl<T, C> Drop for DmaGuard<T, C> {
     }
 }
 
+impl<T, C> DmaGuard<T, C>
+where
+    C: DmaPointer<T>,
+{
+    pub const fn new(data: C) -> Self {
+        Self {
+            inner: core::mem::ManuallyDrop::new(data),
+            _phantom: PhantomData,
+            lock: None,
+        }
+    }
+}
+
 impl<T, C> DmaGuard<T, C> {
     pub fn unwrap(mut self) -> C {
         if self
