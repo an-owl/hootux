@@ -22,7 +22,7 @@ pub const PATH_SEPARATOR: char = '/';
 
 /// Initializes the VFS,
 pub fn init_fs(vfs: alloc::boxed::Box<dyn device::FileSystem>) {
-    assert!(unsafe { (&*(&raw const VIRTUAL_FILE_SYSTEM)).is_some() });
+    assert!(unsafe { (&*(&raw const VIRTUAL_FILE_SYSTEM)).is_none() });
     log::debug!(
         "Initializing VFS with: {} type: {}",
         vfs.device(),
