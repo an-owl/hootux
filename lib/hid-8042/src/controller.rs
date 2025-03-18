@@ -26,7 +26,7 @@ impl PS2Controller {
     }
 
     pub unsafe fn send_data_unchecked(&self, value: u8) {
-        unsafe { asm!("in al, 0x60", in("al") value, options(nomem, preserves_flags)) }
+        unsafe { asm!("out 0x60, al", in("al") value, options(nomem, preserves_flags)) }
     }
 
     /// Attempts to write data to the input register.
@@ -46,7 +46,7 @@ impl PS2Controller {
         let read: u8;
         unsafe {
             asm!(
-                "in al, 0x60",
+                "in al, 0x64",
                 out("al") read,
                 options(nomem, preserves_flags)
             );
@@ -194,6 +194,7 @@ pub enum Command {
 }
 
 bitflags::bitflags! {
+    #[derive(Copy, Clone, Debug)]
     /// Configuration byte contained in address `0` in internal memory.
     pub struct ConfigurationByte: u8 {
         const PORT_ONE_INT = 1;
