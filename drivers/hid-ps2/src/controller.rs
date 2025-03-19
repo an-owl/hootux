@@ -8,6 +8,12 @@ const TIMEOUT_DURATION_MS: u64 = 100;
 const PORT_ONE_ISA_IRQ: u8 = 0x01;
 const PORT_TWO_ISA_IRQ: u8 = 0x12;
 
+/// Expected buffer size, this is used for by [Controller::flush_buffer], this is required because
+/// QEMU will return the last byte when none are present in the buffer
+///
+// Linux defines an expected size of 16, we use 256 here because that *is* the buffer size that QEMU uses.
+const EXPECTED_BUFFER_SIZE: u32 = 256;
+
 /// Defines the number of retries until we determine the device will not respond correctly.
 const RETRIES: usize = 3;
 
@@ -51,9 +57,7 @@ macro_rules! interrupt_init_body {
             let mut in_buff = [0; 8];
             let mut in_len = 0;
 
-            // SAFETY: Interrupt indicates that the register is full, first read is safe
-            in_buff[0] = unsafe { ctl_raw.read_unchecked() };
-            for i in in_buff.iter_mut().skip(1) {
+            for i in in_buff.iter_mut() {
                 match ctl_raw.read_data() {
                     Some(d) => *i = d,
                     None => break,
@@ -61,7 +65,9 @@ macro_rules! interrupt_init_body {
                 in_len += 1;
             }
 
-            port.new_data(&in_buff[..in_len]);
+            if in_len > 0 {
+                port.new_data(&in_buff[..in_len]);
+            }
 
             unsafe { hootux::interrupts::eoi() } // declare EOI
         };
@@ -81,12 +87,15 @@ macro_rules! interrupt_init_body {
         }
         gsi.mask = false;
         gsi.delivery_mode = hootux::interrupts::apic::ioapic::DeliveryMode::Fixed;
-        gsi.target = hootux::interrupts::apic::ioapic::Target::Logical(0);
+        gsi.target = hootux::interrupts::apic::ioapic::Target::Physical(
+            hootux::interrupts::apic::ioapic::PhysicalTarget::new(0),
+        );
 
         // SAFETY: Interrupt handler is set above.
         unsafe {
             gsi.set().expect("???");
         }
+        log::trace!("{port} on irq {irq:x?}", port = stringify!($port));
     }};
 }
 macro_rules! init_port {
@@ -96,7 +105,8 @@ macro_rules! init_port {
         log::info!("Initializing {port}", port = $port_lit);
 
         for r in 0..RETRIES {
-            match $this.$port_command(Command::ResetAndBIST).await {
+            let m = $this.$port_command(Command::ResetAndBIST).await;
+            match m {
                 Ok([const { Response::Resend as u8 }, ..]) if r == RETRIES - 1 => {
                     log::warn!(
                         "Unable to initialize {port}: exceeded retries",
@@ -156,17 +166,18 @@ macro_rules! init_port {
                     return;
                 }
                 Ok([const { Response::Resend as u8 }, ..]) => continue,
-                Ok([const { Response::Ack as u8 }, content @ .., _]) if r == 1 => {
+                Ok([const { Response::Ack as u8 }, content @ .., _]) => {
                     match hid_8042::DeviceType::try_from(content) {
                         Ok(device_type) => {
                             $this.$port_name.set_state(PortState::Device(device_type));
                             break;
                         }
-                        Err(_) => {
+                        Err(_) if r == RETRIES-1 => {
                             log::warn!("Unable to identify device: invalid type");
                             $this.$port_name.set_state(PortState::Device(hid_8042::DeviceType::Unknown));
                             return;
                         }
+                        Err(_) => {} // just retry
                     }
                 }
                 Ok(_) => {
@@ -184,7 +195,7 @@ macro_rules! init_port {
                 }
                 Err(CommandError::SinglePortDevice) => {
                     // SAFETY: We cannot hit this because it will be returned above when reset and BIST is sent.
-                    unsafe { core::hint::unreachable_unchecked() }
+                    log::error!("Attempted to operate on port-2 when its not present.");
                 }
             }
         }
@@ -264,7 +275,7 @@ impl Controller {
 
         self.set_operation(false);
         // clear buffer
-        while let Some(_) = self.ctl_raw.read_data() {}
+        self.flush_buffer();
 
         self.ctl_raw
             .send_command(Command::ReadByte(0.try_into().unwrap()));
@@ -275,6 +286,8 @@ impl Controller {
                 None => {}
             }
         });
+
+        log::trace!("cfg_byte: {:?}", cfg_byte);
 
         // Disable translation.
         cfg_byte.set(ConfigurationByte::PORT_TRANSLATION, false);
@@ -353,8 +366,7 @@ impl Controller {
         }
 
         // we are done initializing the controller, enable ports.
-        self.ctl_raw.send_command(Command::EnablePort1);
-        self.ctl_raw.send_command(Command::EnablePort2);
+        self.set_operation(true);
 
         log::trace!("initialization completed");
 
@@ -469,17 +481,17 @@ impl Controller {
     fn set_operation(&self, enabled: bool) {
         if enabled {
             self.ctl_raw
-                .send_command(hid_8042::controller::Command::DisablePort1);
-            if self.multi_port {
-                self.ctl_raw
-                    .send_command(hid_8042::controller::Command::DisablePort2);
-            }
-        } else {
-            self.ctl_raw
                 .send_command(hid_8042::controller::Command::EnablePort1);
             if self.multi_port {
                 self.ctl_raw
                     .send_command(hid_8042::controller::Command::EnablePort2);
+            }
+        } else {
+            self.ctl_raw
+                .send_command(hid_8042::controller::Command::DisablePort1);
+            if self.multi_port {
+                self.ctl_raw
+                    .send_command(hid_8042::controller::Command::DisablePort2);
             }
         }
     }
@@ -490,6 +502,14 @@ impl Controller {
 
     pub(crate) fn is_multi_port(&self) -> bool {
         self.multi_port
+    }
+
+    fn flush_buffer(&mut self) {
+        for i in 0..EXPECTED_BUFFER_SIZE {
+            if self.ctl_raw.read_data().is_none() {
+                break;
+            }
+        }
     }
 }
 
@@ -553,7 +573,7 @@ impl PortComplex {
     /// - If `data` is a scancode then the code will be forwarded to any buffers currently waiting for them.
     fn new_data(&self, data: &[u8]) {
         if let Ok(_) = TryInto::<hid_8042::keyboard::Response>::try_into(data[0]) {
-            self.ack(&data[..4]);
+            self.ack(data);
         } else {
             let mut l = self.out_buff.lock();
             if let Some(tgt) = l.take() {
@@ -570,10 +590,9 @@ impl PortComplex {
 
     /// Called by [Self::new_data] when command response data has been located.
     fn ack(&self, buff: &[u8]) {
-        assert_eq!(buff.len(), 4);
         let mut b = self.ack_buffer.borrow_mut();
         b.fill(0);
-        b.copy_from_slice(buff);
+        b[..buff.len()].copy_from_slice(buff);
         self.cmd_ack.wake()
     }
 
