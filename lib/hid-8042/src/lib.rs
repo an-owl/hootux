@@ -76,7 +76,7 @@ impl TryFrom<[u8; 2]> for DeviceType {
             [0, _] => Ok(DeviceType::StandardMouse),
             [3, _] => Ok(DeviceType::MouseWithScrollWheel),
             [4, _] => Ok(DeviceType::Mouse5Button),
-            [0xab, 0xa3] => Ok(DeviceType::MF2Keyboard),
+            [0xab, 0x83] => Ok(DeviceType::MF2Keyboard),
             [0xab, 0xc1] => Ok(DeviceType::MF2Keyboard),
             [0xab, 0x84] => Ok(DeviceType::ShortKeyboard),
             [0xab, 0x85] => Ok(DeviceType::Ncd97Or122HostConnectKeyboard),
