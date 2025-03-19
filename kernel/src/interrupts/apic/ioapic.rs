@@ -344,7 +344,7 @@ pub struct PhysicalTarget {
 }
 
 impl PhysicalTarget {
-    const fn new(id: u8) -> Self {
+    pub const fn new(id: u8) -> Self {
         assert!(id < 16);
         Self { id }
     }
