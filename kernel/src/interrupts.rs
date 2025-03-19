@@ -179,7 +179,7 @@ fn test_breakpoint() {
 #[derive(Clone, Copy, Debug)]
 #[repr(u8)]
 pub enum InterruptIndex {
-    TlbShootdown, // 0x21
+    TlbShootdown, // 0x20
     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
     Generic(u8),
 }
