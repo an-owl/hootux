@@ -60,17 +60,20 @@ impl SysFsRoot {
     ///
     /// This will panic if it has already been called.
     unsafe fn init() {
+        let dupe = Self {
+            bus: bus::SysfsBus::init(),
+        };
         assert!(
-            core::ptr::replace(
-                &raw mut SYSFS_ROOT,
-                Some(Self {
-                    //firmware: SysfsFirmware {},
-                    bus: bus::SysfsBus::init(),
-                }),
-            )
-            .is_none(),
+            core::ptr::replace(&raw mut SYSFS_ROOT, Some(dupe.clone()),).is_none(),
             "SYSFS_ROOT already initialized"
-        )
+        );
+
+        hootux::block_on!(hootux::fs::get_vfs().mount(
+            Box::new(dupe),
+            "/sys",
+            hootux::fs::vfs::MountFlags::empty(),
+            "",
+        ));
     }
 
     /// Fetches a new SysfsRoot file-object.
