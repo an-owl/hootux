@@ -113,8 +113,11 @@ impl From<ImplSysFsRoot> for proc_macro2::TokenStream {
 
                 fn get_opt(&self, option: &str) -> Option<FsOptionVariant> {
                     match option {
+                        // We dont use sane inode IDs so dir cache is not allowed
                         FsOpts::DIR_CACHE => Some(FsOptionVariant::Bool(false)),
-                        FsOpts::DEV_ALLOWED => Some(FsOptionVariant::Bool(true)),
+                        // Devices must be mounted by native sysfs methods and not mounted by the VFS
+                        FsOpts::DEV_ALLOWED => Some(FsOptionVariant::Bool(false)),
+                        // All options are statically compiled and immutable
                         _ => None,
                     }
                 }
