@@ -120,7 +120,9 @@ impl From<ImplSysFsRoot> for proc_macro2::TokenStream {
                 }
 
                 fn set_opts(&mut self, options: &str) {
-                    log::error!("Called set_opts() on {}: Not allowed", core::any::type_name::<Self>());
+                    if options.len() > 0 {
+                        ::log::warn!("Attempted to set options \"{options}\" for sysfs: Not allowed")
+                    }
                 }
 
                 fn driver_name(&self) -> &'static str {
