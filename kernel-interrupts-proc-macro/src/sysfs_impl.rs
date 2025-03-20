@@ -55,7 +55,7 @@ impl From<ImplSysFsRoot> for proc_macro2::TokenStream {
                 }
 
                 fn device(&self) -> crate::fs::vfs::DevID {
-                    crate::fs::vfs::DevID::NULL
+                    crate::fs::vfs::DevID::new(::hootux::fs::vfs::MajorNum::new_kernel(1),0)
                 }
 
                 fn clone_file(&self) -> Box<dyn File> {
