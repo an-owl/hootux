@@ -180,10 +180,10 @@ impl LocalExec {
             match task.poll(&mut core::task::Context::from_waker(&waker)) {
                 // todo impl Display for task and display more info here
                 Poll::Ready(r) => {
-                    GLOBAL_TASK_CACHE.drop(id);
+                    self.drop_task(id);
                     // todo implement Display for Task, should show a name and owned device(s)
                     match r {
-                        super::TaskResult::ExitedNormally => {}
+                        super::TaskResult::ExitedNormally => log::debug!("Task {:?} returned {:?}", id, super::TaskResult::ExitedNormally),
                         super::TaskResult::StoppedExternally => log::warn!("Task {} returned {:?}, was the device removed? see driver log for details",id.0,super::TaskResult::StoppedExternally),
                         super::TaskResult::Error => log::error!("{id:?} Exited with error"), // task should log error info
                         super::TaskResult::Panicked => log::error!("{id:?} Panicked and was caught successfully")
@@ -269,5 +269,10 @@ impl LocalExec {
         GLOBAL_TASK_CACHE.insert(task.clone());
         self.cache.lock().local_cache.insert(id, task);
         self.run_queue.push(id).expect("Run queue is full");
+    }
+
+    fn drop_task(&self, id: super::TaskId) {
+        self.cache.lock().local_cache.remove(&id);
+        GLOBAL_TASK_CACHE.cache.write().remove(&id);
     }
 }
