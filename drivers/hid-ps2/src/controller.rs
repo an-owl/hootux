@@ -25,6 +25,7 @@ pub(crate) struct Controller {
     driver_major: hootux::fs::vfs::MajorNum, // We keep just the major num this is basically the driver root. the portnum is the minor num
 }
 
+#[derive(Copy, Clone, Debug)]
 enum CommandError {
     /// Indicates the controller has timed out. No further commands can be sent.
     ///
