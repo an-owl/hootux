@@ -236,7 +236,7 @@ macro_rules! init_port {
                 return;
             }
             Err(CommandError::SinglePortDevice) => {
-                core::unreachable!()
+                log::error!("Attempted to send command to port 2 on single port device")
             }
             _ => {
                 log::warn!("Bad response when querying device type");
