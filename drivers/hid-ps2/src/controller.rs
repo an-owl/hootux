@@ -243,6 +243,27 @@ macro_rules! init_port {
                 $this.$port_name.set_state(PortState::Nuisance);
             },
         }
+
+        for i in 0..RETRIES {
+            match $this.$port_command(Command::EnableScan).await {
+                Ok([const { Response::Ack as u8 }, ..]) => break,
+                Ok([const { Response::Resend as u8 }, ..]) if i == RETRIES - 1 => {
+                    $this.$port_name.set_state(PortState::Nuisance);
+                    return;
+                }
+                Ok([const { Response::Resend as u8 }, ..]) => continue,
+                Ok(_) => {
+                    log::error!("Unknown response");
+                    $this.$port_name.set_state(PortState::Nuisance);
+                }
+                Err(CommandError::PortTimeout) => $this.$port_name.set_state(PortState::Down),
+                Err(CommandError::ControllerTimeout) => {}
+                Err(CommandError::SinglePortDevice) => {
+                    log::error!("Attempted to send command to port 2 on single port device")
+                }
+            }
+        }
+
     }};
 }
 
