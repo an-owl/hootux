@@ -603,7 +603,8 @@ impl PortComplex {
                 drop(l);
                 // SAFETY: DmaTarget pointer is provided by a DmaTarget which data may be cast to reference as long as it is not mutably aliased.
                 let dma_tgt = unsafe { &mut *tgt.0 };
-                dma_tgt[..data.len()].copy_from_slice(data);
+                let cpy_len = data.len().min(dma_tgt.len());
+                dma_tgt[..cpy_len].copy_from_slice(&data[..cpy_len]);
                 tgt.1.fetch_add(data.len(), Ordering::Relaxed);
                 self.o_waker.wake();
             }
