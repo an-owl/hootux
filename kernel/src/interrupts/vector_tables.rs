@@ -36,6 +36,10 @@ impl InterruptLog {
     }
 }
 
+pub fn fetch_log(vector: u8) -> usize {
+    unsafe { INT_LOG.fetch_vec(vector) }
+}
+
 /// Handle registry stores interrupt handlers. it is used to serve multiple purposes that can't be
 /// handled by using the idt directly.
 ///
