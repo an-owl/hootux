@@ -209,48 +209,6 @@ macro_rules! init_port {
 
         log::trace!("test success");
 
-        for r in 0..RETRIES {
-            match $this.$port_command(Command::IdentifyDevice).await {
-                Ok([const { Response::Resend as u8 }, ..]) if r == RETRIES - 1 => {
-                    log::warn!("Unable to identify device: exceeded retries");
-                    $this.$port_name.set_state(PortState::Nuisance);
-                    return;
-                }
-                Ok([const { Response::Resend as u8 }, ..]) => continue,
-                Ok([const { Response::Ack as u8 }, content @ .., _]) => {
-                    match hid_8042::DeviceType::try_from(content) {
-                        Ok(device_type) => {
-                            $this.$port_name.set_state(PortState::Device(device_type));
-                            break;
-                        }
-                        Err(_) if r == RETRIES-1 => {
-                            log::warn!("Unable to identify device: invalid type");
-                            $this.$port_name.set_state(PortState::Device(hid_8042::DeviceType::Unknown));
-                            return;
-                        }
-                        Err(_) => {} // just retry
-                    }
-                }
-                Ok(_) => {
-                    log::error!("Unknown bad response");
-                    $this.$port_name.set_state(PortState::Nuisance);
-                }
-                Err(CommandError::PortTimeout) => {
-                    log::error!("Timeout fetching device type");
-                    $this.$port_name.set_state(PortState::Down);
-                    return;
-                }
-
-                Err(CommandError::ControllerTimeout) => {
-                    controller_timeout_handler()
-                }
-                Err(CommandError::SinglePortDevice) => {
-                    // SAFETY: We cannot hit this because it will be returned above when reset and BIST is sent.
-                    log::error!("Attempted to operate on port-2 when its not present.");
-                }
-            }
-        }
-
         // set scancode set
         match $this
             .$port_command(Command::ScanCodeSet(
@@ -489,7 +447,7 @@ impl Controller {
         &mut self,
         cmd: hid_8042::keyboard::Command,
     ) -> Result<[u8; 4], CommandError> {
-        const WRITE_PORT_2_CMD: u8 = 0xd3;
+        const WRITE_PORT_2_CMD: u8 = 0xd4;
 
         if !self.is_multi_port() {
             return Err(CommandError::SinglePortDevice);
@@ -514,7 +472,7 @@ impl Controller {
         }
 
         let timeout = sleep(TIMEOUT_DURATION_MS);
-        let cmd_ret = self.port_1.cmd_wait();
+        let cmd_ret = self.port_2.cmd_wait();
         let ret = futures_util::select_biased! {
             _ = timeout.fuse() => return Err(CommandError::PortTimeout),
             ret = cmd_ret.fuse() => ret,
