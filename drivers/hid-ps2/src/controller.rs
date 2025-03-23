@@ -6,7 +6,7 @@ use hootux::time::{AbsoluteTime, Duration};
 
 const TIMEOUT_DURATION_MS: u64 = 100;
 const PORT_ONE_ISA_IRQ: u8 = 0x01;
-const PORT_TWO_ISA_IRQ: u8 = 0x12;
+const PORT_TWO_ISA_IRQ: u8 = 12;
 
 /// Expected buffer size, this is used for by [Controller::flush_buffer], this is required because
 /// QEMU will return the last byte when none are present in the buffer
