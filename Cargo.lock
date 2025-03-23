@@ -248,7 +248,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3492acde4c3fc54c845eaab3eed8bd00c7a7d881f78bfc801e43a93dec1331ae"
 dependencies = [
  "concurrent-queue",
- "parking",
  "pin-project-lite",
 ]
 
@@ -412,6 +411,7 @@ dependencies = [
  "ahci",
  "cast_trait_object",
  "futures-util",
+ "hid-ps2",
  "hootux",
  "kernel-proc-macro",
  "libboot",
@@ -619,12 +619,6 @@ dependencies = [
  "quote",
  "syn 2.0.63",
 ]
-
-[[package]]
-name = "parking"
-version = "2.2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f38d5652c16fde515bb1ecef450ab0f6a219d619a7274976324d5e377f7dceba"
 
 [[package]]
 name = "pc-keyboard"
