@@ -892,7 +892,7 @@ pub(crate) mod file {
                             _ => return Err((IoError::MediaError, b, len)),
                         };
 
-                        for i in &b_ref[0..len] {
+                        for i in &b_ref[0..len.max(b_ref.len())] {
                             match use_set.advance_state(*i) {
                                 Ok(None) => continue,
                                 Ok(Some(e)) => {
