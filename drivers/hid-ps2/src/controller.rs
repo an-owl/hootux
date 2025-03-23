@@ -1008,7 +1008,7 @@ pub(crate) mod file {
             };
 
             *port.out_buff.lock() = Some(self.tgt.clone());
-            port.cmd_ack.register(cx.waker());
+            port.o_waker.register(cx.waker());
 
             Poll::Pending
         }
