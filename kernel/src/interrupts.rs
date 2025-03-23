@@ -42,6 +42,7 @@ pub fn init_exceptions() {
     idt[33].set_handler_fn(apic_error);
     bind_stubs(&mut idt);
     idt[255].set_handler_fn(spurious);
+    idt.non_maskable_interrupt.set_handler_fn(except_nmi);
 
     // SAFETY: This is the only write to `IDT` and it occurs before multiprocessing is initialized
     unsafe {
@@ -167,6 +168,10 @@ extern "x86-interrupt" fn spurious(sf: InterruptStackFrame) {
 
 extern "x86-interrupt" fn except_seg_not_present(sf: InterruptStackFrame, e: u64) {
     panic!("**SEGMENT NOT PRESENT**\n{sf:#?}\n{e:#x}")
+}
+
+extern "x86-interrupt" fn except_nmi(sf: InterruptStackFrame) {
+    unsafe { vector_tables::INT_LOG.log(2) }
 }
 
 #[test_case]
