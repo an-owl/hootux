@@ -106,6 +106,56 @@ macro_rules! init_port {
         log::info!("Initializing {port}", port = $port_lit);
 
         for r in 0..RETRIES {
+            match $this.$port_command(Command::IdentifyDevice).await {
+                Ok([const { Response::Resend as u8 }, ..]) if r == RETRIES - 1 => {
+                    log::warn!("Unable to identify device: exceeded retries");
+                    $this.$port_name.set_state(PortState::Nuisance);
+                    return;
+                }
+                Ok([const { Response::Resend as u8 }, ..]) => continue,
+                Ok([const { Response::Ack as u8 }, content @ .., _]) => {
+                    match hid_8042::DeviceType::try_from(content) {
+                        Ok(device_type) => {
+                            $this.$port_name.set_state(PortState::Device(device_type));
+                            break;
+                        }
+                        Err(_) if r == RETRIES-1 => {
+                            log::warn!("Unable to identify device: invalid type");
+                            $this.$port_name.set_state(PortState::Device(hid_8042::DeviceType::Unknown));
+                            return;
+                        }
+                        Err(_) => {} // just retry
+                    }
+                }
+                Ok(_) => {
+                    log::error!("Unknown bad response");
+                    $this.$port_name.set_state(PortState::Nuisance);
+                }
+                Err(CommandError::PortTimeout) => {
+                    log::error!("Timeout fetching device type");
+                    $this.$port_name.set_state(PortState::Down);
+                    return;
+                }
+
+                Err(CommandError::ControllerTimeout) => {
+                    controller_timeout_handler()
+                }
+                Err(CommandError::SinglePortDevice) => {
+                    // SAFETY: We cannot hit this because it will be returned above when reset and BIST is sent.
+                    log::error!("Attempted to operate on port-2 when its not present.");
+                }
+            }
+        }
+
+
+
+        match $this.$port_name.state() {
+            PortState::Device(d) if d.is_keyboard() => {}
+            _ => return,
+        }
+
+
+        for r in 0..RETRIES {
             let m = $this.$port_command(Command::ResetAndBIST).await;
             match m {
                 Ok([const { Response::Resend as u8 }, ..]) if r == RETRIES - 1 => {
