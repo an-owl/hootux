@@ -535,7 +535,7 @@ impl Controller {
     }
 
     fn flush_buffer(&mut self) {
-        for i in 0..EXPECTED_BUFFER_SIZE {
+        for _ in 0..EXPECTED_BUFFER_SIZE {
             if self.ctl_raw.read_data().is_none() {
                 break;
             }
@@ -727,10 +727,13 @@ pub(crate) mod file {
             port: PortNum,
             major_num: MajorNum,
         ) -> Self {
-            let id = DevID::new(major_num, match port {
-                PortNum::One => 1,
-                PortNum::Two => 2,
-            });
+            let id = DevID::new(
+                major_num,
+                match port {
+                    PortNum::One => 1,
+                    PortNum::Two => 2,
+                },
+            );
 
             Self {
                 port,
