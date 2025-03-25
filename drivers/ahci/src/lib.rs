@@ -9,7 +9,7 @@ pub mod driver;
 pub(crate) mod hba;
 pub(crate) mod register;
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn init() {
     hootux::system::sysfs::get_sysfs()
         .get_discovery()

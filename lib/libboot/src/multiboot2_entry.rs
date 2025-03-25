@@ -24,12 +24,11 @@ const _ASSERT: () = {
     assert!(core::mem::align_of::<crate::boot_info::BootInfo>() <= 8);
 };
 
-
 // We cannot const BitOR the flags, so we use a macro and do it anyway.
 macro_rules! offset_mem_flags {
     () => {
-        ::x86_64::structures::paging::PageTableFlags::PRESENT |
-        ::x86_64::structures::paging::PageTableFlags::WRITABLE
+        ::x86_64::structures::paging::PageTableFlags::PRESENT
+            | ::x86_64::structures::paging::PageTableFlags::WRITABLE
     };
 }
 
@@ -37,7 +36,8 @@ macro_rules! offset_mem_flags {
 // The jump on the last line throws a linker error if `_kernel_preload_entry_mb2efi64` can't be truncated to a 32bit pointer
 // I cannot figure out any other way to assert this
 #[cfg(all(feature = "uefi"))]
-core::arch::global_asm!(r#"
+core::arch::global_asm!(
+    r#"
 .section .text.libboot.entry.mb2_efi64
 .global _kernel_preload_entry_mb2efi64
 _kernel_preload_entry_mb2efi64:
@@ -48,9 +48,10 @@ _kernel_preload_entry_mb2efi64:
     jmp _kernel_mb2_preload_efi64
     .code32
     jmp _kernel_preload_entry_mb2efi64
-"#);
+"#
+);
 
-extern "C" {
+unsafe extern "C" {
     #[deny(clippy::disallowed_methods)]
     pub fn _kernel_preload_entry_mb2efi64() -> !;
 }
@@ -60,19 +61,35 @@ extern "C" {
 /// The actual entry is [_kernel_preload_entry_mb2efi64] which sets up a C-abi call to this fn
 // not here that mbi_ptr is a 32-bit pointer but _kernel_preload_entry ensures that the top half of rsi is clear
 #[cfg(all(feature = "uefi"))]
-#[no_mangle]
-#[link_section = ".text.libboot.multiboot2.kernel_preload_efi64"]
-extern "C" fn _kernel_mb2_preload_efi64(magic: u32, mbi_ptr: *const multiboot2::BootInformationHeader) -> ! {
-    assert_eq!(magic, 0x36d76289, "Wrong magic expected 0x36d76289 for multiboot2 got {:#x}",magic);
+#[unsafe(no_mangle)]
+#[unsafe(link_section = ".text.libboot.multiboot2.kernel_preload_efi64")]
+extern "C" fn _kernel_mb2_preload_efi64(
+    magic: u32,
+    mbi_ptr: *const multiboot2::BootInformationHeader,
+) -> ! {
+    assert_eq!(
+        magic, 0x36d76289,
+        "Wrong magic expected 0x36d76289 for multiboot2 got {:#x}",
+        magic
+    );
     let mbi = unsafe { multiboot2::BootInformation::load(mbi_ptr) }.unwrap();
-    assert!(mbi.efi_bs_not_exited_tag().is_some(), "Boot services exited");
+    assert!(
+        mbi.efi_bs_not_exited_tag().is_some(),
+        "Boot services exited"
+    );
 
     // If this panics there is really nothing I can do about it. But it shouldn't ever panic.
-    let mut st = unsafe { SysTable::from_ptr(mbi.efi_sdt64_tag().unwrap().sdt_address() as *mut _).unwrap() };
+    let mut st = unsafe {
+        SysTable::from_ptr(mbi.efi_sdt64_tag().unwrap().sdt_address() as *mut _).unwrap()
+    };
 
     let handle = {
         if let Some(h) = mbi.efi_ih64_tag().take() {
-            throw(&mut st, unsafe { uefi::Handle::from_ptr(h.image_handle() as *mut core::ffi::c_void) }.ok_or("Image handle pointer is null"))
+            throw(
+                &mut st,
+                unsafe { uefi::Handle::from_ptr(h.image_handle() as *mut core::ffi::c_void) }
+                    .ok_or("Image handle pointer is null"),
+            )
         } else {
             efi_panic(&mut st, "Not EFI image handle provided by bootloader")
         }
@@ -84,11 +101,22 @@ extern "C" fn _kernel_mb2_preload_efi64(magic: u32, mbi_ptr: *const multiboot2::
 
     // SAFETY: Does not dereference slice
     #[cfg(feature = "debug-bits")]
-    let _ = unsafe { core::writeln!(st.stderr(), "New stack: {:p}, size: {:#x} top: {:p}", new_stack.get_ptr(), new_stack.as_slice().len(), new_stack.as_slice()) };
+    let _ = unsafe {
+        core::writeln!(
+            st.stderr(),
+            "New stack: {:p}, size: {:#x} top: {:p}",
+            new_stack.get_ptr(),
+            new_stack.as_slice().len(),
+            new_stack.as_slice()
+        )
+    };
     // allocate this before own_l4 because that will map bi_ptr
     // This is not initialized, do not read
     let bi_ptr: *mut crate::boot_info::BootInfo = {
-        let r = st.boot_services().allocate_pool(MemoryType::LOADER_DATA, core::mem::size_of::<crate::boot_info::BootInfo>());
+        let r = st.boot_services().allocate_pool(
+            MemoryType::LOADER_DATA,
+            core::mem::size_of::<crate::boot_info::BootInfo>(),
+        );
         throw(&mut st, r).cast()
     };
 
@@ -102,15 +130,23 @@ extern "C" fn _kernel_mb2_preload_efi64(magic: u32, mbi_ptr: *const multiboot2::
 
     #[cfg(feature = "debug-bits")]
     for i in mbi.elf_sections().unwrap() {
-        let _ = core::writeln!(st.stderr(),"Section: {}, {:?}, start: {:#x}, len: {:#x}, flags: {:#x}", i.name().unwrap(), i.section_type(), i.start_address(), i.size(), i.flags());
+        let _ = core::writeln!(
+            st.stderr(),
+            "Section: {}, {:?}, start: {:#x}, len: {:#x}, flags: {:#x}",
+            i.name().unwrap(),
+            i.section_type(),
+            i.start_address(),
+            i.size(),
+            i.flags()
+        );
     }
 
     if let Some(false) = check_kernel_is_mapped(&mbi, &mapper) {
-        efi_panic(&mut st,"Kernel code not mapped");
+        efi_panic(&mut st, "Kernel code not mapped");
     }
 
     let mm_entry_size = st.boot_services().memory_map_size().entry_size;
-    let (st,mut map) = st.exit_boot_services(MemoryType::LOADER_DATA);
+    let (st, mut map) = st.exit_boot_services(MemoryType::LOADER_DATA);
 
     map.sort();
     let map = {
@@ -121,8 +157,13 @@ extern "C" fn _kernel_mb2_preload_efi64(magic: u32, mbi_ptr: *const multiboot2::
         let count = map.entries().len();
         let ptr = map.get_mut(0).unwrap() as *mut _ as *mut u8;
         // SAFETY: The pointer is not valid until after `mapper` is loaded. We can guarantee that ptr will be valid then
-        let slice = unsafe { core::slice::from_raw_parts_mut(ptr.offset(PHYS_OFFSET_ADDR as isize), mm_entry_size * count) };
-        uefi::table::boot::MemoryMap::from_raw(slice,mm_entry_size)
+        let slice = unsafe {
+            core::slice::from_raw_parts_mut(
+                ptr.offset(PHYS_OFFSET_ADDR as isize),
+                mm_entry_size * count,
+            )
+        };
+        uefi::table::boot::MemoryMap::from_raw(slice, mm_entry_size)
     };
 
     let bi = crate::boot_info::BootInfo {
@@ -141,7 +182,7 @@ extern "C" fn _kernel_mb2_preload_efi64(magic: u32, mbi_ptr: *const multiboot2::
 
     // We will not call set_virtual_address_map() here because it can only be called once, and the kernel may not want to use our map.
     // can I make this unconditional jump instead of call
-    cx_switch(new_stack,mapper,bi_ptr)
+    cx_switch(new_stack, mapper, bi_ptr)
     // I would put something here in case _libboot_entry DOES return but lldb does that for me
     // Here will be either ud2 or int3 instructions
     // So the worst that can happen is exceptions, and not some random code being executed
@@ -150,16 +191,31 @@ extern "C" fn _kernel_mb2_preload_efi64(magic: u32, mbi_ptr: *const multiboot2::
 fn alloc_new_stack(st: &mut SysTable) -> crate::common::StackPointer {
     // + 2 allows for a guard page at each end.
     let pages = (STACK_SIZE / 4096) + 2;
-    let ptr = throw(st, st.boot_services().allocate_pages(uefi::table::boot::AllocateType::AnyPages, MemoryType::LOADER_DATA,pages));
+    let ptr = throw(
+        st,
+        st.boot_services().allocate_pages(
+            uefi::table::boot::AllocateType::AnyPages,
+            MemoryType::LOADER_DATA,
+            pages,
+        ),
+    );
 
     // SAFETY: This is safe the pointer is re-located to the actual base later
     // This acts as setting up guard pages
-    unsafe { throw(st, st.boot_services().free_pages(ptr,1)) };
-    unsafe { throw(st, st.boot_services().free_pages(ptr + 4096 + STACK_SIZE as u64,1)) };
+    unsafe { throw(st, st.boot_services().free_pages(ptr, 1)) };
+    unsafe {
+        throw(
+            st,
+            st.boot_services()
+                .free_pages(ptr + 4096 + STACK_SIZE as u64, 1),
+        )
+    };
 
     // + 4k for guard page, this will be unmapped freed later
     // SAFETY: This is safe, the pointer points to valid memory.
-    unsafe  { crate::common::StackPointer::new_from_bottom((ptr + 4096) as usize as * mut (), STACK_SIZE) }
+    unsafe {
+        crate::common::StackPointer::new_from_bottom((ptr + 4096) as usize as *mut (), STACK_SIZE)
+    }
 }
 
 /// Checks that the kernel is mapped into `mapper`
@@ -167,11 +223,18 @@ fn alloc_new_stack(st: &mut SysTable) -> crate::common::StackPointer {
 /// - Returns `None` if this can't be checked. Which should be treated as success
 /// - Returns `Some(false)` on failure
 /// - Returns `Some(true)` on success
-fn check_kernel_is_mapped(mbi: &multiboot2::BootInformation, mapper: &x86_64::structures::paging::OffsetPageTable) -> Option<bool> {
+fn check_kernel_is_mapped(
+    mbi: &multiboot2::BootInformation,
+    mapper: &x86_64::structures::paging::OffsetPageTable,
+) -> Option<bool> {
     use x86_64::structures::paging::mapper::TranslateResult;
     for i in mbi.elf_sections()? {
-        if let TranslateResult::Mapped {..} = mapper.translate(x86_64::VirtAddr::new(i.start_address())) {
-            if let TranslateResult::Mapped {..} = mapper.translate(x86_64::VirtAddr::new(i.end_address())) {
+        if let TranslateResult::Mapped { .. } =
+            mapper.translate(x86_64::VirtAddr::new(i.start_address()))
+        {
+            if let TranslateResult::Mapped { .. } =
+                mapper.translate(x86_64::VirtAddr::new(i.end_address()))
+            {
                 break;
             }
         }
@@ -184,33 +247,45 @@ fn check_kernel_is_mapped(mbi: &multiboot2::BootInformation, mapper: &x86_64::st
 /// Returns a reference to the new table.
 /// This will write the physical address of the old table in entry 255 of the new table with all
 /// flags clear so the memory may be freed later if possible.
- #[cfg(all(feature = "uefi"))]
-fn own_l4<'s>(st: &'s mut SysTable) -> x86_64::structures::paging::mapper::OffsetPageTable<'static> {
+#[cfg(all(feature = "uefi"))]
+fn own_l4<'s>(
+    st: &'s mut SysTable,
+) -> x86_64::structures::paging::mapper::OffsetPageTable<'static> {
     use x86_64::structures::paging::{
-        page_table::PageTable,
-        page::PageRangeInclusive,
-        PhysFrame,
-        Size4KiB,
-        Size2MiB,
-        Page,
+        Page, PhysFrame, Size2MiB, Size4KiB, page::PageRangeInclusive, page_table::PageTable,
     };
 
     // current l4 may be read only
-    let new_l4: &mut PageTable = unsafe { &mut *(st.boot_services().allocate_pages(uefi::table::boot::AllocateType::AnyPages, MemoryType::LOADER_DATA, 1).map_err(|_| efi_panic(st, "System ran out of memory")).unwrap() as usize as *mut _) };
+    let new_l4: &mut PageTable = unsafe {
+        &mut *(st
+            .boot_services()
+            .allocate_pages(
+                uefi::table::boot::AllocateType::AnyPages,
+                MemoryType::LOADER_DATA,
+                1,
+            )
+            .map_err(|_| efi_panic(st, "System ran out of memory"))
+            .unwrap() as usize as *mut _)
+    };
     *new_l4 = PageTable::new();
 
     // Re-map the identity mapped addresses to their new offset in higher half
-    let mut mapper = unsafe { x86_64::structures::paging::mapper::OffsetPageTable::new(&mut *new_l4, x86_64::VirtAddr::new(0)) };
+    let mut mapper = unsafe {
+        x86_64::structures::paging::mapper::OffsetPageTable::new(
+            &mut *new_l4,
+            x86_64::VirtAddr::new(0),
+        )
+    };
     let mut mm = get_mem_map(st);
     mm.sort();
 
     #[cfg(feature = "debug-bits")]
     for i in mm.entries() {
-        let _ = core::writeln!(st.stdout(),"{i:x?}");
+        let _ = core::writeln!(st.stdout(), "{i:x?}");
     }
 
     // Compiler doesn't know that this will either be initialized or panic
-    let mut last_region= MaybeUninit::uninit();
+    let mut last_region = MaybeUninit::uninit();
     // We need to get the last accessible byte of memory
     // There may be entries off the end of accessible memory
     // we need identify these and check the region below it.
@@ -219,11 +294,11 @@ fn own_l4<'s>(st: &'s mut SysTable) -> x86_64::structures::paging::mapper::Offse
         if let Some(r) = mm.get(i) {
             if !r.att.is_empty() {
                 last_region.write(*r);
-                break
+                break;
             }
         }
         if i == 0 {
-            efi_panic(st,"Cannot determine amount of available memory")
+            efi_panic(st, "Cannot determine amount of available memory")
         }
     }
 
@@ -243,20 +318,24 @@ fn own_l4<'s>(st: &'s mut SysTable) -> x86_64::structures::paging::mapper::Offse
         i.start_address().as_u64();
         // SAFETY: This is safe. This is not live.
         unsafe {
-            mapper.map_to(
-                Page::<Size2MiB>::containing_address(offset + i.start_address().as_u64()),
-                PhysFrame::containing_address(x86_64::PhysAddr::new(i.start_address().as_u64())),
-                offset_mem_flags!(),
-                &mut HalfArsedFrameAllocator{st},
-            ).unwrap().ignore();
+            mapper
+                .map_to(
+                    Page::<Size2MiB>::containing_address(offset + i.start_address().as_u64()),
+                    PhysFrame::containing_address(x86_64::PhysAddr::new(
+                        i.start_address().as_u64(),
+                    )),
+                    offset_mem_flags!(),
+                    &mut HalfArsedFrameAllocator { st },
+                )
+                .unwrap()
+                .ignore();
         }
     }
 
     // map lower addresses so everything isn't broken
-    for (e,i) in mm.entries().enumerate() {
+    for (e, i) in mm.entries().enumerate() {
         match i.ty {
             MemoryType::LOADER_DATA => {
-
                 #[cfg(feature = "debug-bits")]
                 let _ = core::writeln!(st.stderr(), "Mapping {e}: {i:x?}");
 
@@ -265,17 +344,27 @@ fn own_l4<'s>(st: &'s mut SysTable) -> x86_64::structures::paging::mapper::Offse
                 // use 4K pages using 2M may cause issues. todo Maybe optimize this later?
                 let iter = unsafe {
                     x86_64::structures::paging::frame::PhysFrameRangeInclusive {
-                        start: PhysFrame::<Size4KiB>::from_start_address_unchecked(x86_64::PhysAddr::new(i.phys_start)),
-                        end: PhysFrame::from_start_address_unchecked(x86_64::PhysAddr::new(i.phys_start + (i.page_count * 4096))),
+                        start: PhysFrame::<Size4KiB>::from_start_address_unchecked(
+                            x86_64::PhysAddr::new(i.phys_start),
+                        ),
+                        end: PhysFrame::from_start_address_unchecked(x86_64::PhysAddr::new(
+                            i.phys_start + (i.page_count * 4096),
+                        )),
                     }
                 };
 
                 for frame in iter {
-                    let b = unsafe { mapper.identity_map(frame, offset_mem_flags!(), &mut HalfArsedFrameAllocator{st}) };
-                    throw(st,b).ignore();
+                    let b = unsafe {
+                        mapper.identity_map(
+                            frame,
+                            offset_mem_flags!(),
+                            &mut HalfArsedFrameAllocator { st },
+                        )
+                    };
+                    throw(st, b).ignore();
                 }
-            },
-            _ => {}, // Do nothing. Maybe do something at some point?
+            }
+            _ => {} // Do nothing. Maybe do something at some point?
         }
     }
     mapper
@@ -283,31 +372,30 @@ fn own_l4<'s>(st: &'s mut SysTable) -> x86_64::structures::paging::mapper::Offse
 
 #[cfg(all(feature = "uefi"))]
 struct HalfArsedFrameAllocator<'boot> {
-    st: &'boot mut SysTable
+    st: &'boot mut SysTable,
 }
 
 #[cfg(all(feature = "uefi"))]
-unsafe impl<'a> FrameAllocator<x86_64::structures::paging::Size4KiB> for HalfArsedFrameAllocator<'a> {
-    fn allocate_frame(&mut self) -> Option<x86_64::structures::paging::PhysFrame<x86_64::structures::paging::Size4KiB>> {
+unsafe impl<'a> FrameAllocator<x86_64::structures::paging::Size4KiB>
+    for HalfArsedFrameAllocator<'a>
+{
+    fn allocate_frame(
+        &mut self,
+    ) -> Option<x86_64::structures::paging::PhysFrame<x86_64::structures::paging::Size4KiB>> {
         use uefi::table::boot;
         use x86_64::structures::paging::PhysFrame;
 
         // SAFETY: The unsafe op is effectively just a typecast
-        self.st.boot_services()
-            .allocate_pages(
-                boot::AllocateType::AnyPages,
-                MemoryType::LOADER_DATA,
-                1)
+        self.st
+            .boot_services()
+            .allocate_pages(boot::AllocateType::AnyPages, MemoryType::LOADER_DATA, 1)
             .ok()
-            .map(
-                |a|
-                    unsafe { PhysFrame::from_start_address_unchecked(x86_64::PhysAddr::new(a)) }
-            )
+            .map(|a| unsafe { PhysFrame::from_start_address_unchecked(x86_64::PhysAddr::new(a)) })
     }
 }
 
 #[cfg(all(feature = "uefi"))]
-fn get_mem_map<'a,'b>(st: &'a mut SysTable) -> uefi::table::boot::MemoryMap<'b> {
+fn get_mem_map<'a, 'b>(st: &'a mut SysTable) -> uefi::table::boot::MemoryMap<'b> {
     let mut extra = 0;
     loop {
         let size = st.boot_services().memory_map_size();
@@ -315,7 +403,16 @@ fn get_mem_map<'a,'b>(st: &'a mut SysTable) -> uefi::table::boot::MemoryMap<'b> 
 
         // map_err may panic but unwrap() never will
         // SAFETY: This is safe because the pointer is guaranteed by the firmware to be valid and real_size
-        let b = unsafe { core::slice::from_raw_parts_mut(throw(st,st.boot_services().allocate_pool(MemoryType::LOADER_DATA, real_size)), real_size) };
+        let b = unsafe {
+            core::slice::from_raw_parts_mut(
+                throw(
+                    st,
+                    st.boot_services()
+                        .allocate_pool(MemoryType::LOADER_DATA, real_size),
+                ),
+                real_size,
+            )
+        };
         let bbc = &mut b[0] as *mut u8; // bamboozle borrow checker
         let mm = st.boot_services().memory_map(b);
         match mm {
@@ -326,9 +423,8 @@ fn get_mem_map<'a,'b>(st: &'a mut SysTable) -> uefi::table::boot::MemoryMap<'b> 
                 // SAFETY: This is safe, it frees the buffer just allocated
                 // If this returns err then the firmware is faulty
                 let _ = unsafe { st.boot_services().free_pool(bbc) };
-
-            },
-            Err(_) => efi_panic(st,"Error requesting memory map"),
+            }
+            Err(_) => efi_panic(st, "Error requesting memory map"),
         }
     }
 }
@@ -344,20 +440,16 @@ fn get_gop_data(st: &mut SysTable) -> Option<crate::boot_info::GraphicInfo> {
     // SAFETY: This is safe because this is dropped at the end of the function and `exit_boot_services()` is not called
     let g_st = unsafe { st.unsafe_clone() };
     // uefi should provide a convenience function for this
-    let mut gop: uefi::table::boot::ScopedProtocol<uefi::proto::console::gop::GraphicsOutput> =
-        {
-            let handle = st
-                .boot_services()
-                .get_handle_for_protocol::<uefi::proto::console::gop::GraphicsOutput>()
-                .ok()?;
+    let mut gop: uefi::table::boot::ScopedProtocol<uefi::proto::console::gop::GraphicsOutput> = {
+        let handle = st
+            .boot_services()
+            .get_handle_for_protocol::<uefi::proto::console::gop::GraphicsOutput>()
+            .ok()?;
 
-            let g =
-                g_st.boot_services().open_protocol_exclusive(
-                    handle
-                );
+        let g = g_st.boot_services().open_protocol_exclusive(handle);
 
-            throw(st, g)
-        };
+        throw(st, g)
+    };
 
     let mode = gop.current_mode_info();
 
@@ -365,16 +457,30 @@ fn get_gop_data(st: &mut SysTable) -> Option<crate::boot_info::GraphicInfo> {
         PixelFormat::Rgb => crate::boot_info::PixelFormat::Rgb32,
         PixelFormat::Bgr => crate::boot_info::PixelFormat::Bgr32,
         PixelFormat::Bitmask => {
-            if let Some(uefi::proto::console::gop::PixelBitmask { red, green, blue, reserved }) = mode.pixel_bitmask() {
-                crate::boot_info::PixelFormat::ColourMask { red, green, blue, reserved }
+            if let Some(uefi::proto::console::gop::PixelBitmask {
+                red,
+                green,
+                blue,
+                reserved,
+            }) = mode.pixel_bitmask()
+            {
+                crate::boot_info::PixelFormat::ColourMask {
+                    red,
+                    green,
+                    blue,
+                    reserved,
+                }
             } else {
-                efi_panic(st, "Pixel mode specified as custom-bitmask, but did not return a pixel format when queried.");
+                efi_panic(
+                    st,
+                    "Pixel mode specified as custom-bitmask, but did not return a pixel format when queried.",
+                );
             }
         }
         PixelFormat::BltOnly => {
             let _ = writeln!(st.stderr(), "[Warn] mode is {:?}", PixelFormat::BltOnly);
-            return None
-        },
+            return None;
+        }
     };
 
     if gop.frame_buffer().size() == 0 {
@@ -387,18 +493,31 @@ fn get_gop_data(st: &mut SysTable) -> Option<crate::boot_info::GraphicInfo> {
         width: mode.resolution().0 as u64,
         stride: mode.stride() as u64,
         pixel_format: pf,
-        framebuffer: unsafe { core::slice::from_raw_parts_mut(gop.frame_buffer().as_mut_ptr(), gop.frame_buffer().size()) },
+        framebuffer: unsafe {
+            core::slice::from_raw_parts_mut(
+                gop.frame_buffer().as_mut_ptr(),
+                gop.frame_buffer().size(),
+            )
+        },
     })
 }
 
-fn map_framebuffer(st: &mut SysTable, mapper: &mut x86_64::structures::paging::mapper::OffsetPageTable, fb_info: &super::boot_info::GraphicInfo) {
+fn map_framebuffer(
+    st: &mut SysTable,
+    mapper: &mut x86_64::structures::paging::mapper::OffsetPageTable,
+    fb_info: &super::boot_info::GraphicInfo,
+) {
     let b = &fb_info.framebuffer;
-    if b.len() > 0x200000 { // This may be problematic if it overruns the device memory, but with a PCI VGA device it is unlikely to.
-        let range = x86_64::structures::paging::page::PageRangeInclusive::<x86_64::structures::paging::Size2MiB> {
+    if b.len() > 0x200000 {
+        // This may be problematic if it overruns the device memory, but with a PCI VGA device it is unlikely to.
+        let range = x86_64::structures::paging::page::PageRangeInclusive::<
+            x86_64::structures::paging::Size2MiB,
+        > {
             start: Page::containing_address(x86_64::VirtAddr::from_ptr(&b[0])),
             end: Page::containing_address(x86_64::VirtAddr::from_ptr(b.last().unwrap())),
         };
-        for i in range { // never none?
+        for i in range {
+            // never none?
             unsafe { mapper.identity_map(
                 x86_64::structures::paging::PhysFrame::<x86_64::structures::paging::Size2MiB>::from_start_address_unchecked(x86_64::PhysAddr::new(i.start_address().as_u64())),
                 PageTableFlags::WRITABLE | PageTableFlags::NO_CACHE | PageTableFlags::PRESENT,
@@ -407,7 +526,11 @@ fn map_framebuffer(st: &mut SysTable, mapper: &mut x86_64::structures::paging::m
     }
 }
 
-fn cx_switch(stack_pointer: crate::common::StackPointer, mapper: x86_64::structures::paging::mapper::OffsetPageTable, bi: *mut crate::boot_info::BootInfo) -> ! {
+fn cx_switch(
+    stack_pointer: crate::common::StackPointer,
+    mapper: x86_64::structures::paging::mapper::OffsetPageTable,
+    bi: *mut crate::boot_info::BootInfo,
+) -> ! {
     let l4 = mapper.level_4_table();
     let sp = stack_pointer.get_ptr();
     let entry = super::_libboot_entry;
@@ -440,22 +563,36 @@ fn cx_switch(stack_pointer: crate::common::StackPointer, mapper: x86_64::structu
 #[track_caller]
 #[cfg(all(feature = "uefi"))]
 fn efi_panic<E: core::fmt::Display>(st: &mut SysTable, err: E) -> ! {
-    let _ = core::writeln!(st.stderr(), "Panic at {}",core::panic::Location::caller());
+    let _ = core::writeln!(st.stderr(), "Panic at {}", core::panic::Location::caller());
     let _ = core::writeln!(st.stderr(), "{err}");
 
     // I hope using a nullptr doesn't break the UEFI
-    unsafe { st.boot_services().exit(st.boot_services().image_handle(), Status::ABORTED, 0, core::ptr::null_mut()) };
+    unsafe {
+        st.boot_services().exit(
+            st.boot_services().image_handle(),
+            Status::ABORTED,
+            0,
+            core::ptr::null_mut(),
+        )
+    };
 }
 
 #[track_caller]
 #[cfg(feature = "uefi")]
-fn throw<T,E: core::fmt::Debug>(st: &mut SysTable, o: Result<T,E> ) -> T {
+fn throw<T, E: core::fmt::Debug>(st: &mut SysTable, o: Result<T, E>) -> T {
     match o {
         Err(e) => {
-            let _ = core::writeln!(st.stderr(), "Panic at {}",core::panic::Location::caller());
+            let _ = core::writeln!(st.stderr(), "Panic at {}", core::panic::Location::caller());
             let _ = core::writeln!(st.stderr(), "Attempted to unwrap `Result::Err({e:?})`");
-            unsafe { st.boot_services().exit(st.boot_services().image_handle(), Status::ABORTED, 0, core::ptr::null_mut()) };
-        },
-        Ok(e) => e
+            unsafe {
+                st.boot_services().exit(
+                    st.boot_services().image_handle(),
+                    Status::ABORTED,
+                    0,
+                    core::ptr::null_mut(),
+                )
+            };
+        }
+        Ok(e) => e,
     }
 }

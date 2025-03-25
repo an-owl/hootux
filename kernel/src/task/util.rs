@@ -60,7 +60,7 @@ impl alloc::task::Wake for DummyWaker {
 
 #[macro_export]
 macro_rules! block_on {
-    ($task:expr) => {{
+    ($task:expr_2021) => {{
         let mut future = $task;
         loop {
             match core::future::Future::poll(

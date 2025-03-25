@@ -3,7 +3,7 @@
 //!
 //! Everything within this module is unstable.
 
-extern "C" {
+unsafe extern "C" {
 
     /// Fetches the return address of the current fn.
     /// This will ignore inlining.

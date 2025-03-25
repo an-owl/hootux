@@ -139,7 +139,7 @@ pub fn _print(args: fmt::Arguments) {
     })
 }
 pub unsafe fn _panic_print() {
-    WRITER.force_unlock()
+    unsafe { WRITER.force_unlock() }
 }
 
 pub fn _clear() {

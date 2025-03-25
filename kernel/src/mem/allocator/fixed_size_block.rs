@@ -1,5 +1,5 @@
 use crate::mem;
-use core::ptr::{null_mut, NonNull};
+use core::ptr::{NonNull, null_mut};
 use core::{
     alloc::{AllocError, Allocator, GlobalAlloc, Layout},
     cell::UnsafeCell,
@@ -7,8 +7,8 @@ use core::{
 use x86_64::VirtAddr;
 
 use super::{
-    combined_allocator::{InferiorAllocator, InteriorAlloc},
     HeapAlloc, Locked,
+    combined_allocator::{InferiorAllocator, InteriorAlloc},
 };
 #[cfg(feature = "alloc-debug-serial")]
 use crate::serial_println;
@@ -43,7 +43,7 @@ impl FixedBlockAllocator {
     /// heap bounds are valid and that the heap is unused. This method must be
     /// called only once.
     pub unsafe fn init(&mut self, heap_start: usize, heap_size: usize) {
-        self.fallback_allocator.init(heap_start, heap_size)
+        unsafe { self.fallback_allocator.init(heap_start, heap_size) }
     }
 
     fn fallback_alloc(&mut self, layout: Layout) -> *mut u8 {
@@ -88,21 +88,23 @@ unsafe impl GlobalAlloc for Locked<FixedBlockAllocator> {
     }
 
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
-        let mut allocator = self.lock();
-        match FixedBlockAllocator::list_index(&layout) {
-            Some(index) => {
-                let new_node = ListNode {
-                    next: allocator.list_heads[index].take(),
-                };
-                assert!(core::mem::size_of::<ListNode>() <= BLOCK_SIZES[index]);
-                assert!(core::mem::align_of::<ListNode>() <= BLOCK_SIZES[index]);
-                let new_node_ptr = ptr as *mut ListNode;
-                new_node_ptr.write(new_node);
-                allocator.list_heads[index] = Some(&mut *new_node_ptr);
-            }
-            None => {
-                let ptr = NonNull::new(ptr).unwrap();
-                allocator.fallback_allocator.deallocate(ptr, layout)
+        unsafe {
+            let mut allocator = self.lock();
+            match FixedBlockAllocator::list_index(&layout) {
+                Some(index) => {
+                    let new_node = ListNode {
+                        next: allocator.list_heads[index].take(),
+                    };
+                    assert!(core::mem::size_of::<ListNode>() <= BLOCK_SIZES[index]);
+                    assert!(core::mem::align_of::<ListNode>() <= BLOCK_SIZES[index]);
+                    let new_node_ptr = ptr as *mut ListNode;
+                    new_node_ptr.write(new_node);
+                    allocator.list_heads[index] = Some(&mut *new_node_ptr);
+                }
+                None => {
+                    let ptr = NonNull::new(ptr).unwrap();
+                    allocator.fallback_allocator.deallocate(ptr, layout)
+                }
             }
         }
     }
@@ -288,18 +290,20 @@ unsafe impl Allocator for NewFixedBlockAllocator {
     }
 
     unsafe fn deallocate(&self, ptr: NonNull<u8>, layout: Layout) {
-        // determine layout
-        if layout.size() == 0 {
-            return;
+        unsafe {
+            // determine layout
+            if layout.size() == 0 {
+                return;
+            }
+
+            let index = Self::get_block_index(layout).unwrap();
+
+            #[cfg(feature = "alloc-debug-serial")]
+            serial_println!("dealloc: Ptr {:#x}, index {}", ptr.as_ptr() as usize, index);
+
+            // add ptr
+            (*self.inner.get()).list_heads[index].add(ptr.cast::<u64>().as_ptr());
         }
-
-        let index = Self::get_block_index(layout).unwrap();
-
-        #[cfg(feature = "alloc-debug-serial")]
-        serial_println!("dealloc: Ptr {:#x}, index {}", ptr.as_ptr() as usize, index);
-
-        // add ptr
-        (*self.inner.get()).list_heads[index].add(ptr.cast::<u64>().as_ptr());
     }
 }
 
@@ -307,18 +311,20 @@ impl InferiorAllocator for NewFixedBlockAllocator {
     const INIT_BYTES: usize = 4096;
 
     unsafe fn init(&self, ptr: *mut [u8; Self::INIT_BYTES]) {
-        let alloc = unsafe { &mut *self.inner.get() };
-        let initial_block_size = *BLOCK_SIZES.last().unwrap();
-        let count = Self::INIT_BYTES / BLOCK_SIZES.last().unwrap(); // will never panic
-        alloc.start = ptr as *mut u8;
+        unsafe {
+            let alloc = &mut *self.inner.get();
+            let initial_block_size = *BLOCK_SIZES.last().unwrap();
+            let count = Self::INIT_BYTES / BLOCK_SIZES.last().unwrap(); // will never panic
+            alloc.start = ptr as *mut u8;
 
-        for i in 0..count {
-            let location = ptr as usize + (i * initial_block_size);
-            alloc
-                .list_heads
-                .last_mut()
-                .unwrap()
-                .add(location as *mut u64)
+            for i in 0..count {
+                let location = ptr as usize + (i * initial_block_size);
+                alloc
+                    .list_heads
+                    .last_mut()
+                    .unwrap()
+                    .add(location as *mut u64)
+            }
         }
     }
 

@@ -1,6 +1,6 @@
 use super::HeapAlloc;
 use crate::mem;
-use crate::mem::{buddy_frame_alloc, PAGE_SIZE};
+use crate::mem::{PAGE_SIZE, buddy_frame_alloc};
 use core::alloc::{AllocError, Layout};
 use core::ptr::NonNull;
 
@@ -59,71 +59,79 @@ unsafe impl<S: SuperiorAllocator, I: InferiorAllocator> core::alloc::GlobalAlloc
     for crate::util::mutex::ReentrantMutex<DualHeap<S, I>>
 {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        use x86_64::structures::paging::{
-            page::{Page, PageRangeInclusive, Size4KiB},
-            PageTableFlags,
-        };
-        use x86_64::VirtAddr;
-
-        let alloc = self.lock();
-
-        let cmp = layout.size().max(layout.align());
-
-        return if cmp < 2048 {
-            // inferior max size
-            let t = alloc.inferior.allocate(layout).unwrap().cast().as_ptr(); // panic is expected on fail
-            t
-        } else {
-            let ret = alloc
-                .superior
-                .virt_allocate(layout)
-                .unwrap()
-                .cast()
-                .as_ptr();
-
-            let pages = {
-                let start = VirtAddr::from_ptr(ret);
-                PageRangeInclusive::<Size4KiB> {
-                    start: Page::containing_address(start),
-                    end: Page::containing_address(start + S::allocated_size(layout) as u64 - 1u64),
-                }
+        unsafe {
+            use x86_64::VirtAddr;
+            use x86_64::structures::paging::{
+                PageTableFlags,
+                page::{Page, PageRangeInclusive, Size4KiB},
             };
 
-            let flags = PageTableFlags::WRITABLE | PageTableFlags::PRESENT;
+            let alloc = self.lock();
 
-            mem::mem_map::map_range(pages, flags);
+            let cmp = layout.size().max(layout.align());
 
-            ret
-        };
+            return if cmp < 2048 {
+                // inferior max size
+                let t = alloc.inferior.allocate(layout).unwrap().cast().as_ptr(); // panic is expected on fail
+                t
+            } else {
+                let ret = alloc
+                    .superior
+                    .virt_allocate(layout)
+                    .unwrap()
+                    .cast()
+                    .as_ptr();
+
+                let pages = {
+                    let start = VirtAddr::from_ptr(ret);
+                    PageRangeInclusive::<Size4KiB> {
+                        start: Page::containing_address(start),
+                        end: Page::containing_address(
+                            start + S::allocated_size(layout) as u64 - 1u64,
+                        ),
+                    }
+                };
+
+                let flags = PageTableFlags::WRITABLE | PageTableFlags::PRESENT;
+
+                mem::mem_map::map_range(pages, flags);
+
+                ret
+            };
+        }
     }
 
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
-        use x86_64::structures::paging::page::{Page, PageRangeInclusive, Size4KiB};
-        use x86_64::VirtAddr;
+        unsafe {
+            use x86_64::VirtAddr;
+            use x86_64::structures::paging::page::{Page, PageRangeInclusive, Size4KiB};
 
-        let cmp = layout.size().max(layout.align());
-        if cmp < 2048 {
-            self.lock()
-                .inferior
-                .deallocate(NonNull::new(ptr).unwrap(), layout) // shouldn't panic
-        } else {
-            let pages = {
-                let start = VirtAddr::from_ptr(ptr);
-                PageRangeInclusive::<Size4KiB> {
-                    start: Page::containing_address(start),
-                    end: Page::containing_address(start + S::allocated_size(layout) as u64 - 1u64),
+            let cmp = layout.size().max(layout.align());
+            if cmp < 2048 {
+                self.lock()
+                    .inferior
+                    .deallocate(NonNull::new(ptr).unwrap(), layout) // shouldn't panic
+            } else {
+                let pages = {
+                    let start = VirtAddr::from_ptr(ptr);
+                    PageRangeInclusive::<Size4KiB> {
+                        start: Page::containing_address(start),
+                        end: Page::containing_address(
+                            start + S::allocated_size(layout) as u64 - 1u64,
+                        ),
+                    }
+                };
+
+                for i in pages.map(|p| p.start_address()) {
+                    super::super::mem_map::unmap_and_free(i).expect("Failed to free memory");
                 }
-            };
 
-            for i in pages.map(|p| p.start_address()) {
-                super::super::mem_map::unmap_and_free(i).expect("Failed to free memory");
+                // TODO: deallocate frames
+
+                self.lock()
+                    .superior
+                    .virt_deallocate(NonNull::new(ptr).unwrap(), layout);
             }
-
-            // TODO: deallocate frames
-
-            self.lock()
-                .superior
-                .virt_deallocate(NonNull::new(ptr).unwrap(), layout);
         }
     }
 }
@@ -257,10 +265,12 @@ impl InferiorAllocator for InteriorAlloc {
     }
 
     unsafe fn force_dealloc(&self, ptr: NonNull<u8>, layout: Layout) {
-        super::COMBINED_ALLOCATOR
-            .lock()
-            .inferior
-            .force_dealloc(ptr, layout)
+        unsafe {
+            super::COMBINED_ALLOCATOR
+                .lock()
+                .inferior
+                .force_dealloc(ptr, layout)
+        }
     }
 }
 

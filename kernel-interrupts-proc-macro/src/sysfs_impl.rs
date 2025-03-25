@@ -1,6 +1,6 @@
 use proc_macro2::TokenStream;
 use quote::TokenStreamExt;
-use syn::{spanned::Spanned, Attribute};
+use syn::{Attribute, spanned::Spanned};
 
 pub struct ImplSysFsRoot {
     struct_def: syn::ItemStruct,
@@ -15,7 +15,7 @@ impl syn::parse::Parse for ImplSysFsRoot {
 }
 
 macro_rules! some_to_err {
-    ($input:expr,$err:expr) => {
+    ($input:expr_2021,$err:expr_2021) => {
         match $input {
             Some(_) => Err($err),
             None => Ok(()),

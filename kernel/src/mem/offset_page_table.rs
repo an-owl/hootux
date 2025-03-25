@@ -1,4 +1,4 @@
-use super::tlb::{shootdown, shootdown_hint, ShootdownContent};
+use super::tlb::{ShootdownContent, shootdown, shootdown_hint};
 use super::{PageIterator, PageTableLevel};
 use x86_64::structures::paging::mapper::{
     FlagUpdateError, MapToError, MapperFlush, MapperFlushAll, TranslateError, UnmapError,
@@ -28,13 +28,15 @@ impl OffsetPageTable {
     /// This function is unsafe because the caller must ensure that the
     /// given `offset_base` is correct
     pub(super) unsafe fn new(offset_base: VirtAddr) -> Self {
-        let l4_frame = x86_64::registers::control::Cr3::read().0;
-        let l4_table =
-            &mut *(offset_base + l4_frame.start_address().as_u64()).as_mut_ptr::<PageTable>();
+        unsafe {
+            let l4_frame = x86_64::registers::control::Cr3::read().0;
+            let l4_table =
+                &mut *(offset_base + l4_frame.start_address().as_u64()).as_mut_ptr::<PageTable>();
 
-        Self {
-            offset_base,
-            l4_table,
+            Self {
+                offset_base,
+                l4_table,
+            }
         }
     }
 
@@ -374,12 +376,12 @@ impl OffsetPageTable {
             Err(InternalError::PageNotMapped(_)) => {
                 // recursively makes new
                 let nt = self.new_table();
-                self.attach(nt, level.inc(), page, flags).expect("???");
+                unsafe { self.attach(nt, level.inc(), page, flags).expect("???") };
                 self.traverse_mut(level.inc(), page).expect("???")
             }
 
             Err(InternalError::ParentEntryHugePage(l)) => {
-                return Err(InternalError::ParentEntryHugePage(l))
+                return Err(InternalError::ParentEntryHugePage(l));
             }
             _ => unreachable!(),
         };
@@ -432,33 +434,35 @@ impl Mapper<Size4KiB> for OffsetPageTable {
         Self: Sized,
         A: FrameAllocator<Size4KiB> + ?Sized,
     {
-        let table = match self.traverse_mut(PageTableLevel::L1, page) {
-            Ok(table) => table,
+        unsafe {
+            let table = match self.traverse_mut(PageTableLevel::L1, page) {
+                Ok(table) => table,
 
-            Err(InternalError::PageNotMapped(_)) => {
-                self.attach(
-                    self.new_table(),
-                    PageTableLevel::L1,
-                    page,
-                    parent_table_flags,
-                )
-                .unwrap(); // Shouldn't panic
-                self.traverse_mut(PageTableLevel::L1, page).unwrap() // Shouldn't panic
-            }
+                Err(InternalError::PageNotMapped(_)) => {
+                    self.attach(
+                        self.new_table(),
+                        PageTableLevel::L1,
+                        page,
+                        parent_table_flags,
+                    )
+                    .unwrap(); // Shouldn't panic
+                    self.traverse_mut(PageTableLevel::L1, page).unwrap() // Shouldn't panic
+                }
 
-            Err(InternalError::ParentEntryHugePage(_)) => {
-                return Err(MapToError::ParentEntryHugePage)
-            }
-            _ => unreachable!(),
-        };
+                Err(InternalError::ParentEntryHugePage(_)) => {
+                    return Err(MapToError::ParentEntryHugePage);
+                }
+                _ => unreachable!(),
+            };
 
-        let entry = &mut table[PageTableLevel::L1.get_index(page)];
-        return if entry.is_unused() {
-            entry.set_addr(frame.start_address(), flags);
-            Ok(MapperFlush::new(page))
-        } else {
-            Err(MapToError::PageAlreadyMapped(entry.frame().unwrap())) // Is never huge page
-        };
+            let entry = &mut table[PageTableLevel::L1.get_index(page)];
+            return if entry.is_unused() {
+                entry.set_addr(frame.start_address(), flags);
+                Ok(MapperFlush::new(page))
+            } else {
+                Err(MapToError::PageAlreadyMapped(entry.frame().unwrap())) // Is never huge page
+            };
+        }
     }
 
     fn unmap(
@@ -613,13 +617,12 @@ impl Mapper<Size2MiB> for OffsetPageTable {
             Ok(table) => table,
 
             Err(InternalError::PageNotMapped(_)) => {
-                self.attach(self.new_table(), LEVEL, page, parent_table_flags)
-                    .unwrap(); // Shouldn't panic
+                unsafe { self.attach(self.new_table(), LEVEL, page, parent_table_flags) }.unwrap(); // Shouldn't panic
                 self.traverse_mut(PageTableLevel::L2, page).unwrap() // Shouldn't panic
             }
 
             Err(InternalError::ParentEntryHugePage(_)) => {
-                return Err(MapToError::ParentEntryHugePage)
+                return Err(MapToError::ParentEntryHugePage);
             }
             _ => unreachable!(),
         };
@@ -800,13 +803,12 @@ impl Mapper<Size1GiB> for OffsetPageTable {
             Ok(table) => table,
 
             Err(InternalError::PageNotMapped(_)) => {
-                self.attach(self.new_table(), LEVEL, page, parent_table_flags)
-                    .unwrap(); // Shouldn't panic
+                unsafe { self.attach(self.new_table(), LEVEL, page, parent_table_flags) }.unwrap(); // Shouldn't panic
                 self.traverse_mut(PageTableLevel::L2, page).unwrap() // Shouldn't panic
             }
 
             Err(InternalError::ParentEntryHugePage(_)) => {
-                return Err(MapToError::ParentEntryHugePage)
+                return Err(MapToError::ParentEntryHugePage);
             }
             _ => unreachable!(),
         };

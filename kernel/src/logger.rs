@@ -59,7 +59,7 @@ impl Log for Logger {
 
 #[macro_export]
 macro_rules! set_logger_level {
-    ($lvl:expr) => {
+    ($lvl:expr_2021) => {
         unsafe { log::set_max_level($lvl) }
     };
 }

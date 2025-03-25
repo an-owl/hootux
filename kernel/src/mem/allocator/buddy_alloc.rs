@@ -2,8 +2,8 @@ use super::combined_allocator::InteriorAlloc;
 use crate::mem;
 use core::alloc::{AllocError, Layout};
 use core::ptr::NonNull;
-use x86_64::structures::paging::Mapper;
 use x86_64::VirtAddr;
+use x86_64::structures::paging::Mapper;
 
 // Shamelessly nicked
 // todo: replace when https://github.com/rust-lang/rust/pull/103093 is pulled
@@ -120,37 +120,40 @@ impl BuddyHeapInner {
     /// #Safety
     /// This fn will map memory to `*self.end`
     unsafe fn stack_extend(&mut self) {
-        use super::combined_allocator::InferiorAllocator;
-        use x86_64::structures::paging::{page_table::PageTableFlags, FrameAllocator};
+        unsafe {
+            use super::combined_allocator::InferiorAllocator;
+            use x86_64::structures::paging::{FrameAllocator, page_table::PageTableFlags};
 
-        // map new region
-        let end_page = x86_64::structures::paging::Page::
+            // map new region
+            let end_page = x86_64::structures::paging::Page::
         <x86_64::structures::paging::Size4KiB>::from_start_address(
             VirtAddr::new(self.end as u64)
         ).expect("BuddyAlloc has become misaligned");
-        let flags = PageTableFlags::PRESENT | PageTableFlags::WRITABLE | PageTableFlags::HUGE_PAGE;
-        let frame = mem::allocator::COMBINED_ALLOCATOR
-            .lock()
-            .phys_alloc()
-            .get()
-            .allocate_frame()
-            .expect("System ran out of memory");
+            let flags =
+                PageTableFlags::PRESENT | PageTableFlags::WRITABLE | PageTableFlags::HUGE_PAGE;
+            let frame = mem::allocator::COMBINED_ALLOCATOR
+                .lock()
+                .phys_alloc()
+                .get()
+                .allocate_frame()
+                .expect("System ran out of memory");
 
-        mem::SYS_MAPPER
-            .get()
-            .map_to(end_page, frame, flags, &mut mem::DummyFrameAlloc)
-            .expect("Failed to map memory for System Allocator")
-            .flush();
+            mem::SYS_MAPPER
+                .get()
+                .map_to(end_page, frame, flags, &mut mem::DummyFrameAlloc)
+                .expect("Failed to map memory for System Allocator")
+                .flush();
 
-        // deallocate new region to inferior
-        InteriorAlloc::new().force_dealloc(
-            NonNull::new(end_page.start_address().as_mut_ptr()).unwrap(),
-            Layout::from_size_align(1, 4096).unwrap(),
-        ); // these should never panic
+            // deallocate new region to inferior
+            InteriorAlloc::new().force_dealloc(
+                NonNull::new(end_page.start_address().as_mut_ptr()).unwrap(),
+                Layout::from_size_align(1, 4096).unwrap(),
+            ); // these should never panic
 
-        // append new blocks
+            // append new blocks
 
-        self.bootstrap()
+            self.bootstrap()
+        }
     }
 
     /// Calculates the size of block form its order
@@ -362,14 +365,16 @@ unsafe impl super::HeapAlloc for BuddyHeap {
 
 impl super::combined_allocator::SuperiorAllocator for BuddyHeap {
     unsafe fn init(&mut self, addr: usize) {
-        // Assert aligned.
-        let alloc = &mut *self.inner.get();
-        assert_eq!(addr & (ORDER_MAX_SIZE - 1), 0);
+        unsafe {
+            // Assert aligned.
+            let alloc = &mut *self.inner.get();
+            assert_eq!(addr & (ORDER_MAX_SIZE - 1), 0);
 
-        alloc.start = addr;
-        alloc.end = addr;
+            alloc.start = addr;
+            alloc.end = addr;
 
-        alloc.bootstrap();
+            alloc.bootstrap();
+        }
     }
 
     fn allocated_size(layout: Layout) -> usize {

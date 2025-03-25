@@ -10,14 +10,12 @@
 #![feature(allocator_api)]
 #![feature(thread_local)]
 #![feature(optimize_attribute)]
-#![feature(extract_if)]
 #![feature(linked_list_cursors)]
 #![feature(box_into_inner)]
 #![allow(internal_features)] // I need these
 #![feature(link_llvm_intrinsics)]
 #![feature(layout_for_ptr)]
 #![feature(set_ptr_value)]
-#![feature(trait_upcasting)]
 #![allow(incomplete_features)]
 #![feature(generic_const_exprs)] // https://github.com/rust-lang/rust/issues/134044#issuecomment-2526396815 for why this is here
 extern crate alloc;
@@ -133,7 +131,7 @@ pub fn test_panic(info: &core::panic::PanicInfo) -> ! {
 }
 
 #[cfg(test)]
-use bootloader::{entry_point, BootInfo};
+use bootloader::{BootInfo, entry_point};
 
 #[cfg(test)]
 entry_point!(kernel_test_main);

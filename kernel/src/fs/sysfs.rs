@@ -16,8 +16,8 @@ use alloc::boxed::Box;
 use alloc::string::String;
 use alloc::vec::Vec;
 use cast_trait_object::DynCastExt;
-use futures_util::future::BoxFuture;
 use futures_util::FutureExt;
+use futures_util::future::BoxFuture;
 
 pub mod bus;
 
@@ -60,20 +60,23 @@ impl SysFsRoot {
     ///
     /// This will panic if it has already been called.
     unsafe fn init() {
-        let dupe = Self {
-            bus: bus::SysfsBus::init(),
-        };
-        assert!(
-            core::ptr::replace(&raw mut SYSFS_ROOT, Some(dupe.clone()),).is_none(),
-            "SYSFS_ROOT already initialized"
-        );
+        unsafe {
+            let dupe = Self {
+                bus: bus::SysfsBus::init(),
+            };
+            assert!(
+                core::ptr::replace(&raw mut SYSFS_ROOT, Some(dupe.clone()),).is_none(),
+                "SYSFS_ROOT already initialized"
+            );
 
-        hootux::block_on!(hootux::fs::get_vfs().mount(
-            Box::new(dupe),
-            "/sys",
-            hootux::fs::vfs::MountFlags::empty(),
-            "",
-        ));
+            hootux::block_on!(hootux::fs::get_vfs().mount(
+                Box::new(dupe),
+                "/sys",
+                hootux::fs::vfs::MountFlags::empty(),
+                "",
+            ))
+            .expect("Failed to mount sysfs");
+        }
     }
 
     /// Fetches a new SysfsRoot file-object.

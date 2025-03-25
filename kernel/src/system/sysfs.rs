@@ -71,8 +71,10 @@ impl Firmware {
     ///
     /// This fn is racy and must only be called before MP initialization.
     pub unsafe fn cfg_acpi(&self, tables: acpi::AcpiTables<super::acpi::AcpiGrabber>) {
-        log::trace!("ACPI global set");
-        self.acpi.write(AcpiRoot(tables))
+        unsafe {
+            log::trace!("ACPI global set");
+            self.acpi.write(AcpiRoot(tables))
+        }
     }
 
     /// Returns the system [acpi::AcpiTables] structure.

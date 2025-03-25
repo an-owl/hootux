@@ -4,9 +4,9 @@ use crate::mem::{DummyFrameAlloc, PageTableLevel};
 use core::alloc::{AllocError, Allocator, Layout};
 use core::fmt::{Debug, Formatter};
 use core::ptr::NonNull;
+use x86_64::VirtAddr;
 use x86_64::structures::paging::page::PageRangeInclusive;
 use x86_64::structures::paging::{FrameAllocator, Mapper, Page, PageTableFlags, Size4KiB};
-use x86_64::VirtAddr;
 
 const PAGE_SIZE: usize = 4096;
 
@@ -28,7 +28,7 @@ unsafe impl Allocator for PtAlloc {
     }
 
     unsafe fn deallocate(&self, ptr: NonNull<u8>, layout: Layout) {
-        PT_ALLOC.deallocate(ptr, layout)
+        unsafe { PT_ALLOC.deallocate(ptr, layout) }
     }
 
     unsafe fn grow(
@@ -37,7 +37,7 @@ unsafe impl Allocator for PtAlloc {
         old_layout: Layout,
         new_layout: Layout,
     ) -> Result<NonNull<[u8]>, AllocError> {
-        PT_ALLOC.grow(ptr, old_layout, new_layout)
+        unsafe { PT_ALLOC.grow(ptr, old_layout, new_layout) }
     }
 
     unsafe fn grow_zeroed(
@@ -46,7 +46,7 @@ unsafe impl Allocator for PtAlloc {
         old_layout: Layout,
         new_layout: Layout,
     ) -> Result<NonNull<[u8]>, AllocError> {
-        PT_ALLOC.grow_zeroed(ptr, old_layout, new_layout)
+        unsafe { PT_ALLOC.grow_zeroed(ptr, old_layout, new_layout) }
     }
 
     unsafe fn shrink(
@@ -55,7 +55,7 @@ unsafe impl Allocator for PtAlloc {
         old_layout: Layout,
         new_layout: Layout,
     ) -> Result<NonNull<[u8]>, AllocError> {
-        PT_ALLOC.shrink(ptr, old_layout, new_layout)
+        unsafe { PT_ALLOC.shrink(ptr, old_layout, new_layout) }
     }
 }
 
@@ -115,18 +115,20 @@ unsafe impl Allocator for Locked<PageTableAllocator> {
     }
 
     unsafe fn deallocate(&self, ptr: NonNull<u8>, layout: Layout) {
-        assert_eq!(layout.size(), PAGE_SIZE);
-        assert_eq!(layout.align(), PAGE_SIZE);
-        let mut alloc = self.inner.lock();
+        unsafe {
+            assert_eq!(layout.size(), PAGE_SIZE);
+            assert_eq!(layout.align(), PAGE_SIZE);
+            let mut alloc = self.inner.lock();
 
-        let new = Node::new(VirtAddr::from_ptr(ptr.as_ptr()));
+            let new = Node::new(VirtAddr::from_ptr(ptr.as_ptr()));
 
-        match alloc.head.take() {
-            None => alloc.head = Some(new),
-            Some(old) => {
-                // move old onto new.next and new into alloc.head
-                new.next = Some(old);
-                alloc.head = Some(new)
+            match alloc.head.take() {
+                None => alloc.head = Some(new),
+                Some(old) => {
+                    // move old onto new.next and new into alloc.head
+                    new.next = Some(old);
+                    alloc.head = Some(new)
+                }
             }
         }
     }
@@ -154,8 +156,10 @@ impl Node {
     ///
     /// This function is unsafe because the caller must ensure that addr is valid
     unsafe fn new(addr: VirtAddr) -> &'static mut Self {
-        addr.as_mut_ptr::<Self>().write(Self { next: None });
-        &mut *addr.as_mut_ptr::<Self>()
+        unsafe {
+            addr.as_mut_ptr::<Self>().write(Self { next: None });
+            &mut *addr.as_mut_ptr::<Self>()
+        }
     }
 
     /// Converts Self into `*mut \[u8;4096] starting at self
@@ -163,8 +167,10 @@ impl Node {
     /// This function is unsafe because it violates memory safety by
     /// potentially allocating already allocated space
     unsafe fn allocate(s_elf: *mut Self) -> *mut [u8] {
-        let addr = s_elf as *mut u8;
-        core::slice::from_raw_parts_mut(addr, 4096)
+        unsafe {
+            let addr = s_elf as *mut u8;
+            core::slice::from_raw_parts_mut(addr, 4096)
+        }
     }
 
     /// Creates a Node 4096 bytes after self effectively referencing the next region of memory
@@ -172,9 +178,11 @@ impl Node {
     /// this function is unsafe because the caller must guarantee that
     /// `&const self + 4096[4096]` is a valid address space
     unsafe fn autogen_next(&self) -> &'static mut Self {
-        let mut self_addr = VirtAddr::from_ptr(self);
-        self_addr += PAGE_SIZE as u64;
-        Node::new(self_addr)
+        unsafe {
+            let mut self_addr = VirtAddr::from_ptr(self);
+            self_addr += PAGE_SIZE as u64;
+            Node::new(self_addr)
+        }
     }
 
     fn next_addr(&self) -> usize {
@@ -221,18 +229,20 @@ impl PageTableAllocator {
     /// This function is unsafe because the caller must ensure that `start_addr`..`end_adr` is
     /// mapped and writable inclusively
     pub unsafe fn init(&mut self, start_addr: VirtAddr, end_addr: VirtAddr) {
-        self.start_addr = start_addr;
-        self.end_addr = end_addr + 0x1000u64; // end addr should be exclusive, end_addr is the first byte not mapped
+        unsafe {
+            self.start_addr = start_addr;
+            self.end_addr = end_addr + 0x1000u64; // end addr should be exclusive, end_addr is the first byte not mapped
 
-        // this drops an initial node as start_addr so alloc may be called.
-        // self.head should always be Some otherwise it has reached the end
-        // of its address limits.
-        // if the node contained within head is none and &head.next + 4096 < end
-        // that address may become head.next
+            // this drops an initial node as start_addr so alloc may be called.
+            // self.head should always be Some otherwise it has reached the end
+            // of its address limits.
+            // if the node contained within head is none and &head.next + 4096 < end
+            // that address may become head.next
 
-        core::ptr::write(start_addr.as_mut_ptr(), Node { next: None });
+            core::ptr::write(start_addr.as_mut_ptr(), Node { next: None });
 
-        self.head = Some(&mut *start_addr.as_mut_ptr());
+            self.head = Some(&mut *start_addr.as_mut_ptr());
+        }
     }
 
     fn extend(&mut self) -> Result<(), ()> {

@@ -141,10 +141,12 @@ impl FrameAttributeTable {
     /// This fn is unsafe because the caller muse ensure that the requested entry is no longer required.
     /// If the alias field is greater than `1` this may cause UB.
     unsafe fn rm_page_entry(&self, frame: PhysAddr) {
-        let mut l = self.table.lock();
-        let table = l.as_mut().unwrap();
+        unsafe {
+            let mut l = self.table.lock();
+            let table = l.as_mut().unwrap();
 
-        self.rm_frame_entry_inner(frame, table);
+            self.rm_frame_entry_inner(frame, table);
+        }
     }
 
     unsafe fn rm_frame_entry_inner(
@@ -152,19 +154,21 @@ impl FrameAttributeTable {
         frame: PhysAddr,
         table: &mut [Option<Arc<FrameAttributesInner, FaeAlloc>>],
     ) {
-        let i = self.select(frame, table);
+        unsafe {
+            let i = self.select(frame, table);
 
-        let _ = table[i].take();
+            let _ = table[i].take();
 
-        let align = i & !(512 - 1); // 512 is number of entries per page
-                                    // Will this compile to a `repnz scasq`?
-        if table[align..align + 512].iter().all(|e| e.is_none()) {
-            let addr = VirtAddr::from_ptr(&table[align]);
+            let align = i & !(512 - 1); // 512 is number of entries per page
+            // Will this compile to a `repnz scasq`?
+            if table[align..align + 512].iter().all(|e| e.is_none()) {
+                let addr = VirtAddr::from_ptr(&table[align]);
 
-            // SAFETY: This struct handles TLB synchronization internally
-            crate::mem::tlb::without_shootdowns(||
+                // SAFETY: This struct handles TLB synchronization internally
+                crate::mem::tlb::without_shootdowns(||
                 // SAFETY: This page is checked above for data, this only occurs if not useful data is present in the page.
                 crate::mem::mem_map::unmap_page(x86_64::structures::paging::Page::<x86_64::structures::paging::Size4KiB>::containing_address(addr)))
+            }
         }
     }
 
@@ -224,14 +228,15 @@ impl FrameAttributeTable {
             // Fetch page table entry, we ensure that if it uses memory fixups that it is fixed up.
             let addr = VirtAddr::new((tgt.cast::<u8>() as usize + offset) as u64);
             let (entry, size) = match Self::get_entry(addr) {
-                None => {
-                    if let Some(c) = crate::mem::virt_fixup::query_fixup() {
+                None => match crate::mem::virt_fixup::query_fixup() {
+                    Some(c) => {
                         c.fixup();
                         Self::get_entry(addr).unwrap()
-                    } else {
+                    }
+                    _ => {
                         panic!("Failed to perform operation {addr:?} not mapped");
                     }
-                }
+                },
                 Some(r) => r,
             };
 
@@ -272,7 +277,9 @@ impl FrameAttributeTable {
             let index = entry.addr().as_u64() as usize >> 12;
             match op.operate(&mut table[index], entry.addr()) {
                 OperationIncomplete::Complete => {}
-                OperationIncomplete::RemoveFAE => self.rm_frame_entry_inner(entry.addr(), table), // SAFETY: This is safe, operate() determines if this should be called.
+                OperationIncomplete::RemoveFAE => unsafe {
+                    self.rm_frame_entry_inner(entry.addr(), table)
+                }, // SAFETY: This is safe, operate() determines if this should be called.
                 OperationIncomplete::ClearPageProperties => {
                     use x86_64::structures::paging::{Page, Size1GiB, Size2MiB, Size4KiB};
                     let mut nflags = entry.flags();
@@ -498,7 +505,7 @@ impl FrameAttributeTable {
         });
         dst.reserve(len);
         // SAFETY: See above
-        dst.set_len(len);
+        unsafe { dst.set_len(len) };
         dst.copy_from_slice(&b)
     }
 }
@@ -601,10 +608,20 @@ impl FatOperation {
             } => {
                 match fae.as_mut() {
                     Some(d) if *fallible => d.flags.store(*attributes, Ordering::Relaxed),
-                    Some(_) if !*fallible => panic!("New-Frame-Attribute-Entry operation failed entry for {phys_addr:?} is present operation is infallible"),
-                    None => *fae = Some(Arc::new_in(FrameAttributesInner { alias_count: Atomic::new(*alias_count), flags: Atomic::new(*attributes) },FaeAlloc::new())),
+                    Some(_) if !*fallible => panic!(
+                        "New-Frame-Attribute-Entry operation failed entry for {phys_addr:?} is present operation is infallible"
+                    ),
+                    None => {
+                        *fae = Some(Arc::new_in(
+                            FrameAttributesInner {
+                                alias_count: Atomic::new(*alias_count),
+                                flags: Atomic::new(*attributes),
+                            },
+                            FaeAlloc::new(),
+                        ))
+                    }
                     // SAFETY: `if true | false` seems pretty exhaustive to me.
-                    _ => unsafe { core::hint::unreachable_unchecked() }
+                    _ => unsafe { core::hint::unreachable_unchecked() },
                 }
             }
 
@@ -743,7 +760,9 @@ impl FrameAttributes {
     /// This is unsafe because the caller must ensure this frame is not aliased or has attributes
     /// that may modify behaviour.
     pub unsafe fn clear(self) {
-        ATTRIBUTE_TABLE_HEAD.rm_page_entry(self.addr);
+        unsafe {
+            ATTRIBUTE_TABLE_HEAD.rm_page_entry(self.addr);
+        }
     }
 
     /// Indicates the number of pages this frame is used by.

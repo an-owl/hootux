@@ -219,7 +219,7 @@ pub fn load_apic() {
 /// This must not be called outside of an interrupt handler
 #[inline]
 pub(crate) unsafe fn apic_eoi() {
-    LOCAL_APIC.force_get_mut().declare_eoi()
+    unsafe { LOCAL_APIC.force_get_mut().declare_eoi() }
 }
 
 /// Returns an interface for the apic

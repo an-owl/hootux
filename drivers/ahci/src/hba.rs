@@ -32,28 +32,31 @@ pub(crate) struct HostBusAdapter {
 impl HostBusAdapter {
     /// Constructs Self from a pointer to the HBA configuration region.
     pub unsafe fn from_raw(ptr: &mut [u8]) -> Self {
-        let gen: &mut general_control::GeneralControl = &mut *ptr.as_mut_ptr().cast();
+        unsafe {
+            let r#gen: &mut general_control::GeneralControl = &mut *ptr.as_mut_ptr().cast();
 
-        let vendor = &mut *ptr.as_mut_ptr().offset(0xa0).cast();
+            let vendor = &mut *ptr.as_mut_ptr().offset(0xa0).cast();
 
-        let port_count = ((ptr.len() - 0x100) / 0x80).min(32); // Each port gets 80h bytes, does not use them all
-        let mut arr = alloc::vec::Vec::with_capacity(port_count);
+            let port_count = ((ptr.len() - 0x100) / 0x80).min(32); // Each port gets 80h bytes, does not use them all
+            let mut arr = alloc::vec::Vec::with_capacity(port_count);
 
-        for i in 0..port_count {
-            arr.push(
-                &mut *ptr
-                    .as_mut_ptr()
-                    .offset(
-                        (i * core::mem::size_of::<port_control::PortControl>()) as isize + 0x100,
-                    )
-                    .cast(),
-            )
-        }
+            for i in 0..port_count {
+                arr.push(
+                    &mut *ptr
+                        .as_mut_ptr()
+                        .offset(
+                            (i * core::mem::size_of::<port_control::PortControl>()) as isize
+                                + 0x100,
+                        )
+                        .cast(),
+                )
+            }
 
-        Self {
-            general: gen,
-            vendor,
-            ports: arr,
+            Self {
+                general: r#gen,
+                vendor,
+                ports: arr,
+            }
         }
     }
 }

@@ -22,12 +22,13 @@ impl syn::parse::Parse for SlabLikeParser {
                 num_str
             },
             backing_alloc: {
-                if let Ok(p) = input.parse::<syn::Path>() {
-                    let _ = input.parse::<syn::Token![,]>()?;
-                    let alloc_constructor = input.parse()?;
-                    Some((p, alloc_constructor))
-                } else {
-                    None
+                match input.parse::<syn::Path>() {
+                    Ok(p) => {
+                        let _ = input.parse::<syn::Token![,]>()?;
+                        let alloc_constructor = input.parse()?;
+                        Some((p, alloc_constructor))
+                    }
+                    _ => None,
                 }
             },
         };

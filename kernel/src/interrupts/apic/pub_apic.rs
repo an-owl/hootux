@@ -36,15 +36,15 @@ impl Timer for SysApic {
 
 impl super::Apic for SysApic {
     unsafe fn set_enable(&mut self, enable: bool) {
-        LOCAL_APIC.get().set_enable(enable)
+        unsafe { LOCAL_APIC.get().set_enable(enable) }
     }
 
     unsafe fn init_err(&mut self, vector: u8, mask: bool) {
-        LOCAL_APIC.get().init_err(vector, mask)
+        unsafe { LOCAL_APIC.get().init_err(vector, mask) }
     }
 
     unsafe fn init_timer(&mut self, vector: u8, mask: bool) {
-        LOCAL_APIC.get().init_timer(vector, mask)
+        unsafe { LOCAL_APIC.get().init_timer(vector, mask) }
     }
 
     unsafe fn set_timer(
@@ -52,7 +52,7 @@ impl super::Apic for SysApic {
         mode: crate::interrupts::apic::apic_structures::apic_types::TimerMode,
         time: u32,
     ) {
-        LOCAL_APIC.get().set_timer(mode, time)
+        unsafe { LOCAL_APIC.get().set_timer(mode, time) }
     }
 
     /// Do not call this fn it will panic. `declare_eoi` is not available via this interface. You may want to use [super::declare_eoi]
@@ -80,7 +80,7 @@ impl super::Apic for SysApic {
         int_type: InterruptType,
         vector: u8,
     ) -> Result<(), IpiError> {
-        LOCAL_APIC.get().send_ipi(target, int_type, vector)
+        unsafe { LOCAL_APIC.get().send_ipi(target, int_type, vector) }
     }
 
     fn block_ipi_delivered(&self, timeout: Duration) -> bool {

@@ -40,10 +40,13 @@ impl hootux::system::driver_if::DriverProfile for AhciPciProfile {
                         pci_dev.addr()
                     );
                     AhciDriver::start(pci_dev.get_inner()).unwrap(); // I dont get a whole lot of choice here but to panic
-                                                                     // I can't return the resource as a PciResource
+                    // I can't return the resource as a PciResource
                     (MatchState::Success, None)
                 } else {
-                    log::error!("PCI device with class {AHCI_CLASS:#x} (AHCI) did not implement BAR 5; Poisoning device {}",pci_dev.addr());
+                    log::error!(
+                        "PCI device with class {AHCI_CLASS:#x} (AHCI) did not implement BAR 5; Poisoning device {}",
+                        pci_dev.addr()
+                    );
                     (MatchState::MatchRejected, None)
                 }
             };
@@ -112,10 +115,9 @@ impl AhciDriver {
                 .as_ptr()
         };
         let mut single;
-        let md = if let Some(m_queue) =
-            hootux::task::int_message_queue::IntMessageQueue::from_pci(&mut *lock, 32)
+        let md = match hootux::task::int_message_queue::IntMessageQueue::from_pci(&mut *lock, 32)
         // 32 is the max number of ints that should be used, I think the max is 1028 though\
-        {
+        { Some(m_queue) => {
             let mut msi =
                 hootux::system::pci::capabilities::msi::MessageSigInt::try_from(&mut *lock)
                     .expect("AHCI did not implement MSI"); // fixme: what about legacy ints
@@ -128,10 +130,10 @@ impl AhciDriver {
                 single = false;
             }
             MessageDelivery::Int(m_queue)
-        } else {
+        } _ => {
             single = true;
             MessageDelivery::Polled
-        };
+        }};
 
         // SAFETY: This is definitely the BAR memory
         let hba = unsafe {

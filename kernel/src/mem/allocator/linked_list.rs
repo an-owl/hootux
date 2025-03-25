@@ -35,19 +35,23 @@ impl LinkedListAllocator {
     /// heap bounds are valid and that the heap is unused. This method must be
     /// called only once.
     pub unsafe fn init(&mut self, heap_start: usize, heap_size: usize) {
-        self.add_free_region(heap_start, heap_size);
+        unsafe {
+            self.add_free_region(heap_start, heap_size);
+        }
     }
     unsafe fn add_free_region(&mut self, addr: usize, size: usize) {
-        use core::mem;
-        // ensure that the freed region can contain the ListNode
-        assert_eq!(align_up(addr, mem::align_of::<ListNode>()), addr);
-        assert!(size >= mem::size_of::<ListNode>());
+        unsafe {
+            use core::mem;
+            // ensure that the freed region can contain the ListNode
+            assert_eq!(align_up(addr, mem::align_of::<ListNode>()), addr);
+            assert!(size >= mem::size_of::<ListNode>());
 
-        let mut node = ListNode::new(size);
-        node.next = self.head.next.take();
-        let node_ptr = addr as *mut ListNode;
-        node_ptr.write(node);
-        self.head.next = Some(&mut *node_ptr);
+            let mut node = ListNode::new(size);
+            node.next = self.head.next.take();
+            let node_ptr = addr as *mut ListNode;
+            node_ptr.write(node);
+            self.head.next = Some(&mut *node_ptr);
+        }
     }
 
     /// Looks for a free region with the given size and alignment and removes
@@ -108,27 +112,31 @@ impl LinkedListAllocator {
 
 unsafe impl GlobalAlloc for super::Locked<LinkedListAllocator> {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        use core::ptr;
+        unsafe {
+            use core::ptr;
 
-        let (size, align) = LinkedListAllocator::size_align(layout);
-        let mut allocator = self.lock();
+            let (size, align) = LinkedListAllocator::size_align(layout);
+            let mut allocator = self.lock();
 
-        if let Some((region, alloc_start)) = allocator.find_region(size, align) {
-            let alloc_end = alloc_start
-                .checked_add(size)
-                .expect("Overflow while calculating alloc end");
-            let excess_size = region.end_addr() - alloc_end;
-            if excess_size > 0 {
-                allocator.add_free_region(alloc_end, excess_size);
+            if let Some((region, alloc_start)) = allocator.find_region(size, align) {
+                let alloc_end = alloc_start
+                    .checked_add(size)
+                    .expect("Overflow while calculating alloc end");
+                let excess_size = region.end_addr() - alloc_end;
+                if excess_size > 0 {
+                    allocator.add_free_region(alloc_end, excess_size);
+                }
+                alloc_start as *mut u8
+            } else {
+                ptr::null_mut()
             }
-            alloc_start as *mut u8
-        } else {
-            ptr::null_mut()
         }
     }
 
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
-        let (size, _) = LinkedListAllocator::size_align(layout);
-        self.lock().add_free_region(ptr as usize, size)
+        unsafe {
+            let (size, _) = LinkedListAllocator::size_align(layout);
+            self.lock().add_free_region(ptr as usize, size)
+        }
     }
 }

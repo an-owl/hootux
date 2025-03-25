@@ -14,7 +14,7 @@ use alloc::string::ToString;
 use core::pin::Pin;
 use core::task::{Context, Poll};
 use lazy_static::lazy_static;
-use modular_bitfield::{bitfield, BitfieldSpecifier};
+use modular_bitfield::{BitfieldSpecifier, bitfield};
 use spin::Mutex;
 use uart_16550::SerialPort;
 
@@ -63,8 +63,8 @@ macro_rules! serial_print {
 #[macro_export]
 macro_rules! serial_println {
     () => ($crate::serial_print!("\n"));
-    ($fmt:expr) => ($crate::serial_print!(concat!($fmt, "\n")));
-    ($fmt:expr, $($arg:tt)*) => ($crate::serial_print!(
+    ($fmt:expr_2021) => ($crate::serial_print!(concat!($fmt, "\n")));
+    ($fmt:expr_2021, $($arg:tt)*) => ($crate::serial_print!(
         concat!($fmt, "\n"), $($arg)*));
 }
 
@@ -347,8 +347,8 @@ impl Serial {
                         }
                     }
                     IntReason::LineStatus => panic!("Serial line status change"), // This is not configured to raise an interrupt
-                    IntReason::FifoTimeOut => {
-                        if let Some((ref buff, ref mut i)) = *self.rx_tgt.lock() {
+                    IntReason::FifoTimeOut => match *self.rx_tgt.lock() {
+                        Some((ref buff, ref mut i)) => {
                             while let Some(b) = self.receive() {
                                 if *i > buff.len() {
                                     continue;
@@ -356,10 +356,11 @@ impl Serial {
                                 unsafe { (&mut **buff)[*i] = b };
                                 *i += 1;
                             }
-                        } else {
+                        }
+                        _ => {
                             let _ = self.receive();
                         }
-                    }
+                    },
                 }
 
                 self.dispatcher.wake();
@@ -381,7 +382,9 @@ impl Serial {
     /// This fn is unsafe because it modifies interrupt behaviour. The caller must ensure that
     /// interrupts are correctly handled
     unsafe fn set_int_enable(&self, mode: InterruptEnable) {
-        x86_64::instructions::port::Port::new(self.base + Self::INT_ENABLE).write(mode.bits());
+        unsafe {
+            x86_64::instructions::port::Port::new(self.base + Self::INT_ENABLE).write(mode.bits());
+        }
     }
 
     /// Returns the modem status register

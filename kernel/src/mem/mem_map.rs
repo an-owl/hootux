@@ -31,25 +31,28 @@ pub unsafe fn map_range<'a, S: PageSize + core::fmt::Debug, I: Iterator<Item = P
     FrameAllocRef<'a>: FrameAllocator<S>,
     offset_page_table::OffsetPageTable: Mapper<S>,
 {
-    let b = allocator::COMBINED_ALLOCATOR.lock();
+    unsafe {
+        let b = allocator::COMBINED_ALLOCATOR.lock();
 
-    for page in pages {
-        let frame_addr = b
-            .phys_alloc()
-            .allocate(
-                alloc::alloc::Layout::from_size_align(S::SIZE as usize, S::SIZE as usize).unwrap(),
-                MemRegion::Mem64,
-            )
-            .expect("System ran out of memory");
-        let frame = PhysFrame::from_start_address(PhysAddr::new(frame_addr as u64)).unwrap();
+        for page in pages {
+            let frame_addr = b
+                .phys_alloc()
+                .allocate(
+                    alloc::alloc::Layout::from_size_align(S::SIZE as usize, S::SIZE as usize)
+                        .unwrap(),
+                    MemRegion::Mem64,
+                )
+                .expect("System ran out of memory");
+            let frame = PhysFrame::from_start_address(PhysAddr::new(frame_addr as u64)).unwrap();
 
-        match SYS_MAPPER
-            .get()
-            .map_to(page, frame, flags, &mut DummyFrameAlloc)
-        {
-            Ok(flush) => flush.flush(),
-            Err(err) => {
-                panic!("{:?}", err);
+            match SYS_MAPPER
+                .get()
+                .map_to(page, frame, flags, &mut DummyFrameAlloc)
+            {
+                Ok(flush) => flush.flush(),
+                Err(err) => {
+                    panic!("{:?}", err);
+                }
             }
         }
     }
@@ -98,24 +101,26 @@ where
     FrameAllocRef<'a>: FrameAllocator<S>,
     offset_page_table::OffsetPageTable: Mapper<S>,
 {
-    let b = allocator::COMBINED_ALLOCATOR.lock();
+    unsafe {
+        let b = allocator::COMBINED_ALLOCATOR.lock();
 
-    let frame_addr = b
-        .phys_alloc()
-        .allocate(
-            alloc::alloc::Layout::from_size_align(S::SIZE as usize, S::SIZE as usize).unwrap(),
-            MemRegion::Mem64,
-        )
-        .expect("System ran out of memory");
-    let frame = PhysFrame::from_start_address(PhysAddr::new(frame_addr as u64)).unwrap();
+        let frame_addr = b
+            .phys_alloc()
+            .allocate(
+                alloc::alloc::Layout::from_size_align(S::SIZE as usize, S::SIZE as usize).unwrap(),
+                MemRegion::Mem64,
+            )
+            .expect("System ran out of memory");
+        let frame = PhysFrame::from_start_address(PhysAddr::new(frame_addr as u64)).unwrap();
 
-    match SYS_MAPPER
-        .get()
-        .map_to(page, frame, flags, &mut DummyFrameAlloc)
-    {
-        Ok(flush) => flush.flush(),
-        Err(err) => {
-            panic!("{:?}", err);
+        match SYS_MAPPER
+            .get()
+            .map_to(page, frame, flags, &mut DummyFrameAlloc)
+        {
+            Ok(flush) => flush.flush(),
+            Err(err) => {
+                panic!("{:?}", err);
+            }
         }
     }
 }
@@ -145,63 +150,65 @@ where
 }
 
 pub(crate) unsafe fn unmap_and_free(addr: VirtAddr) -> Result<(), ()> {
-    let page = Page::<Size4KiB>::containing_address(addr);
+    unsafe {
+        let page = Page::<Size4KiB>::containing_address(addr);
 
-    let free = |entry: x86_64::structures::paging::page_table::PageTableEntry, len| {
-        if entry
-            .flags()
-            .contains(frame_attribute_table::FRAME_ATTR_ENTRY_FLAG)
-        {
-            let op = frame_attribute_table::FatOperation::UnAlias;
-            let fae = frame_attribute_table::ATTRIBUTE_TABLE_HEAD.do_op_phys(entry.addr(), op);
+        let free = |entry: x86_64::structures::paging::page_table::PageTableEntry, len| {
+            if entry
+                .flags()
+                .contains(frame_attribute_table::FRAME_ATTR_ENTRY_FLAG)
+            {
+                let op = frame_attribute_table::FatOperation::UnAlias;
+                let fae = frame_attribute_table::ATTRIBUTE_TABLE_HEAD.do_op_phys(entry.addr(), op);
 
-            let free = if let Some(ref fae) = fae {
-                // if not aliased
-                fae.alias_count() <= 1
-            } else {
-                // No aliases are present if no FAE is present
-                true
+                let free = if let Some(ref fae) = fae {
+                    // if not aliased
+                    fae.alias_count() <= 1
+                } else {
+                    // No aliases are present if no FAE is present
+                    true
+                };
+
+                // if no fae is present
+                if free {
+                    let l = allocator::COMBINED_ALLOCATOR.lock();
+                    l.phys_alloc().dealloc(entry.addr().as_u64() as usize, len)
+                }
             };
-
-            // if no fae is present
-            if free {
-                let l = allocator::COMBINED_ALLOCATOR.lock();
-                l.phys_alloc().dealloc(entry.addr().as_u64() as usize, len)
-            }
         };
-    };
 
-    // We need to determine the size of the frame before we free it.
-    match get_entry(page) {
-        Ok(e) => {
-            // Only necessary for 4k pages higher ones will return NotMapped
-            if !e.flags().contains(PageTableFlags::PRESENT) {
-                return Err(());
+        // We need to determine the size of the frame before we free it.
+        match get_entry(page) {
+            Ok(e) => {
+                // Only necessary for 4k pages higher ones will return NotMapped
+                if !e.flags().contains(PageTableFlags::PRESENT) {
+                    return Err(());
+                }
+                unmap_page(Page::<Size4KiB>::containing_address(addr));
+                free(e, 0x1000);
             }
-            unmap_page(Page::<Size4KiB>::containing_address(addr));
-            free(e, 0x1000);
-        }
-        Err(GetEntryErr::NotMapped) => return Err(()),
-        Err(GetEntryErr::ParentHugePage) => {
-            let page = Page::<Size2MiB>::containing_address(addr);
+            Err(GetEntryErr::NotMapped) => return Err(()),
+            Err(GetEntryErr::ParentHugePage) => {
+                let page = Page::<Size2MiB>::containing_address(addr);
 
-            match get_entry(page) {
-                Ok(e) => {
-                    unmap_page(Page::<Size2MiB>::containing_address(addr));
-                    free(e, 0x200000);
-                }
-                // SAFETY: The 4K NotMapped arm will be taken not this one.
-                Err(GetEntryErr::NotMapped) => unsafe { core::hint::unreachable_unchecked() },
-                Err(GetEntryErr::ParentHugePage) => {
-                    let page = Page::<Size1GiB>::containing_address(addr);
-                    // No parent huge pages are possible. This would've returned unmapped on the 4k check. no errors are possible here.
-                    unmap_page(Page::<Size1GiB>::containing_address(addr));
-                    free(get_entry(page).unwrap(), 0x40000000);
+                match get_entry(page) {
+                    Ok(e) => {
+                        unmap_page(Page::<Size2MiB>::containing_address(addr));
+                        free(e, 0x200000);
+                    }
+                    // SAFETY: The 4K NotMapped arm will be taken not this one.
+                    Err(GetEntryErr::NotMapped) => core::hint::unreachable_unchecked(),
+                    Err(GetEntryErr::ParentHugePage) => {
+                        let page = Page::<Size1GiB>::containing_address(addr);
+                        // No parent huge pages are possible. This would've returned unmapped on the 4k check. no errors are possible here.
+                        unmap_page(Page::<Size1GiB>::containing_address(addr));
+                        free(get_entry(page).unwrap(), 0x40000000);
+                    }
                 }
             }
         }
+        Ok(())
     }
-    Ok(())
 }
 
 pub fn translate(addr: usize) -> Option<u64> {
@@ -328,10 +335,10 @@ where
 /// single page while automatically resolving the size
 #[macro_export]
 macro_rules! update_flags {
-    ($flags:expr, $addr:expr) => {
+    ($flags:expr_2021, $addr:expr_2021) => {
         $crate::mem::mem_map::set_flags($addr.into(), $flags)
     };
-    ($flags:expr, $start_addr:expr, $end_addr:expr) => {
+    ($flags:expr_2021, $start_addr:expr_2021, $end_addr:expr_2021) => {
         match $crate::mem::mem_map::set_flags_iter(
             x86_64::structures::paging::page::PageRangeInclusive::<
                 x86_64::structures::paging::Size4KiB,

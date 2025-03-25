@@ -1,6 +1,6 @@
-use crate::hba::port_control::InterruptStatus;
-use crate::PortState;
 use crate::CRATE_NAME;
+use crate::PortState;
+use crate::hba::port_control::InterruptStatus;
 use ata::command::constructor::{CommandConstructor, MaybeOpaqueCommand, OpaqueCommand};
 use core::alloc::Allocator;
 use core::fmt::Formatter;
@@ -78,50 +78,52 @@ impl AbstractHba {
     /// The caller must ensure that the given location points to a AHCI HBA configuration region,
     /// and uses an appropriate caching mode.
     pub unsafe fn new(region: &mut [u8], bus_addr: hootux::system::pci::DeviceAddress) -> Self {
-        let r = region;
-        let hba = crate::hba::HostBusAdapter::from_raw(r);
-        let crate::hba::HostBusAdapter {
-            general,
-            vendor: _vendor,
-            ports,
-        } = hba;
+        unsafe {
+            let r = region;
+            let hba = crate::hba::HostBusAdapter::from_raw(r);
+            let crate::hba::HostBusAdapter {
+                general,
+                vendor: _vendor,
+                ports,
+            } = hba;
 
-        general.claim_from_firmware();
+            general.claim_from_firmware();
 
-        let info = alloc::sync::Arc::new(HbaInfo::from_general(general, bus_addr));
-        let mut raw_ports: alloc::vec::Vec<Option<&mut crate::hba::port_control::PortControl>> =
-            ports.into_iter().map(|p| Some(p)).collect();
+            let info = alloc::sync::Arc::new(HbaInfo::from_general(general, bus_addr));
+            let mut raw_ports: alloc::vec::Vec<Option<&mut crate::hba::port_control::PortControl>> =
+                ports.into_iter().map(|p| Some(p)).collect();
 
-        let mut ports = [const { None }; 32];
+            let mut ports = [const { None }; 32];
 
-        // unimplemented ports stay None
-        for (i, p) in raw_ports.iter_mut().enumerate() {
-            if general.check_port(i as u8) {
-                ports[i] = Some(alloc::sync::Arc::new(Port::new(
-                    p.take().unwrap(),
-                    info.clone(),
-                    i as u8,
-                )))
+            // unimplemented ports stay None
+            for (i, p) in raw_ports.iter_mut().enumerate() {
+                if general.check_port(i as u8) {
+                    ports[i] = Some(alloc::sync::Arc::new(Port::new(
+                        p.take().unwrap(),
+                        info.clone(),
+                        i as u8,
+                    )))
+                }
             }
-        }
 
-        for i in &ports {
-            if let Some(p) = i {
-                p.port.lock().interrupt_status.clear(InterruptStatus::all());
+            for i in &ports {
+                if let Some(p) = i {
+                    p.port.lock().interrupt_status.clear(InterruptStatus::all());
 
-                p.enable(true);
+                    p.enable(true);
+                }
             }
+
+            let ret = Self {
+                info,
+                general: spin::Mutex::new(general),
+                ports,
+                state: core::array::from_fn(|_| atomic::Atomic::new(PortState::NotImplemented)),
+            };
+            ret.update_state();
+
+            ret
         }
-
-        let ret = Self {
-            info,
-            general: spin::Mutex::new(general),
-            ports,
-            state: core::array::from_fn(|_| atomic::Atomic::new(PortState::NotImplemented)),
-        };
-        ret.update_state();
-
-        ret
     }
 
     fn update_state(&self) {
@@ -284,16 +286,18 @@ impl Port {
         cmd: ata::command::constructor::ComposedCommand,
         buff: Option<&[u8]>,
     ) -> Result<Option<&[u8]>, CmdErr> {
-        let fut = self.construct_future(cmd, buff);
+        unsafe {
+            let fut = self.construct_future(cmd, buff);
 
-        // this probably won't end up waiting
-        if let None = self.exec_cmd(fut.clone()).await {
-            self.queue_command(fut.clone()).await;
+            // this probably won't end up waiting
+            if let None = self.exec_cmd(fut.clone()).await {
+                self.queue_command(fut.clone()).await;
+            }
+
+            // SAFETY: This is safe because the buffer is originally given as a ref.
+            // The deref must occur because the buffer may not have an associated lifetime.
+            fut.await.map(|k| k.map(|b| &*b))
         }
-
-        // SAFETY: This is safe because the buffer is originally given as a ref.
-        // The deref must occur because the buffer may not have an associated lifetime.
-        fut.await.map(|k| k.map(|b| unsafe { &*b }))
     }
 
     /// Attempts to send the cmd to the device Returns the command slot used.
@@ -303,47 +307,49 @@ impl Port {
     ///
     /// The caller must ensure that the buffer is correctly sized for the given command.
     async unsafe fn exec_cmd(&self, cmd: CmdFuture) -> Option<u8> {
-        // not allowed to run commands while in error state
-        if self.err_chk.is_err() {
-            return None;
+        unsafe {
+            // not allowed to run commands while in error state
+            if self.err_chk.is_err() {
+                return None;
+            }
+
+            let slot = self.cmd_lock.get_cmd()?;
+            let (fis, nqc) = if let Some(ret) = self.compile_fis(&cmd.data.cmd) {
+                cmd.data.nqc.store(ret.1, atomic::Ordering::Relaxed);
+                ret
+            } else {
+                self.get_identity().await;
+                // Should never panic None can only be returned if the device identity is not present
+                self.compile_fis(&cmd.data.cmd).unwrap()
+            };
+
+            let mut table = self.cmd_tables.table(slot).unwrap(); // panics here are a bug. Did self.info change?
+            let b = cmd.data.get_buff();
+
+            // actually sends the command to the device.
+            // fixme errors here should be handled
+            table.send_fis(fis, b.map(|d| d.cast_mut())).expect("fixme");
+            *self.active_cmd_fut[slot as usize].lock() = Some(cmd.clone());
+
+            self.port.lock().tfd_wait();
+
+            // disables interrupts to minimize time between command start and updating the lock state.
+            // could use x86_64 crate but i dont really want that for this.
+            // todo make these arch generic
+            core::arch::asm!("cli", options(nomem, nostack));
+
+            // SAFETY: The RPDT is set up and the FIS is valid.
+            if nqc {
+                self.port.lock().exec_nqc(slot)
+            } else {
+                self.port.lock().exec_cmd(slot)
+            }
+            self.cmd_lock.full_lock(slot);
+
+            core::arch::asm!("sti", options(nomem, nostack));
+
+            Some(slot)
         }
-
-        let slot = self.cmd_lock.get_cmd()?;
-        let (fis, nqc) = if let Some(ret) = self.compile_fis(&cmd.data.cmd) {
-            cmd.data.nqc.store(ret.1, atomic::Ordering::Relaxed);
-            ret
-        } else {
-            self.get_identity().await;
-            // Should never panic None can only be returned if the device identity is not present
-            self.compile_fis(&cmd.data.cmd).unwrap()
-        };
-
-        let mut table = self.cmd_tables.table(slot).unwrap(); // panics here are a bug. Did self.info change?
-        let b = cmd.data.get_buff();
-
-        // actually sends the command to the device.
-        // fixme errors here should be handled
-        table.send_fis(fis, b.map(|d| d.cast_mut())).expect("fixme");
-        *self.active_cmd_fut[slot as usize].lock() = Some(cmd.clone());
-
-        self.port.lock().tfd_wait();
-
-        // disables interrupts to minimize time between command start and updating the lock state.
-        // could use x86_64 crate but i dont really want that for this.
-        // todo make these arch generic
-        core::arch::asm!("cli", options(nomem, nostack));
-
-        // SAFETY: The RPDT is set up and the FIS is valid.
-        if nqc {
-            self.port.lock().exec_nqc(slot)
-        } else {
-            self.port.lock().exec_cmd(slot)
-        }
-        self.cmd_lock.full_lock(slot);
-
-        core::arch::asm!("sti", options(nomem, nostack));
-
-        Some(slot)
     }
 
     /// Pushes the command onto the waiting queue. This will immediately attempt to execute the
@@ -734,10 +740,16 @@ impl Port {
             PortState::Cold => {
                 if ks == PortState::Hot {
                     // port has become unavailable
-                    log::warn!("AHCI: {} has been detected via Cold Presence Detection without being removed", self);
+                    log::warn!(
+                        "AHCI: {} has been detected via Cold Presence Detection without being removed",
+                        self
+                    );
                     self.abandon_cmd();
                 } else if ks == PortState::Warm {
-                    log::warn!("AHCI: {} has been detected via Cold Presence Detection without being removed", self);
+                    log::warn!(
+                        "AHCI: {} has been detected via Cold Presence Detection without being removed",
+                        self
+                    );
                 }
 
                 todo!()
@@ -1065,11 +1077,7 @@ impl SectorCount {
     /// This fn should be preferred over [Self::count].
     fn count_ext(&self) -> u16 {
         let n = self.0.get();
-        if n == 1 << 16 {
-            0
-        } else {
-            n as u16
-        }
+        if n == 1 << 16 { 0 } else { n as u16 }
     }
 }
 

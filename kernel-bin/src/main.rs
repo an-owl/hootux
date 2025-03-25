@@ -22,7 +22,7 @@ use x86_64::addr::VirtAddr;
 
 kernel_proc_macro::multiboot2_header! {
     multiboot2_header::HeaderTagISA::I386,
-    #[link_section = ".multiboot2_header"],
+    #[unsafe(link_section = ".multiboot2_header")],
     multiboot2_header::FramebufferHeaderTag::new(multiboot2_header::HeaderTagFlag::Optional,0,0,32)
     Pad::new()
     multiboot2_header::EfiBootServiceHeaderTag::new(multiboot2_header::HeaderTagFlag::Required),
@@ -40,7 +40,7 @@ impl Pad {
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 fn kernel_main(b: *mut libboot::boot_info::BootInfo) -> ! {
     serial_println!("Kernel start");
     let mut b = unsafe { b.read() };
@@ -155,7 +155,7 @@ fn kernel_main(b: *mut libboot::boot_info::BootInfo) -> ! {
 
 libboot::kernel_entry!(_libboot_entry);
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn _libboot_entry(bi: *mut libboot::boot_info::BootInfo) -> ! {
     kernel_main(bi)
 }

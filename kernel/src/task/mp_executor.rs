@@ -64,15 +64,16 @@ impl Task {
     /// Returns a waker for `self`. If a Waker does not already exist one will be constructed.
     fn waker(self: &Arc<Self>) -> Waker {
         let mut l = self.waker.lock();
-        if let Some(waker) = l.upgrade() {
-            Waker::from(waker)
-        } else {
-            let b = Arc::new(TaskWaker {
-                task: Arc::downgrade(self),
-                id: self.id,
-            });
-            *l = Arc::downgrade(&b);
-            Waker::from(b)
+        match l.upgrade() {
+            Some(waker) => Waker::from(waker),
+            _ => {
+                let b = Arc::new(TaskWaker {
+                    task: Arc::downgrade(self),
+                    id: self.id,
+                });
+                *l = Arc::downgrade(&b);
+                Waker::from(b)
+            }
         }
     }
 
@@ -154,11 +155,12 @@ impl LocalExec {
         }
 
         while let Some(id) = self.fetch_ready() {
-            let task = if let Some(task) = self.fetch_task(id) {
-                task
-            } else {
-                // task does not exist (probably dropped)
-                continue;
+            let task = match self.fetch_task(id) {
+                Some(task) => task,
+                _ => {
+                    // task does not exist (probably dropped)
+                    continue;
+                }
             };
 
             if task.owner.load(atomic::Ordering::Relaxed).num() != self.i {
@@ -183,10 +185,20 @@ impl LocalExec {
                     self.drop_task(id);
                     // todo implement Display for Task, should show a name and owned device(s)
                     match r {
-                        super::TaskResult::ExitedNormally => log::debug!("Task {:?} returned {:?}", id, super::TaskResult::ExitedNormally),
-                        super::TaskResult::StoppedExternally => log::warn!("Task {} returned {:?}, was the device removed? see driver log for details",id.0,super::TaskResult::StoppedExternally),
+                        super::TaskResult::ExitedNormally => log::debug!(
+                            "Task {:?} returned {:?}",
+                            id,
+                            super::TaskResult::ExitedNormally
+                        ),
+                        super::TaskResult::StoppedExternally => log::warn!(
+                            "Task {} returned {:?}, was the device removed? see driver log for details",
+                            id.0,
+                            super::TaskResult::StoppedExternally
+                        ),
                         super::TaskResult::Error => log::error!("{id:?} Exited with error"), // task should log error info
-                        super::TaskResult::Panicked => log::error!("{id:?} Panicked and was caught successfully")
+                        super::TaskResult::Panicked => {
+                            log::error!("{id:?} Panicked and was caught successfully")
+                        }
                     }
                 }
                 _ => {} // ops normal
@@ -198,9 +210,14 @@ impl LocalExec {
         let mut l = self.cache.lock();
         if let Some(w) = l.local_cache.get(&id) {
             return Some(w.clone());
-        } else if let Some(w) = GLOBAL_TASK_CACHE.fetch(id) {
-            l.local_cache.insert(id, w.clone());
-            return Some(w);
+        } else {
+            match GLOBAL_TASK_CACHE.fetch(id) {
+                Some(w) => {
+                    l.local_cache.insert(id, w.clone());
+                    return Some(w);
+                }
+                _ => {}
+            }
         }
         // task may have been dropped
         None

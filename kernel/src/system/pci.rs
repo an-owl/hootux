@@ -9,7 +9,7 @@
 // todo move all the BAR stuff into it's own module.
 
 use crate::alloc_interface::MmioAlloc;
-use crate::system::pci::configuration::{register::HeaderType, PciHeader};
+use crate::system::pci::configuration::{PciHeader, register::HeaderType};
 use core::{cmp::Ordering, fmt::Formatter};
 
 pub mod capabilities;
@@ -317,38 +317,36 @@ impl DeviceControl {
         CfgIntResult,
         Option<alloc::vec::Vec<crate::interrupts::InterruptIndex>>,
     ) {
-        assert!(override_count.unwrap_or(0) < 2048);
+        unsafe {
+            assert!(override_count.unwrap_or(0) < 2048);
 
-        if let Some(_) = self.capabilities.get(&capabilities::CapabilityId::MsiX) {
-            let ret = self.cfg_msi_x(queue.clone(), override_count);
-            if ret.0.success() {
-                debug_assert!(ret.1.is_some()); // driver did not properly acquire resource
-                return ret;
-            }
-        }
-
-        if let Some(_) = self.capabilities.get(&capabilities::CapabilityId::Msi) {
-            // check if override count exceeds max vectors for msi
-            let oc = {
-                if let Some(n) = override_count {
-                    if n > 32 {
-                        None
-                    } else {
-                        Some(n)
-                    }
-                } else {
-                    None
+            if let Some(_) = self.capabilities.get(&capabilities::CapabilityId::MsiX) {
+                let ret = self.cfg_msi_x(queue.clone(), override_count);
+                if ret.0.success() {
+                    debug_assert!(ret.1.is_some()); // driver did not properly acquire resource
+                    return ret;
                 }
-            };
-
-            let ret = self.cfg_msi(queue.clone(), oc);
-            if ret.0.success() {
-                debug_assert!(ret.1.is_some()); // driver did not properly acquire resource
-                return ret;
             }
-        }
 
-        self.cfg_legacy_int(queue)
+            if let Some(_) = self.capabilities.get(&capabilities::CapabilityId::Msi) {
+                // check if override count exceeds max vectors for msi
+                let oc = {
+                    if let Some(n) = override_count {
+                        if n > 32 { None } else { Some(n) }
+                    } else {
+                        None
+                    }
+                };
+
+                let ret = self.cfg_msi(queue.clone(), oc);
+                if ret.0.success() {
+                    debug_assert!(ret.1.is_some()); // driver did not properly acquire resource
+                    return ret;
+                }
+            }
+
+            self.cfg_legacy_int(queue)
+        }
     }
 
     /// Configures MSI-X for the device function.
@@ -487,74 +485,76 @@ impl DeviceControl {
         CfgIntResult,
         Option<alloc::vec::Vec<crate::interrupts::InterruptIndex>>,
     ) {
-        use capabilities::msi;
-        assert!(override_count.unwrap_or(0) < 32);
+        unsafe {
+            use capabilities::msi;
+            assert!(override_count.unwrap_or(0) < 32);
 
-        let mut msi = match msi::MessageSigInt::try_from(self) {
-            Ok(r) => r,
-            Err(_) => return (CfgIntResult::Failed, None),
-        };
+            let mut msi = match msi::MessageSigInt::try_from(self) {
+                Ok(r) => r,
+                Err(_) => return (CfgIntResult::Failed, None),
+            };
 
-        let req_vec = msi
-            .get_control()
-            .requested_vectors()
-            .min(override_count.unwrap_or(u8::MAX as u16) as u8);
+            let req_vec = msi
+                .get_control()
+                .requested_vectors()
+                .min(override_count.unwrap_or(u8::MAX as u16) as u8);
 
-        // locate vectors
-        let (irq, count);
-        {
-            let mut use_vectors = req_vec;
-            // Uses a loop because of MP
+            // locate vectors
+            let (irq, count);
+            {
+                let mut use_vectors = req_vec;
+                // Uses a loop because of MP
 
-            loop {
-                match crate::interrupts::reserve_irq(0, use_vectors) {
-                    Ok(n) => {
-                        count = use_vectors;
-                        irq = n;
-                        break;
-                    }
-                    Err(n) => {
-                        use_vectors = n.next_power_of_two() >> 1;
-                        assert!(use_vectors >= 32);
-                        if use_vectors == 0 {
-                            return (CfgIntResult::Failed, None);
+                loop {
+                    match crate::interrupts::reserve_irq(0, use_vectors) {
+                        Ok(n) => {
+                            count = use_vectors;
+                            irq = n;
+                            break;
+                        }
+                        Err(n) => {
+                            use_vectors = n.next_power_of_two() >> 1;
+                            assert!(use_vectors >= 32);
+                            if use_vectors == 0 {
+                                return (CfgIntResult::Failed, None);
+                            }
                         }
                     }
                 }
+            };
+
+            // set handler is IHR
+            let mut irqs = alloc::vec::Vec::with_capacity(count as usize);
+            for (i, irq) in (irq..irq + count).enumerate() {
+                x86_64::instructions::interrupts::without_interrupts(|| {
+                    crate::interrupts::alloc_irq(irq, queue.clone(), i as u64)
+                        .expect("Failed to allocate reserved IRQ")
+                });
+                irqs.push(irq.into());
             }
-        };
 
-        // set handler is IHR
-        let mut irqs = alloc::vec::Vec::with_capacity(count as usize);
-        for (i, irq) in (irq..irq + count).enumerate() {
-            x86_64::instructions::interrupts::without_interrupts(|| {
-                crate::interrupts::alloc_irq(irq, queue.clone(), i as u64)
-                    .expect("Failed to allocate reserved IRQ")
-            });
-            irqs.push(irq.into());
-        }
+            msi.set_interrupt(
+                msi::InterruptAddress::new(msi::get_next_msi_affinity()),
+                msi::InterruptMessage::new(irq, msi::InterruptDeliveryMode::Fixed, false, false),
+            );
 
-        msi.set_interrupt(
-            msi::InterruptAddress::new(msi::get_next_msi_affinity()),
-            msi::InterruptMessage::new(irq, msi::InterruptDeliveryMode::Fixed, false, false),
-        );
+            // Mask bits if available
+            if let Some(oc) = override_count {
+                if let Some(mut mask) = msi.mask {
+                    let mut add_mask = 0;
 
-        // Mask bits if available
-        if let Some(oc) = override_count {
-            if let Some(mut mask) = msi.mask {
-                let mut add_mask = 0;
-
-                // this can use the set method but this is faster
-                for vec in (oc as u8)..count {
-                    add_mask |= 1 << vec
+                    // this can use the set method but this is faster
+                    for vec in (oc as u8)..count {
+                        add_mask |= 1 << vec
+                    }
+                    let t = mask.inner.read();
+                    add_mask |= t;
+                    mask.inner.write(add_mask);
                 }
-                let t = mask.inner.read();
-                add_mask |= t;
-                mask.inner.write(add_mask);
             }
-        }
 
-        (CfgIntResult::SetMsi(count, req_vec), Some(irqs))
+            (CfgIntResult::SetMsi(count, req_vec), Some(irqs))
+        }
     }
 
     #[allow(unused_variables)]
@@ -934,11 +934,7 @@ pub enum CfgIntResult {
 
 impl CfgIntResult {
     pub fn success(&self) -> bool {
-        if let Self::Failed = self {
-            false
-        } else {
-            true
-        }
+        if let Self::Failed = self { false } else { true }
     }
 }
 

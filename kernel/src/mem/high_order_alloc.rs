@@ -3,11 +3,7 @@ use core::fmt::{Debug, Display};
 use core::ops::{Add, BitAnd, BitOr, Not, Sub};
 
 const fn assert_wf_bool(value: bool) -> usize {
-    if value {
-        1
-    } else {
-        panic!()
-    }
+    if value { 1 } else { panic!() }
 }
 
 /// Contains a free list which is used to store large regions of memory in an optimized layout.
@@ -411,7 +407,9 @@ impl AllocAddressType for u64 {
 
 impl<const BS: u32> FreeMem<usize, BS> {
     pub unsafe fn into_ptr(self) -> *mut [u8] {
-        // SAFETY: safety rules here should be kind of obvious. dont play with fire kids
-        core::slice::from_raw_parts_mut(self.start as *mut u8, self.len)
+        unsafe {
+            // SAFETY: safety rules here should be kind of obvious. dont play with fire kids
+            core::slice::from_raw_parts_mut(self.start as *mut u8, self.len)
+        }
     }
 }

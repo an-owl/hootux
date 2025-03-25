@@ -13,8 +13,10 @@ pub type CpuIndex = u32;
 ///
 /// This fn may not be called more than once.
 pub unsafe fn start_mp(tls_data: *const u8, tls_file_size: usize, tls_data_size: usize) {
-    #[cfg(feature = "multiprocessing")]
-    init::start_mp(tls_data, tls_file_size, tls_data_size)
+    unsafe {
+        #[cfg(feature = "multiprocessing")]
+        init::start_mp(tls_data, tls_file_size, tls_data_size)
+    }
 }
 
 /// Contains the number of currently running CPUs.

@@ -1,7 +1,7 @@
 pub static IHR: HandleRegistry = HandleRegistry::new();
 
 #[thread_local]
-pub(super) static mut INT_LOG: InterruptLog = InterruptLog::new();
+pub(super) static INT_LOG: InterruptLog = InterruptLog::new();
 
 /// The InterruptLog is a thread local structure used for counting the number of interrupts that
 /// have occurred  on each cpu. When an interrupt occurs its vector within log should be incremented.
@@ -13,31 +13,34 @@ pub(super) static mut INT_LOG: InterruptLog = InterruptLog::new();
 /// be guaranteed to either a hardware fault or an overflow and should be treated as the latter,
 /// however is likely the former.
 pub struct InterruptLog {
-    log: [usize; 256],
+    log: [core::sync::atomic::AtomicUsize; 256],
 }
 
 impl InterruptLog {
     pub const fn new() -> Self {
-        Self { log: [0; 256] }
+        Self {
+            log: [const { core::sync::atomic::AtomicUsize::new(0) }; 256],
+        }
     }
 
     /// Logs an interrupt into internal storage at the given vector
-    pub(super) fn log(&mut self, vector: u8) {
-        self.log[vector as usize] = self.log[vector as usize].wrapping_add(1);
+    pub(super) fn log(&self, vector: u8) {
+        // iret will synchronize this
+        self.log[vector as usize].fetch_add(1, atomic::Ordering::Relaxed);
     }
 
     /// Returns a copy of the data contained within the given vector
     pub fn fetch_vec(&self, vector: u8) -> usize {
-        self.log[vector as usize]
+        self.log[vector as usize].load(atomic::Ordering::Relaxed)
     }
 
     pub fn fetch_all(&self) -> [usize; 256] {
-        self.log.clone()
+        core::array::from_fn(|idx| self.log[idx].load(atomic::Ordering::Relaxed))
     }
 }
 
 pub fn fetch_log(vector: u8) -> usize {
-    unsafe { INT_LOG.fetch_vec(vector) }
+    INT_LOG.fetch_vec(vector)
 }
 
 /// Handle registry stores interrupt handlers. it is used to serve multiple purposes that can't be

@@ -1,5 +1,5 @@
 use proc_macro2::TokenStream;
-use quote::{quote, ToTokens};
+use quote::{ToTokens, quote};
 use syn::parse::ParseStream;
 
 pub(super) struct MultiBootHeaderParser {
@@ -256,7 +256,7 @@ mod test {
 
     #[test]
     fn handle_attributes() {
-        let b: super::MultiBootHeaderParser = syn::parse2(quote::quote!(I386, #[link_section = ".bootloader"] #[deprecated], FrameBufferHeaderTag::new(Required,1920,1080,8))).unwrap();
+        let b: super::MultiBootHeaderParser = syn::parse2(quote::quote!(I386, #[unsafe(link_section = ".bootloader")] #[deprecated], FrameBufferHeaderTag::new(Required,1920,1080,8))).unwrap();
         let u: proc_macro2::TokenStream = b.into();
         eprintln!("{}", u.to_string());
     }

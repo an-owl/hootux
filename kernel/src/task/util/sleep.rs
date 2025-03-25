@@ -26,10 +26,11 @@ impl crate::util::Mutex<SleepQueue> {
     /// Wakes all timers which can be woken
     pub(crate) fn wakeup(&self) {
         let ct = crate::time::get_sys_time();
-        let mut l = if let Some(l) = self.try_lock() {
-            l
-        } else {
-            return;
+        let mut l = match self.try_lock() {
+            Some(l) => l,
+            _ => {
+                return;
+            }
         };
 
         if l.list.front().is_some_and(|t| t.try_wake(ct)) {

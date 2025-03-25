@@ -82,15 +82,17 @@ pub(super) unsafe fn start_mp(tls_data: *const u8, tls_file_size: usize, tls_dat
             }
             ProcessorState::WaitingForSipi => {
                 AP_INIT_COUNT.fetch_add(1, atomic::Ordering::Relaxed);
-                bring_up_ap(
-                    i.local_apic_id,
-                    addr,
-                    &cache,
-                    tls_data,
-                    tls_file_size,
-                    tls_data_size,
-                    tr_data,
-                )
+                unsafe {
+                    bring_up_ap(
+                        i.local_apic_id,
+                        addr,
+                        &cache,
+                        tls_data,
+                        tls_file_size,
+                        tls_data_size,
+                        tr_data,
+                    )
+                }
             }
             ProcessorState::Running => panic!("Why are you running? {}", i.local_apic_id),
         }
@@ -134,7 +136,9 @@ unsafe fn bring_up_ap(
 
     log::info!("Bringing up CPU {id}");
 
-    let tls_ptr = crate::mem::thread_local_storage::new_tls(tls_data, tls_file_size, tls_data_size);
+    let tls_ptr = unsafe {
+        crate::mem::thread_local_storage::new_tls(tls_data, tls_file_size, tls_data_size)
+    };
 
     // INIT
     let mut apic = apic::get_apic();
@@ -157,7 +161,7 @@ unsafe fn bring_up_ap(
             )
             .unwrap()
         };
-        match init_harness(trampoline_data, cache, tls_ptr) {
+        match unsafe { init_harness(trampoline_data, cache, tls_ptr) } {
             Ok(_) => {
                 start_good = true;
                 if i > 0 {
@@ -235,8 +239,8 @@ fn allocate_trampoline() -> Result<
     (),
 > {
     use x86_64::{
-        structures::paging::frame::PhysFrame, structures::paging::Mapper,
-        structures::paging::PageTableFlags, PhysAddr,
+        PhysAddr, structures::paging::Mapper, structures::paging::PageTableFlags,
+        structures::paging::frame::PhysFrame,
     };
     // copy _trampoline into `region`
     let tra = _trampoline as *const fn() as *const [u8; 4096];
@@ -358,7 +362,7 @@ fn long_mode_init() -> ! {
     };
 
     unsafe fn cast_static<'a, T>(r: &'a T) -> &'static T {
-        core::mem::transmute(r)
+        unsafe { core::mem::transmute(r) }
     }
 
     unsafe { core::arch::asm!("wbinvd") };
@@ -504,7 +508,7 @@ struct GdtPtr {
 }
 
 // imports
-extern "C" {
+unsafe extern "C" {
     fn _trampoline(); // this will never be directly called.
     #[allow(improper_ctypes)] // hey, if it works...
     static _trampoline_data: core::mem::MaybeUninit<TrampolineData>;

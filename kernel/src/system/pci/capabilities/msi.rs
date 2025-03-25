@@ -1,6 +1,6 @@
 pub use crate::interrupts::apic::apic_structures::apic_types::InterruptDeliveryMode;
-use crate::system::pci::capabilities::CapabilityId;
 use crate::system::pci::DeviceControl;
+use crate::system::pci::capabilities::CapabilityId;
 use core::alloc::Allocator;
 use core::any::Any;
 
@@ -71,9 +71,11 @@ impl<'a> MessageSigInt<'a> {
     ///
     /// The caller must ensure that any interrupts are correctly handled
     pub unsafe fn enable(&mut self, enable: bool) {
-        let mut bits = *self.control;
-        bits.set(MsiControlBits::ENABLE, enable);
-        core::ptr::write_volatile(self.control, bits)
+        unsafe {
+            let mut bits = *self.control;
+            bits.set(MsiControlBits::ENABLE, enable);
+            core::ptr::write_volatile(self.control, bits)
+        }
     }
 
     /// Returns the number of vectors requested by the fn

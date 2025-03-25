@@ -26,12 +26,14 @@ pub trait PciHeader: Any + Sync + Send {
     /// This fn is unsafe because it allows mutable aliasing of memory. The caller should ensure
     /// that `self.bar(bar_num + 1)` is not referenced.
     unsafe fn bar_long(&mut self, bar_num: u8) -> Option<&mut BarRegisterLong> {
-        let bar = self.bar(bar_num)?;
-        if let BarType::Qword(_) = bar.bar_type() {
-            // Cast is allowed because register is type qword
-            Some(&mut *(bar as *mut BaseAddressRegister as *mut BarRegisterLong))
-        } else {
-            None
+        unsafe {
+            let bar = self.bar(bar_num)?;
+            if let BarType::Qword(_) = bar.bar_type() {
+                // Cast is allowed because register is type qword
+                Some(&mut *(bar as *mut BaseAddressRegister as *mut BarRegisterLong))
+            } else {
+                None
+            }
         }
     }
 
@@ -110,10 +112,12 @@ impl PciHeader for CommonHeader {
     }
 
     unsafe fn update_control(&mut self, flags: CommandRegister, value: bool) -> CommandRegister {
-        let mut c = core::ptr::read_volatile(&self.command);
-        c.set(flags, value);
-        core::ptr::write_volatile(&mut self.command, c);
-        core::ptr::read_volatile(&self.command)
+        unsafe {
+            let mut c = core::ptr::read_volatile(&self.command);
+            c.set(flags, value);
+            core::ptr::write_volatile(&mut self.command, c);
+            core::ptr::read_volatile(&self.command)
+        }
     }
 
     fn self_test(&mut self) -> Result<(), ()> {
@@ -218,7 +222,7 @@ impl PciHeader for GenericHeader {
     }
 
     unsafe fn update_control(&mut self, flags: CommandRegister, value: bool) -> CommandRegister {
-        self.common.update_control(flags, value)
+        unsafe { self.common.update_control(flags, value) }
     }
 
     fn self_test(&mut self) -> Result<(), ()> {
@@ -328,7 +332,7 @@ impl PciHeader for BridgeHeader {
     }
 
     unsafe fn update_control(&mut self, flags: CommandRegister, value: bool) -> CommandRegister {
-        self.common.update_control(flags, value)
+        unsafe { self.common.update_control(flags, value) }
     }
 
     fn self_test(&mut self) -> Result<(), ()> {
@@ -419,7 +423,7 @@ impl PciHeader for CardBusBridge {
     }
 
     unsafe fn update_control(&mut self, flags: CommandRegister, value: bool) -> CommandRegister {
-        self.common.update_control(flags, value)
+        unsafe { self.common.update_control(flags, value) }
     }
 
     fn self_test(&mut self) -> Result<(), ()> {

@@ -146,11 +146,7 @@ impl HeaderTypeRegister {
 
     pub fn is_multiple_functions(&self) -> bool {
         let data = unsafe { core::ptr::read_volatile(&self.data) };
-        if data & 0x80 != 0 {
-            true
-        } else {
-            false
-        }
+        if data & 0x80 != 0 { true } else { false }
     }
 }
 
@@ -259,18 +255,20 @@ impl BaseAddressRegister {
     ///
     /// This fn requires writing to the BAR so it should not be called while the device is in use.
     pub unsafe fn alignment(&mut self) -> u32 {
-        let cache = self.read();
-        self.write(u32::MAX);
+        unsafe {
+            let cache = self.read();
+            self.write(u32::MAX);
 
-        let align = self.read();
+            let align = self.read();
 
-        let bt = self.bar_type();
-        self.write(cache);
+            let bt = self.bar_type();
+            self.write(cache);
 
-        if let BarType::DwordIO = bt {
-            (!(align & !3)).wrapping_add(1)
-        } else {
-            (!(align & !0xf)).wrapping_add(1)
+            if let BarType::DwordIO = bt {
+                (!(align & !3)).wrapping_add(1)
+            } else {
+                (!(align & !0xf)).wrapping_add(1)
+            }
         }
     }
 }
@@ -305,11 +303,13 @@ impl BarRegisterLong {
     ///
     /// This fn requires writing to the BAR so it should not be called while the device is in use.
     pub unsafe fn alignment(&mut self) -> u64 {
-        let cache = self.read();
-        self.write(u64::MAX);
+        unsafe {
+            let cache = self.read();
+            self.write(u64::MAX);
 
-        let align = (!(self.read() & (!0xf))) + 1;
-        self.write(cache);
-        align
+            let align = (!(self.read() & (!0xf))) + 1;
+            self.write(cache);
+            align
+        }
     }
 }

@@ -13,16 +13,18 @@ impl RawLinkedList {
     }
 
     pub unsafe fn add(&mut self, ptr: *mut u64) {
-        #[cfg(feature = "alloc-debug-serial")]
-        serial_println!(r#"Adding:   {:#x}"#, ptr as usize);
+        unsafe {
+            #[cfg(feature = "alloc-debug-serial")]
+            serial_println!(r#"Adding:   {:#x}"#, ptr as usize);
 
-        let old = self.head.take();
-        let new = RawLinkedListNode::new(ptr);
-        new.next = old;
+            let old = self.head.take();
+            let new = RawLinkedListNode::new(ptr);
+            new.next = old;
 
-        self.head = Some(new);
+            self.head = Some(new);
 
-        self.len += 1;
+            self.len += 1;
+        }
     }
 
     pub fn is_empty(&self) -> bool {
@@ -97,9 +99,11 @@ impl RawLinkedListNode {
     ///
     /// This fn is unsafe because the caller must guarantee that that the address is unused.
     unsafe fn new(ptr: *mut u64) -> &'static mut Self {
-        let p = ptr as *mut Self;
-        p.write(Self { next: None });
-        &mut *p
+        unsafe {
+            let p = ptr as *mut Self;
+            p.write(Self { next: None });
+            &mut *p
+        }
     }
 
     pub fn get_addr(&self) -> usize {

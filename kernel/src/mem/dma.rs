@@ -175,7 +175,7 @@ mod sealed {
     pub trait Sealed {}
 }
 
-trait DmaPointer<T>: sealed::Sealed {}
+pub trait DmaPointer<T>: sealed::Sealed {}
 
 impl<T, A: Allocator> sealed::Sealed for Vec<T, A> {}
 impl<T, A: Allocator> DmaPointer<T> for Vec<T, A> {}

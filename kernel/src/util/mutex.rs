@@ -20,10 +20,11 @@ impl<T> Mutex<T> {
     #[inline]
     pub fn lock(&self) -> MutexGuard<T> {
         loop {
-            if let Some(t) = self.try_lock() {
-                return t;
-            } else {
-                core::hint::spin_loop()
+            match self.try_lock() {
+                Some(t) => {
+                    return t;
+                }
+                _ => core::hint::spin_loop(),
             }
         }
     }
@@ -47,9 +48,11 @@ impl<T> Mutex<T> {
     /// This function is unsafe because it generates a reference to `self` regardless of whether
     /// self is locked. The programmer must ensure that `self` is locked before this fn is run
     unsafe fn make_guard(&self) -> MutexGuard<T> {
-        MutexGuard {
-            lock: &self.lock,
-            data: &mut *self.inner.get(),
+        unsafe {
+            MutexGuard {
+                lock: &self.lock,
+                data: &mut *self.inner.get(),
+            }
         }
     }
 
@@ -62,7 +65,7 @@ impl<T> Mutex<T> {
     /// be accessed. Any access should expect that `T` may be in an invalid state. Any changes that
     /// may affect data integrity should be done asynchronously.
     pub unsafe fn force_acquire(&self) -> &mut T {
-        &mut *self.inner.get()
+        unsafe { &mut *self.inner.get() }
     }
 }
 
@@ -182,10 +185,13 @@ impl<'a, T> ReentrantMutex<T> {
     #[inline]
     pub fn try_lock(&self) -> Option<ReentrantMutexGuard<T>> {
         loop {
-            if let Some(t) = self.try_lock_inner() {
-                return Some(t);
-            } else {
-                core::hint::spin_loop();
+            match self.try_lock_inner() {
+                Some(t) => {
+                    return Some(t);
+                }
+                _ => {
+                    core::hint::spin_loop();
+                }
             }
         }
     }
@@ -193,10 +199,13 @@ impl<'a, T> ReentrantMutex<T> {
     #[inline]
     pub fn lock(&self) -> ReentrantMutexGuard<T> {
         loop {
-            if let Some(t) = self.try_lock() {
-                return t;
-            } else {
-                core::hint::spin_loop();
+            match self.try_lock() {
+                Some(t) => {
+                    return t;
+                }
+                _ => {
+                    core::hint::spin_loop();
+                }
             }
         }
     }

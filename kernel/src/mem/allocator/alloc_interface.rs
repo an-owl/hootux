@@ -7,8 +7,8 @@ use core::{
 
 use crate::{mem, mem::allocator::HeapAlloc};
 use x86_64::{
-    structures::paging::{page::PageRangeInclusive, Mapper, Page, PageTableFlags, Size4KiB},
     PhysAddr, VirtAddr,
+    structures::paging::{Mapper, Page, PageTableFlags, Size4KiB, page::PageRangeInclusive},
 };
 
 /// Used to Allocate Physical memory regions. All allocations via this type are guaranteed to be the
@@ -33,7 +33,7 @@ impl MmioAlloc {
     }
 
     pub unsafe fn new_from_phys_addr(phys_addr: PhysAddr) -> Self {
-        Self::new(phys_addr.as_u64() as usize)
+        unsafe { Self::new(phys_addr.as_u64() as usize) }
     }
 
     pub fn as_phys_addr(&self) -> PhysAddr {
@@ -61,9 +61,11 @@ impl MmioAlloc {
 
     /// Consumes self and returns a Box containing a `T`
     pub unsafe fn boxed_alloc<T>(self) -> Result<alloc::boxed::Box<T, Self>, AllocError> {
-        let ptr = self.allocate(Layout::new::<T>())?.cast::<T>();
-        let b = alloc::boxed::Box::from_raw_in(ptr.as_ptr(), self);
-        Ok(b)
+        unsafe {
+            let ptr = self.allocate(Layout::new::<T>())?.cast::<T>();
+            let b = alloc::boxed::Box::from_raw_in(ptr.as_ptr(), self);
+            Ok(b)
+        }
     }
 }
 
@@ -132,9 +134,11 @@ unsafe impl Allocator for MmioAlloc {
         old_layout: Layout,
         new_layout: Layout,
     ) -> Result<NonNull<[u8]>, AllocError> {
-        // This fn does not require copying memory
-        self.deallocate(ptr, old_layout);
-        self.allocate(new_layout)
+        unsafe {
+            // This fn does not require copying memory
+            self.deallocate(ptr, old_layout);
+            self.allocate(new_layout)
+        }
     }
 
     /// This fn will panic because the behaviour expected of this fn is likely to overwrite used memory
@@ -157,9 +161,11 @@ unsafe impl Allocator for MmioAlloc {
         old_layout: Layout,
         new_layout: Layout,
     ) -> Result<NonNull<[u8]>, AllocError> {
-        // This fn does not require copying memory
-        self.deallocate(ptr, old_layout);
-        self.allocate(new_layout)
+        unsafe {
+            // This fn does not require copying memory
+            self.deallocate(ptr, old_layout);
+            self.allocate(new_layout)
+        }
     }
 }
 
@@ -237,16 +243,18 @@ unsafe impl Allocator for DmaAlloc {
     }
 
     unsafe fn deallocate(&self, ptr: NonNull<u8>, layout: Layout) {
-        let start = ptr.as_ptr() as usize;
-        let end = start + layout.size() - 1;
+        unsafe {
+            let start = ptr.as_ptr() as usize;
+            let end = start + layout.size() - 1;
 
-        let range = PageRangeInclusive {
-            start: Page::<Size4KiB>::containing_address(VirtAddr::new(start as u64)),
-            end: Page::containing_address(VirtAddr::new(end as u64)),
-        };
+            let range = PageRangeInclusive {
+                start: Page::<Size4KiB>::containing_address(VirtAddr::new(start as u64)),
+                end: Page::containing_address(VirtAddr::new(end as u64)),
+            };
 
-        for i in range.map(|p| p.start_address()) {
-            mem::mem_map::unmap_and_free(i).unwrap()
+            for i in range.map(|p| p.start_address()) {
+                mem::mem_map::unmap_and_free(i).unwrap()
+            }
         }
     }
 }
@@ -282,16 +290,18 @@ unsafe impl Allocator for VirtAlloc {
     }
 
     unsafe fn deallocate(&self, mut ptr: NonNull<u8>, layout: Layout) {
-        // pointer may not be aligned so we align it down
-        let off = ptr.as_ptr() as usize & (mem::PAGE_SIZE - 1);
-        ptr = ptr.byte_sub(off);
+        unsafe {
+            // pointer may not be aligned so we align it down
+            let off = ptr.as_ptr() as usize & (mem::PAGE_SIZE - 1);
+            ptr = ptr.byte_sub(off);
 
-        super::COMBINED_ALLOCATOR
-            .lock()
-            .virt_deallocate(ptr, layout);
-        for i in ptr.as_ptr() as usize..ptr.as_ptr() as usize + layout.size() {
-            let addr = VirtAddr::from_ptr(i as *const u8);
-            let _ = mem::mem_map::unmap_and_free(addr); // this is likely to fail, we just want to ensure that the memory isn't mapped
+            super::COMBINED_ALLOCATOR
+                .lock()
+                .virt_deallocate(ptr, layout);
+            for i in ptr.as_ptr() as usize..ptr.as_ptr() as usize + layout.size() {
+                let addr = VirtAddr::from_ptr(i as *const u8);
+                let _ = mem::mem_map::unmap_and_free(addr); // this is likely to fail, we just want to ensure that the memory isn't mapped
+            }
         }
     }
 

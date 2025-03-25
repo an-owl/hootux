@@ -1,19 +1,19 @@
 [package]
 name = "hootux"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 readme = "README.md"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 [features]
-default = ["write-combining","multiprocessing"]
+default = ["write-combining", "multiprocessing"]
 alloc-debug-serial = [] #This is for debugging the memory allocator
 multiprocessing = []
 write-combining = []
 
 [dependencies]
 volatile = "0.4.6"
-lazy_static = {version = "1.0", features = ["spin_no_std"]}
+lazy_static = { version = "1.0", features = ["spin_no_std"] }
 spin = "0.9.8"
 x86_64 = "0.15.1"
 uart_16550 = "0.3.1"
@@ -22,23 +22,23 @@ pc-keyboard = "0.5.1"
 linked_list_allocator = "0.9.1"
 crossbeam-queue = { version = "0.3.3", default-features = false, features = ["alloc"] }
 conquer-once = { version = "0.3.2", default-features = false }
-futures-util = { version = "0.3.19", default-features = false, features = ["alloc","sink"] }
+futures-util = { version = "0.3.19", default-features = false, features = ["alloc", "sink"] }
 acpi = "5.0.0"
-x86_msr = { path  = "../x86_msr" }
+x86_msr = { path = "../x86_msr" }
 raw-cpuid = "11.2.0"
 log = "0.4.22"
 bitflags = "2.6.0"
-kernel-proc-macro = {path = "../kernel-interrupts-proc-macro"}
+kernel-proc-macro = { path = "../kernel-interrupts-proc-macro" }
 atomic = "0.5.1"
 bitmap-fontgen = { git = "https://github.com/an-owl/bitmap-fontgen", default-features = false }
 modular-bitfield = "0.11.2"
 cfg-if = "1.0.0"
-async-lock = { version =  "3.3.0", default-features = false }
+async-lock = { version = "3.3.0", default-features = false }
 
-libboot = { path = "../lib/libboot", features = ["uefi","multiboot2"] }
+libboot = { path = "../lib/libboot", features = ["uefi", "multiboot2"] }
 cast_trait_object = "0.1.4"
 
-slablike = {git = "https://github.com/an-owl/slablike-allocator"}
+slablike = { git = "https://github.com/an-owl/slablike-allocator" }
 
 [[test]]
 name = "should_panic"

@@ -14,7 +14,9 @@ const HIGH_ORDER_BLOCK_SIZE: u32 = (ORDER_MAX_SIZE as u32) * HIGH_ORDER_BLOCK_RA
 static MEM_MAP: crate::util::KernelStatic<PreInitFrameAlloc> = crate::util::KernelStatic::new();
 
 pub(super) unsafe fn init_mem_map(regions: libboot::boot_info::MemoryMap) {
-    MEM_MAP.init(PreInitFrameAlloc::new(regions));
+    unsafe {
+        MEM_MAP.init(PreInitFrameAlloc::new(regions));
+    }
 }
 
 struct PreInitFrameAlloc {
@@ -187,13 +189,15 @@ pub fn drain_map() {
     //let f_alloc = super::SYS_FRAME_ALLOCATOR.alloc.lock();
     //for i in f_alloc.mem_16.free_list {}
 
-    assert!(super::allocator::COMBINED_ALLOCATOR
-        .lock()
-        .phys_alloc()
-        .alloc
-        .lock()
-        .is_fully_init
-        .is_none());
+    assert!(
+        super::allocator::COMBINED_ALLOCATOR
+            .lock()
+            .phys_alloc()
+            .alloc
+            .lock()
+            .is_fully_init
+            .is_none()
+    );
 
     // Must be in smallest -> largest order or alloc will try to return the wrong region
     drain_map_inner(MemRegion::Mem16);
@@ -543,32 +547,34 @@ impl FrameAllocInner {
     /// The caller must ensure that the given region is unused and correctly describes the region
     /// to be deallocated
     unsafe fn dealloc_exact(&mut self, ptr: usize, size: usize) {
-        assert_eq!(ptr & (PAGE_SIZE - 1), 0);
-        assert_eq!(size & (PAGE_SIZE - 1), 0);
+        unsafe {
+            assert_eq!(ptr & (PAGE_SIZE - 1), 0);
+            assert_eq!(size & (PAGE_SIZE - 1), 0);
 
-        let mut ptr = self.align_region(DmaDecompose::new(ptr, size));
+            let mut ptr = self.align_region(DmaDecompose::new(ptr, size));
 
-        // drain
-        loop {
-            for order in (0..ORDERS).rev() {
-                let bs = PAGE_SIZE << order;
-                while ptr.len >= bs {
-                    ptr.region.list(self).rejoin(ptr.ptr, order);
+            // drain
+            loop {
+                for order in (0..ORDERS).rev() {
+                    let bs = PAGE_SIZE << order;
+                    while ptr.len >= bs {
+                        ptr.region.list(self).rejoin(ptr.ptr, order);
 
-                    if let Some(new) = ptr.advance(bs) {
-                        ptr = new;
-                    } else {
-                        // None signals that ptr is fully depleted
-                        return;
+                        if let Some(new) = ptr.advance(bs) {
+                            ptr = new;
+                        } else {
+                            // None signals that ptr is fully depleted
+                            return;
+                        }
                     }
                 }
-            }
 
-            // do while
-            if let Some(n) = ptr.next_region() {
-                ptr = n
-            } else {
-                break;
+                // do while
+                if let Some(n) = ptr.next_region() {
+                    ptr = n
+                } else {
+                    break;
+                }
             }
         }
     }
@@ -580,32 +586,34 @@ impl FrameAllocInner {
     ///
     /// This fn calls [Self::dealloc] see source for details
     unsafe fn align_region(&mut self, region: DmaDecompose) -> DmaDecompose {
-        let mut start = region.ptr;
-        let mut len = region.len;
-        if let Some(n) = region.remain_ptr {
-            len += n;
-        }
-
-        for order in 0..ORDERS - 1 {
-            // skip last order because its always aligned
-            let addr = start;
-            let r_size = PAGE_SIZE << order; // region size
-
-            // if region size is greater than actual size.
-            if r_size > len {
-                // The idea is this fn will provide a walk up for the region and another fn provides
-                // a walk down. if region size is greater than actual size then a walk down would be
-                // aligned already
-                break;
+        unsafe {
+            let mut start = region.ptr;
+            let mut len = region.len;
+            if let Some(n) = region.remain_ptr {
+                len += n;
             }
 
-            if r_size & addr != 0 {
-                self.dealloc(addr, r_size).unwrap(); // returning Err(()) is considered a bug
-                start += r_size;
-                len -= r_size;
+            for order in 0..ORDERS - 1 {
+                // skip last order because its always aligned
+                let addr = start;
+                let r_size = PAGE_SIZE << order; // region size
+
+                // if region size is greater than actual size.
+                if r_size > len {
+                    // The idea is this fn will provide a walk up for the region and another fn provides
+                    // a walk down. if region size is greater than actual size then a walk down would be
+                    // aligned already
+                    break;
+                }
+
+                if r_size & addr != 0 {
+                    self.dealloc(addr, r_size).unwrap(); // returning Err(()) is considered a bug
+                    start += r_size;
+                    len -= r_size;
+                }
             }
+            DmaDecompose::new(start, len)
         }
-        DmaDecompose::new(start, len)
     }
 
     /// Deallocates the given memory returns the status of the deallocation.
@@ -888,17 +896,19 @@ impl BuddyFrameAlloc {
     /// The caller must ensure that the given region is unused and correctly describes the region
     /// to be deallocated
     pub unsafe fn dealloc(&self, ptr: usize, len: usize) {
-        assert_eq!(
-            ptr & (PAGE_SIZE - 1),
-            0,
-            "Physical deallocation not page aligned"
-        );
+        unsafe {
+            assert_eq!(
+                ptr & (PAGE_SIZE - 1),
+                0,
+                "Physical deallocation not page aligned"
+            );
 
-        let mut alloc = self.alloc.lock();
+            let mut alloc = self.alloc.lock();
 
-        alloc
-            .dealloc(ptr, len)
-            .unwrap_or_else(|()| alloc.dealloc_exact(ptr, len));
+            alloc
+                .dealloc(ptr, len)
+                .unwrap_or_else(|()| alloc.dealloc_exact(ptr, len));
+        }
     }
 
     /// Creates a FrameAllocRef for using with the [FrameAllocator] trait
@@ -930,11 +940,13 @@ unsafe impl<'a> FrameAllocator<Size4KiB> for FrameAllocRef<'a> {
 
 impl<'a> FrameDeallocator<Size4KiB> for FrameAllocRef<'a> {
     unsafe fn deallocate_frame(&mut self, frame: PhysFrame<Size4KiB>) {
-        self.frame_alloc
-            .alloc
-            .lock()
-            .dealloc(frame.start_address().as_u64() as usize, 0x1000)
-            .unwrap(); // shouldn't panic
+        unsafe {
+            self.frame_alloc
+                .alloc
+                .lock()
+                .dealloc(frame.start_address().as_u64() as usize, 0x1000)
+                .unwrap(); // shouldn't panic
+        }
     }
 }
 
@@ -951,11 +963,13 @@ unsafe impl<'a> FrameAllocator<Size2MiB> for FrameAllocRef<'a> {
 
 impl<'a> FrameDeallocator<Size2MiB> for FrameAllocRef<'a> {
     unsafe fn deallocate_frame(&mut self, frame: PhysFrame<Size2MiB>) {
-        self.frame_alloc
-            .alloc
-            .lock()
-            .dealloc(frame.start_address().as_u64() as usize, 0x200000)
-            .unwrap(); // shouldn't panic
+        unsafe {
+            self.frame_alloc
+                .alloc
+                .lock()
+                .dealloc(frame.start_address().as_u64() as usize, 0x200000)
+                .unwrap(); // shouldn't panic
+        }
     }
 }
 
@@ -972,9 +986,11 @@ unsafe impl<'a> FrameAllocator<Size1GiB> for FrameAllocRef<'a> {
 
 impl<'a> FrameDeallocator<Size1GiB> for FrameAllocRef<'a> {
     unsafe fn deallocate_frame(&mut self, frame: PhysFrame<Size1GiB>) {
-        self.frame_alloc
-            .alloc
-            .lock()
-            .dealloc_exact(frame.start_address().as_u64() as usize, 0x40000000);
+        unsafe {
+            self.frame_alloc
+                .alloc
+                .lock()
+                .dealloc_exact(frame.start_address().as_u64() as usize, 0x40000000);
+        }
     }
 }

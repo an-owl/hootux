@@ -4,8 +4,8 @@
 //! The structs here are for hardware configurations which is abstracted by the kernel via other modules.
 
 use crate::interrupts::apic::ioapic::{PinPolarity, TriggerMode};
-use acpi::platform::interrupt::Polarity;
 use acpi::InterruptModel;
+use acpi::platform::interrupt::Polarity;
 
 pub struct SystemctlResources {
     pub(crate) ioapic: GlobalIoApic,
@@ -42,14 +42,16 @@ impl GlobalIoApic {
         gsi: u8,
         cfg: crate::interrupts::apic::ioapic::RedirectionTableEntry,
     ) -> Result<(), ()> {
-        let mut l = self.inner.lock();
-        for (ref mut i, _) in &mut *l {
-            if i.is_gsi(gsi) {
-                i.set_gsi(gsi, cfg);
-                return Ok(());
+        unsafe {
+            let mut l = self.inner.lock();
+            for (i, _) in &mut *l {
+                if i.is_gsi(gsi) {
+                    i.set_gsi(gsi, cfg);
+                    return Ok(());
+                }
             }
+            Err(())
         }
-        Err(())
     }
 
     /// Attempts to fetch the configuration for the requested GSI.
@@ -59,7 +61,7 @@ impl GlobalIoApic {
         gsi: u8,
     ) -> Result<crate::interrupts::apic::ioapic::RedirectionTableEntry, ()> {
         let mut l = self.inner.lock();
-        for (ref mut i, _) in &mut *l {
+        for (i, _) in &mut *l {
             if i.is_gsi(gsi) {
                 return Ok(i.get_gsi(gsi));
             }

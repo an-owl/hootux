@@ -1,11 +1,11 @@
 use crate::mem::allocator::{buddy_alloc, combined_allocator, fixed_size_block};
 use x86_64::{
-    structures::paging::{
-        frame::PhysFrameRangeInclusive, page::PageRangeInclusive, FrameAllocator, Mapper,
-        OffsetPageTable, Page, PageSize, PageTable, PageTableFlags, PhysFrame, Size1GiB, Size2MiB,
-        Size4KiB,
-    },
     PhysAddr, VirtAddr,
+    structures::paging::{
+        FrameAllocator, Mapper, OffsetPageTable, Page, PageSize, PageTable, PageTableFlags,
+        PhysFrame, Size1GiB, Size2MiB, Size4KiB, frame::PhysFrameRangeInclusive,
+        page::PageRangeInclusive,
+    },
 };
 
 // offset 0-11
@@ -31,7 +31,7 @@ pub const PAGE_SIZE: usize = 4096;
 
 /// Run PreInitialization for SYS_FRAME_ALLOC
 pub unsafe fn set_sys_frame_alloc(mem_map: libboot::boot_info::MemoryMap) {
-    buddy_frame_alloc::init_mem_map(mem_map)
+    unsafe { buddy_frame_alloc::init_mem_map(mem_map) }
 }
 /// This is the page table tree for the higher half kernel is shared by all CPU's. It should be used
 /// in the higher half of all user mode programs too.
@@ -108,14 +108,16 @@ unsafe impl FrameAllocator<Size1GiB> for DummyFrameAlloc {
 #[allow(dead_code)]
 // will be used in the future
 unsafe fn active_l4_table(physical_memory_offset: VirtAddr) -> &'static mut PageTable {
-    use x86_64::registers::control::Cr3;
-    let (l4, _) = Cr3::read();
+    unsafe {
+        use x86_64::registers::control::Cr3;
+        let (l4, _) = Cr3::read();
 
-    let phys = l4.start_address();
-    let virt = physical_memory_offset + phys.as_u64();
-    let page_table_ptr: *mut PageTable = virt.as_mut_ptr();
+        let phys = l4.start_address();
+        let virt = physical_memory_offset + phys.as_u64();
+        let page_table_ptr: *mut PageTable = virt.as_mut_ptr();
 
-    &mut *page_table_ptr
+        &mut *page_table_ptr
+    }
 }
 
 /// Initialize a new OffsetPageTable.
@@ -125,7 +127,7 @@ unsafe fn active_l4_table(physical_memory_offset: VirtAddr) -> &'static mut Page
 /// `physical_memory_offset`. Also, this function must be only called once
 /// to avoid aliasing `&mut` references (which is undefined behavior).
 pub unsafe fn init(offset: VirtAddr) -> offset_page_table::OffsetPageTable {
-    offset_page_table::OffsetPageTable::new(offset)
+    unsafe { offset_page_table::OffsetPageTable::new(offset) }
 }
 
 /// This is here to break safety and should only be used under very
@@ -179,18 +181,20 @@ impl VeryUnsafeFrameAllocator {
         phy_addr_range: PhysFrameRangeInclusive,
         mapper: &mut OffsetPageTable,
     ) -> Option<VirtAddr> {
-        self.set_geom(phy_addr_range.start.start_address(), 0);
+        unsafe {
+            self.set_geom(phy_addr_range.start.start_address(), 0);
 
-        let mut virt_addr_base = None;
+            let mut virt_addr_base = None;
 
-        for frame in phy_addr_range {
-            if let None = virt_addr_base {
-                virt_addr_base = self.advance(frame.start_address(), mapper);
-            } else {
-                self.advance(frame.start_address(), mapper);
+            for frame in phy_addr_range {
+                if let None = virt_addr_base {
+                    virt_addr_base = self.advance(frame.start_address(), mapper);
+                } else {
+                    self.advance(frame.start_address(), mapper);
+                }
             }
+            virt_addr_base
         }
-        virt_addr_base
     }
 
     /// Maps a specified physical frame to a virtual page.
@@ -202,11 +206,13 @@ impl VeryUnsafeFrameAllocator {
         phy_addr: PhysAddr,
         mapper: &mut OffsetPageTable,
     ) -> Option<VirtAddr> {
-        // be careful with this
+        unsafe {
+            // be careful with this
 
-        self.set_geom(phy_addr, 0);
+            self.set_geom(phy_addr, 0);
 
-        self.advance(phy_addr, mapper)
+            self.advance(phy_addr, mapper)
+        }
     }
 
     /// Allocates memory by calling mapper.map_to
@@ -225,21 +231,23 @@ impl VeryUnsafeFrameAllocator {
         phy_addr: PhysAddr,
         mapper: &mut OffsetPageTable,
     ) -> Option<VirtAddr> {
-        return if let Some(page) = Self::find_unused_high_half(mapper) {
-            mapper
-                .map_to(
-                    page,
-                    PhysFrame::containing_address(phy_addr),
-                    PageTableFlags::PRESENT | PageTableFlags::NO_EXECUTE,
-                    self,
-                )
-                .unwrap()
-                .flush();
-            self.addr = None;
-            Some(page.start_address())
-        } else {
-            None
-        };
+        unsafe {
+            return if let Some(page) = Self::find_unused_high_half(mapper) {
+                mapper
+                    .map_to(
+                        page,
+                        PhysFrame::containing_address(phy_addr),
+                        PageTableFlags::PRESENT | PageTableFlags::NO_EXECUTE,
+                        self,
+                    )
+                    .unwrap()
+                    .flush();
+                self.addr = None;
+                Some(page.start_address())
+            } else {
+                None
+            };
+        }
     }
 
     /// Unmaps Virtual page

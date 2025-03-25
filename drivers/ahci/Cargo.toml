@@ -1,7 +1,7 @@
 [package]
 name = "ahci"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -9,7 +9,7 @@ edition = "2021"
 hootux = { path = "../../kernel" }
 volatile = "0.4.6"
 bitflags = "2.1.0"
-ata = {path = "../../lib/ata"}
+ata = { path = "../../lib/ata" }
 spin = "0.9.8"
 atomic = "0.5.3"
 futures = { version = "0.3.28", default-features = false, features = ["alloc"] }

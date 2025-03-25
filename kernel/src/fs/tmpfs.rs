@@ -8,8 +8,8 @@ use alloc::vec::Vec;
 use alloc::{boxed::Box, collections::BTreeMap, string::String, sync::Arc, sync::Weak};
 use cast_trait_object::DynCastExt;
 use core::any::TypeId;
-use futures_util::future::BoxFuture;
 use futures_util::FutureExt;
+use futures_util::future::BoxFuture;
 use lazy_static::lazy_static;
 
 lazy_static! {
@@ -409,17 +409,18 @@ impl Directory for Dir {
                 .read()
                 .get(name)
                 .ok_or(IoError::NotPresent)?;
-            if let Some(f) = self.fs.upgrade().unwrap().fetch_raw(id) {
-                let mut dev_hint = false;
-                if TmpFsFile::type_id(&*f) == TypeId::of::<DeviceFileObj>() {
-                    dev_hint = true;
-                }
-                let file = f.get_file_obj(self.fs.clone()) as Box<dyn File>;
-                let meta = FileMetadata::new_from_file(&*file).await?;
+            match self.fs.upgrade().unwrap().fetch_raw(id) {
+                Some(f) => {
+                    let mut dev_hint = false;
+                    if TmpFsFile::type_id(&*f) == TypeId::of::<DeviceFileObj>() {
+                        dev_hint = true;
+                    }
+                    let file = f.get_file_obj(self.fs.clone()) as Box<dyn File>;
+                    let meta = FileMetadata::new_from_file(&*file).await?;
 
-                Ok(FileHandle::new(file, dev_hint, meta))
-            } else {
-                Err(NotPresent)
+                    Ok(FileHandle::new(file, dev_hint, meta))
+                }
+                _ => Err(NotPresent),
             }
         }
         .boxed()

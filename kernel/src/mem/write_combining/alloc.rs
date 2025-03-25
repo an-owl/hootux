@@ -10,8 +10,10 @@ pub struct WcMmioAlloc {
 
 impl WcMmioAlloc {
     pub unsafe fn new(addr: u64) -> Self {
-        Self {
-            inner: crate::alloc_interface::MmioAlloc::new(addr as usize),
+        unsafe {
+            Self {
+                inner: crate::alloc_interface::MmioAlloc::new(addr as usize),
+            }
         }
     }
 }
@@ -29,7 +31,9 @@ unsafe impl Allocator for WcMmioAlloc {
     }
 
     unsafe fn deallocate(&self, ptr: NonNull<u8>, layout: Layout) {
-        self.inner.deallocate(ptr, layout);
+        unsafe {
+            self.inner.deallocate(ptr, layout);
+        }
     }
 
     unsafe fn grow(
@@ -38,9 +42,11 @@ unsafe impl Allocator for WcMmioAlloc {
         old_layout: Layout,
         new_layout: Layout,
     ) -> Result<NonNull<[u8]>, AllocError> {
-        let n = self.inner.grow(ptr, old_layout, new_layout)?;
-        set_wc_data(&n).expect("Failed to set WC flags");
-        Ok(n)
+        unsafe {
+            let n = self.inner.grow(ptr, old_layout, new_layout)?;
+            set_wc_data(&n).expect("Failed to set WC flags");
+            Ok(n)
+        }
     }
 
     unsafe fn grow_zeroed(
@@ -49,8 +55,10 @@ unsafe impl Allocator for WcMmioAlloc {
         old_layout: Layout,
         new_layout: Layout,
     ) -> Result<NonNull<[u8]>, AllocError> {
-        // will panic
-        self.inner.grow_zeroed(ptr, old_layout, new_layout)
+        unsafe {
+            // will panic
+            self.inner.grow_zeroed(ptr, old_layout, new_layout)
+        }
     }
 
     unsafe fn shrink(
@@ -59,9 +67,11 @@ unsafe impl Allocator for WcMmioAlloc {
         old_layout: Layout,
         new_layout: Layout,
     ) -> Result<NonNull<[u8]>, AllocError> {
-        let r = self.inner.shrink(ptr, old_layout, new_layout)?;
-        set_wc_data(&r).expect("Failed to set WC flags");
-        Ok(r)
+        unsafe {
+            let r = self.inner.shrink(ptr, old_layout, new_layout)?;
+            set_wc_data(&r).expect("Failed to set WC flags");
+            Ok(r)
+        }
     }
 }
 
@@ -94,7 +104,7 @@ unsafe impl Allocator for WcDmaAlloc {
     }
 
     unsafe fn deallocate(&self, ptr: NonNull<u8>, layout: Layout) {
-        self.inner.deallocate(ptr, layout)
+        unsafe { self.inner.deallocate(ptr, layout) }
     }
 
     unsafe fn grow(
@@ -103,9 +113,11 @@ unsafe impl Allocator for WcDmaAlloc {
         old_layout: Layout,
         new_layout: Layout,
     ) -> Result<NonNull<[u8]>, AllocError> {
-        let r = self.inner.grow(ptr, old_layout, new_layout)?;
-        set_wc_data(&r).expect("Failed to set WC flags");
-        Ok(r)
+        unsafe {
+            let r = self.inner.grow(ptr, old_layout, new_layout)?;
+            set_wc_data(&r).expect("Failed to set WC flags");
+            Ok(r)
+        }
     }
 
     unsafe fn grow_zeroed(
@@ -114,9 +126,11 @@ unsafe impl Allocator for WcDmaAlloc {
         old_layout: Layout,
         new_layout: Layout,
     ) -> Result<NonNull<[u8]>, AllocError> {
-        let r = self.inner.grow_zeroed(ptr, old_layout, new_layout)?;
-        set_wc_data(&r).expect("Failed to set WC flags");
-        Ok(r)
+        unsafe {
+            let r = self.inner.grow_zeroed(ptr, old_layout, new_layout)?;
+            set_wc_data(&r).expect("Failed to set WC flags");
+            Ok(r)
+        }
     }
 
     unsafe fn shrink(
@@ -125,8 +139,10 @@ unsafe impl Allocator for WcDmaAlloc {
         old_layout: Layout,
         new_layout: Layout,
     ) -> Result<NonNull<[u8]>, AllocError> {
-        let r = self.inner.shrink(ptr, old_layout, new_layout)?;
-        set_wc_data(&r).expect("Failed to set WC flags");
-        Ok(r)
+        unsafe {
+            let r = self.inner.shrink(ptr, old_layout, new_layout)?;
+            set_wc_data(&r).expect("Failed to set WC flags");
+            Ok(r)
+        }
     }
 }

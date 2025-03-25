@@ -149,22 +149,14 @@ pub mod registers {
         /// Reads the physical pins current polarity.
         fn get_polarity(&self) -> bool {
             let reg = unsafe { self.inner.assume_init().clone() };
-            if (reg & (1 << 13)) > 0 {
-                true
-            } else {
-                false
-            }
+            if (reg & (1 << 13)) > 0 { true } else { false }
         }
 
         /// Reads the trigger mode of the interrupt handler
         /// See [Self::set_trigger_mode] for state identification
         pub fn get_trigger_mode(&self) -> bool {
             let reg = unsafe { self.inner.assume_init().clone() };
-            if (reg & (1 << 15)) > 0 {
-                true
-            } else {
-                false
-            }
+            if (reg & (1 << 15)) > 0 { true } else { false }
         }
 
         /// Sets the trigger mode for self where `true` is level sensitive and `false` is edge
@@ -177,18 +169,16 @@ pub mod registers {
         /// - "Edge sensitive" must always be set when the delivery mode is not Fixed or ExtInt.
         /// - "Level sensitive" may not be set for LINT1.
         pub unsafe fn set_trigger_mode(&mut self, state: bool) {
-            *self.inner.assume_init_mut() |= (state as u32) << 15;
+            unsafe {
+                *self.inner.assume_init_mut() |= (state as u32) << 15;
+            }
         }
 
         /// Gets Interrupt Request state for fixed mode which high `true` while an interrupt is
         /// triggered and is reset to `false` when EOI is asserted.
         pub fn get_interrupt_request(&self) -> bool {
             let reg = unsafe { self.inner.assume_init().clone() };
-            if (reg & (1 << 14)) > 0 {
-                true
-            } else {
-                false
-            }
+            if (reg & (1 << 14)) > 0 { true } else { false }
         }
     }
 

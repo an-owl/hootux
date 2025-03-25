@@ -12,7 +12,7 @@ impl AcpiHandler for AcpiGrabber {
         physical_address: usize,
         size: usize,
     ) -> PhysicalMapping<Self, T> {
-        let alloc = MmioAlloc::new(physical_address);
+        let alloc = unsafe { MmioAlloc::new(physical_address) };
 
         let region = alloc
             .allocate(
@@ -247,53 +247,57 @@ pub(crate) mod data_access {
         }
 
         unsafe fn read(&self) -> AcpiData {
-            use x86_64::instructions::port::Port;
-            let num = match self.data_size {
-                DataSize::Undefined => {
-                    panic!("Tried to access data with undefined size")
-                }
-                DataSize::Byte => {
-                    let data: u8 = Port::new(self.port_addr).read();
-                    data as u64
-                }
-                DataSize::Word => {
-                    let data: u16 = Port::new(self.port_addr).read();
-                    data as u64
-                }
-                DataSize::DWord => {
-                    let data: u32 = Port::new(self.port_addr).read();
-                    data as u64
-                }
-                DataSize::QWord => {
-                    unreachable!();
-                }
-            };
+            unsafe {
+                use x86_64::instructions::port::Port;
+                let num = match self.data_size {
+                    DataSize::Undefined => {
+                        panic!("Tried to access data with undefined size")
+                    }
+                    DataSize::Byte => {
+                        let data: u8 = Port::new(self.port_addr).read();
+                        data as u64
+                    }
+                    DataSize::Word => {
+                        let data: u16 = Port::new(self.port_addr).read();
+                        data as u64
+                    }
+                    DataSize::DWord => {
+                        let data: u32 = Port::new(self.port_addr).read();
+                        data as u64
+                    }
+                    DataSize::QWord => {
+                        unreachable!();
+                    }
+                };
 
-            AcpiData {
-                size: self.data_size,
-                data: num,
+                AcpiData {
+                    size: self.data_size,
+                    data: num,
+                }
             }
         }
 
         unsafe fn write(&mut self, value: u64) {
-            use x86_64::instructions::port::Port;
-            match self.data_size {
-                DataSize::Undefined => {
-                    panic!("Tried to access data with undefined size")
-                }
-                DataSize::Byte => {
-                    Port::new(self.port_addr).write(value as u8);
-                }
-                DataSize::Word => {
-                    Port::new(self.port_addr).write(value as u16);
-                }
-                DataSize::DWord => {
-                    Port::new(self.port_addr).write(value as u32);
-                }
-                DataSize::QWord => {
-                    unreachable!();
-                }
-            };
+            unsafe {
+                use x86_64::instructions::port::Port;
+                match self.data_size {
+                    DataSize::Undefined => {
+                        panic!("Tried to access data with undefined size")
+                    }
+                    DataSize::Byte => {
+                        Port::new(self.port_addr).write(value as u8);
+                    }
+                    DataSize::Word => {
+                        Port::new(self.port_addr).write(value as u16);
+                    }
+                    DataSize::DWord => {
+                        Port::new(self.port_addr).write(value as u32);
+                    }
+                    DataSize::QWord => {
+                        unreachable!();
+                    }
+                };
+            }
         }
 
         unsafe fn set_size(&mut self, size: DataSize) {
@@ -350,43 +354,47 @@ pub(crate) mod data_access {
         }
 
         unsafe fn read(&self) -> AcpiData {
-            let data = match self.data_size {
-                DataSize::Undefined => {
-                    panic!("Tried to access data with undefined size")
-                }
-                DataSize::Byte => {
-                    let data: *const u8 = self.ptr.as_ptr();
-                    *data as u64
-                }
-                DataSize::Word => {
-                    let data: *const u16 = self.ptr.as_ptr();
-                    *data as u64
-                }
-                DataSize::DWord => {
-                    let data: *const u32 = self.ptr.as_ptr();
-                    *data as u64
-                }
-                DataSize::QWord => {
-                    let data: *const u64 = self.ptr.as_ptr();
-                    *data as u64
-                }
-            };
+            unsafe {
+                let data = match self.data_size {
+                    DataSize::Undefined => {
+                        panic!("Tried to access data with undefined size")
+                    }
+                    DataSize::Byte => {
+                        let data: *const u8 = self.ptr.as_ptr();
+                        *data as u64
+                    }
+                    DataSize::Word => {
+                        let data: *const u16 = self.ptr.as_ptr();
+                        *data as u64
+                    }
+                    DataSize::DWord => {
+                        let data: *const u32 = self.ptr.as_ptr();
+                        *data as u64
+                    }
+                    DataSize::QWord => {
+                        let data: *const u64 = self.ptr.as_ptr();
+                        *data as u64
+                    }
+                };
 
-            AcpiData {
-                size: self.data_size,
-                data,
+                AcpiData {
+                    size: self.data_size,
+                    data,
+                }
             }
         }
 
         unsafe fn write(&mut self, value: u64) {
-            match self.data_size {
-                DataSize::Undefined => {
-                    panic!("Tried to access data with undefined size")
+            unsafe {
+                match self.data_size {
+                    DataSize::Undefined => {
+                        panic!("Tried to access data with undefined size")
+                    }
+                    DataSize::Byte => *self.ptr.as_mut_ptr() = value as u8,
+                    DataSize::Word => *self.ptr.as_mut_ptr() = value as u16,
+                    DataSize::DWord => *self.ptr.as_mut_ptr() = value as u32,
+                    DataSize::QWord => *self.ptr.as_mut_ptr() = value as u64,
                 }
-                DataSize::Byte => *self.ptr.as_mut_ptr() = value as u8,
-                DataSize::Word => *self.ptr.as_mut_ptr() = value as u16,
-                DataSize::DWord => *self.ptr.as_mut_ptr() = value as u32,
-                DataSize::QWord => *self.ptr.as_mut_ptr() = value as u64,
             }
         }
 
@@ -452,9 +460,11 @@ pub(crate) mod data_access {
 
         /// Wrapper for [DataAccess::set_size]
         pub unsafe fn define_size(&mut self, size: DataSize) {
-            match self {
-                DataAccessType::PortAccess(acc) => acc.set_size(size),
-                DataAccessType::MemoryAccess(acc) => acc.set_size(size),
+            unsafe {
+                match self {
+                    DataAccessType::PortAccess(acc) => acc.set_size(size),
+                    DataAccessType::MemoryAccess(acc) => acc.set_size(size),
+                }
             }
         }
     }

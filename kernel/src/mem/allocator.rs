@@ -2,8 +2,8 @@ use crate::mem;
 use core::alloc::{AllocError, Layout};
 use core::ptr::NonNull;
 use mem::mem_map::*;
-use x86_64::structures::paging::{Page, Size4KiB};
 use x86_64::VirtAddr;
+use x86_64::structures::paging::{Page, Size4KiB};
 
 pub mod bump;
 pub mod fixed_size_block;
@@ -45,18 +45,20 @@ pub(super) static COMBINED_ALLOCATOR: crate::util::mutex::ReentrantMutex<
 
 /// Maps memory to addr and uses it to initialize the allocator
 pub unsafe fn init_comb_heap(addr: usize) {
-    assert_eq!(addr & (buddy_alloc::ORDER_MAX_SIZE - 1), 0);
+    unsafe {
+        assert_eq!(addr & (buddy_alloc::ORDER_MAX_SIZE - 1), 0);
 
-    let ptr = addr as *mut u8;
-    let mut lock = COMBINED_ALLOCATOR.lock();
+        let ptr = addr as *mut u8;
+        let mut lock = COMBINED_ALLOCATOR.lock();
 
-    // map mem
-    map_page(
-        Page::<Size4KiB>::from_start_address(VirtAddr::from_ptr(ptr)).unwrap(),
-        PROGRAM_DATA_FLAGS,
-    ); // unwrap shouldn't panic
-    let ptr = addr as *mut [u8; mem::PAGE_SIZE];
-    lock.init(ptr);
+        // map mem
+        map_page(
+            Page::<Size4KiB>::from_start_address(VirtAddr::from_ptr(ptr)).unwrap(),
+            PROGRAM_DATA_FLAGS,
+        ); // unwrap shouldn't panic
+        let ptr = addr as *mut [u8; mem::PAGE_SIZE];
+        lock.init(ptr);
+    }
 }
 
 fn align_up(addr: usize, align: usize) -> usize {
@@ -84,9 +86,11 @@ unsafe impl core::alloc::Allocator for GenericAlloc {
     }
 
     unsafe fn deallocate(&self, ptr: NonNull<u8>, layout: Layout) {
-        match self {
-            GenericAlloc::Global(a) => a.deallocate(ptr, layout),
-            GenericAlloc::Mmio(a) => a.deallocate(ptr, layout),
+        unsafe {
+            match self {
+                GenericAlloc::Global(a) => a.deallocate(ptr, layout),
+                GenericAlloc::Mmio(a) => a.deallocate(ptr, layout),
+            }
         }
     }
 
@@ -96,9 +100,11 @@ unsafe impl core::alloc::Allocator for GenericAlloc {
         old_layout: Layout,
         new_layout: Layout,
     ) -> Result<NonNull<[u8]>, AllocError> {
-        match self {
-            GenericAlloc::Global(a) => a.grow(ptr, old_layout, new_layout),
-            GenericAlloc::Mmio(a) => a.grow(ptr, old_layout, new_layout),
+        unsafe {
+            match self {
+                GenericAlloc::Global(a) => a.grow(ptr, old_layout, new_layout),
+                GenericAlloc::Mmio(a) => a.grow(ptr, old_layout, new_layout),
+            }
         }
     }
 
@@ -108,9 +114,11 @@ unsafe impl core::alloc::Allocator for GenericAlloc {
         old_layout: Layout,
         new_layout: Layout,
     ) -> Result<NonNull<[u8]>, AllocError> {
-        match self {
-            GenericAlloc::Global(a) => a.grow_zeroed(ptr, old_layout, new_layout),
-            GenericAlloc::Mmio(a) => a.grow_zeroed(ptr, old_layout, new_layout),
+        unsafe {
+            match self {
+                GenericAlloc::Global(a) => a.grow_zeroed(ptr, old_layout, new_layout),
+                GenericAlloc::Mmio(a) => a.grow_zeroed(ptr, old_layout, new_layout),
+            }
         }
     }
 
@@ -120,9 +128,11 @@ unsafe impl core::alloc::Allocator for GenericAlloc {
         old_layout: Layout,
         new_layout: Layout,
     ) -> Result<NonNull<[u8]>, AllocError> {
-        match self {
-            GenericAlloc::Global(a) => a.shrink(ptr, old_layout, new_layout),
-            GenericAlloc::Mmio(a) => a.shrink(ptr, old_layout, new_layout),
+        unsafe {
+            match self {
+                GenericAlloc::Global(a) => a.shrink(ptr, old_layout, new_layout),
+                GenericAlloc::Mmio(a) => a.shrink(ptr, old_layout, new_layout),
+            }
         }
     }
 }

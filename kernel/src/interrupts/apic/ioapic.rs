@@ -1,4 +1,4 @@
-use modular_bitfield::{bitfield, specifiers::*, BitfieldSpecifier};
+use modular_bitfield::{BitfieldSpecifier, bitfield, specifiers::*};
 
 pub(crate) struct IoApic {
     index: *mut u32,
@@ -36,25 +36,29 @@ impl IoApic {
     /// - The region is writable
     /// - The region is mapped using a MMIO compatible memory type (UC/WC)  
     pub(crate) unsafe fn new(ptr: *mut u8, gsi_base: u32) -> Self {
-        let mut s = Self {
-            index: ptr.cast(),
-            data: ptr.offset(0x10).cast(),
-            gsi_base: gsi_base.try_into().expect(&alloc::format!(
-                "Firmware bug? Found GSI base {} max should be 239",
-                gsi_base
-            )),
-            size: 0,
-        };
+        unsafe {
+            let mut s = Self {
+                index: ptr.cast(),
+                data: ptr.offset(0x10).cast(),
+                gsi_base: gsi_base.try_into().expect(&alloc::format!(
+                    "Firmware bug? Found GSI base {} max should be 239",
+                    gsi_base
+                )),
+                size: 0,
+            };
 
-        s.size = s.get_version().entries();
-        s
+            s.size = s.get_version().entries();
+            s
+        }
     }
 
     unsafe fn write(&mut self, addr: u32, data: u32) {
-        // SAFETY: This is safe because self.index is valid and aligned to 16
-        self.index.write_volatile(addr);
-        // SAFETY: This is not safe because it can be used to modify and enable interrupts
-        self.data.write_volatile(data);
+        unsafe {
+            // SAFETY: This is safe because self.index is valid and aligned to 16
+            self.index.write_volatile(addr);
+            // SAFETY: This is not safe because it can be used to modify and enable interrupts
+            self.data.write_volatile(data);
+        }
     }
 
     fn read(&mut self, addr: u32) -> u32 {
@@ -99,34 +103,36 @@ impl IoApic {
     #[allow(unsafe_op_in_unsafe_fn)]
     // unsafe here is to mark that it is safe
     pub(crate) unsafe fn set_entry(&mut self, index: u8, entry: RedirectionTableEntry) {
-        assert!(
-            index < self.size,
-            "Attempted to write invalid entry {}: Max {} tried to read {index}",
-            self.size,
-            core::any::type_name::<Self>()
-        );
-        // union allows clearer casting
-        union Cvt {
-            whole: RedirectionTableEntry,
-            seg: [u32; 2],
+        unsafe {
+            assert!(
+                index < self.size,
+                "Attempted to write invalid entry {}: Max {} tried to read {index}",
+                self.size,
+                core::any::type_name::<Self>()
+            );
+            // union allows clearer casting
+            union Cvt {
+                whole: RedirectionTableEntry,
+                seg: [u32; 2],
+            }
+
+            let entry = Cvt { whole: entry };
+
+            let masked = Cvt {
+                whole: {
+                    let mut t = RedirectionTableEntry::new();
+                    t.set_mask(true);
+                    t
+                },
+            };
+
+            // SAFETY: This masks the interrupt, this is safe.
+            self.write(((index * 2) + 0x10) as u32, masked.seg[0]);
+
+            // Write the actual entry. High half is first because low half may unmask the interrupt
+            self.write(((index * 2) + 0x11) as u32, entry.seg[1]);
+            self.write(((index * 2) + 0x10) as u32, entry.seg[0]);
         }
-
-        let entry = Cvt { whole: entry };
-
-        let masked = Cvt {
-            whole: {
-                let mut t = RedirectionTableEntry::new();
-                t.set_mask(true);
-                t
-            },
-        };
-
-        // SAFETY: This masks the interrupt, this is safe.
-        unsafe { self.write(((index * 2) + 0x10) as u32, masked.seg[0]) };
-
-        // Write the actual entry. High half is first because low half may unmask the interrupt
-        self.write(((index * 2) + 0x11) as u32, entry.seg[1]);
-        self.write(((index * 2) + 0x10) as u32, entry.seg[0]);
     }
 
     pub(crate) fn is_gsi(&self, gsi: u8) -> bool {
@@ -151,8 +157,10 @@ impl IoApic {
     /// Ths fn will panic if `self` does not own the requested GSI. [Self::is_gsi] will return
     /// whether this fn will panic
     pub(crate) unsafe fn set_gsi(&mut self, gsi: u8, entry: RedirectionTableEntry) {
-        assert!(self.is_gsi(gsi));
-        self.set_entry(gsi - self.gsi_base, entry);
+        unsafe {
+            assert!(self.is_gsi(gsi));
+            self.set_entry(gsi - self.gsi_base, entry);
+        }
     }
 }
 
@@ -326,8 +334,10 @@ impl GlobalSystemInterrupt {
     /// This fn does not set configure the interrupt handler this should be configured before
     /// this fn is called.  
     pub unsafe fn set(&self) -> Result<(), ()> {
-        let apic = &crate::system::sysfs::get_sysfs().systemctl.ioapic;
-        apic.set_gsi(self.gsi, self.rt_entry())
+        unsafe {
+            let apic = &crate::system::sysfs::get_sysfs().systemctl.ioapic;
+            apic.set_gsi(self.gsi, self.rt_entry())
+        }
     }
 
     /// Returns the [RedirectionTableEntry] for the GSI represented by `self` This can be used for

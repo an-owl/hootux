@@ -36,10 +36,12 @@ impl<T> KernelStatic<T> {
     }
 
     pub(crate) unsafe fn force_get_mut(&self) -> &mut T {
-        if let Some(t) = self.inner.force_acquire() {
-            return t;
-        } else {
-            panic!("Tried to get uninitialized kernel static")
+        unsafe {
+            if let Some(t) = self.inner.force_acquire() {
+                return t;
+            } else {
+                panic!("Tried to get uninitialized kernel static")
+            }
         }
     }
 
@@ -49,14 +51,15 @@ impl<T> KernelStatic<T> {
     ///
     /// This fn will panic if if `self` is uninitialized
     pub fn try_get_mut(&self) -> Option<Ref<T>> {
-        if let Some(guard) = self.inner.try_lock() {
-            if let Some(_) = guard.as_ref() {
-                Some(Ref::new(guard))
-            } else {
-                panic!("Tried to get uninitialized kernel static")
+        match self.inner.try_lock() {
+            Some(guard) => {
+                if let Some(_) = guard.as_ref() {
+                    Some(Ref::new(guard))
+                } else {
+                    panic!("Tried to get uninitialized kernel static")
+                }
             }
-        } else {
-            None
+            _ => None,
         }
     }
 }

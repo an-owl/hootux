@@ -90,27 +90,30 @@ extern "x86-interrupt" fn except_page(sf: InterruptStackFrame, e: PageFaultError
 
     let r_l = RecursiveLock::new();
     if r_l.is_some() {
-        if let Some(fix) = crate::mem::virt_fixup::query_fixup() {
-            // SAFETY: This is unsafe because _page_fault_fixup_inner will `core::ptr::read(fix)` and consume it.
-            // It is dropped immediately after.
-            let fix = core::mem::MaybeUninit::new(fix);
-            unsafe {
-                core::arch::asm!(
-                    "xchg rsp,[r12]",
-                    "call _page_fault_fixup_inner",
-                    "xchg rsp,[r12]",
-                    in("r12") &sf.stack_pointer,
-                    in("rdi") &fix,
-                    clobber_abi("C")
-                );
-            }
-            core::mem::forget(fix);
-            return;
-        } else {
-            if let Ok(()) =
-                crate::mem::frame_attribute_table::ATTRIBUTE_TABLE_HEAD.fixup(Cr2::read().unwrap())
-            {
+        match crate::mem::virt_fixup::query_fixup() {
+            Some(fix) => {
+                // SAFETY: This is unsafe because _page_fault_fixup_inner will `core::ptr::read(fix)` and consume it.
+                // It is dropped immediately after.
+                let fix = core::mem::MaybeUninit::new(fix);
+                unsafe {
+                    core::arch::asm!(
+                        "xchg rsp,[r12]",
+                        "call _page_fault_fixup_inner",
+                        "xchg rsp,[r12]",
+                        in("r12") &sf.stack_pointer,
+                        in("rdi") &fix,
+                        clobber_abi("C")
+                    );
+                }
+                core::mem::forget(fix);
                 return;
+            }
+            _ => {
+                if let Ok(()) = crate::mem::frame_attribute_table::ATTRIBUTE_TABLE_HEAD
+                    .fixup(Cr2::read().unwrap())
+                {
+                    return;
+                }
             }
         }
     }
@@ -134,7 +137,7 @@ extern "x86-interrupt" fn except_page(sf: InterruptStackFrame, e: PageFaultError
 
 /// This function consumes `fix` and the caller must call [core::mem::forget] on it immediately
 /// after calling it.
-#[no_mangle]
+#[unsafe(no_mangle)]
 unsafe extern "C" fn _page_fault_fixup_inner(fix: *mut crate::mem::virt_fixup::CachedFixup) {
     unsafe {
         fix.read().fixup();
@@ -170,8 +173,8 @@ extern "x86-interrupt" fn except_seg_not_present(sf: InterruptStackFrame, e: u64
     panic!("**SEGMENT NOT PRESENT**\n{sf:#?}\n{e:#x}")
 }
 
-extern "x86-interrupt" fn except_nmi(sf: InterruptStackFrame) {
-    unsafe { vector_tables::INT_LOG.log(2) }
+extern "x86-interrupt" fn except_nmi(_sf: InterruptStackFrame) {
+    vector_tables::INT_LOG.log(2)
 }
 
 #[test_case]
@@ -324,11 +327,13 @@ pub unsafe fn alloc_irq(
     queue: crate::task::InterruptQueue,
     message: u64,
 ) -> Result<(), ()> {
-    let handle = vector_tables::InterruptHandle::new(queue, message);
-    vector_tables::IHR.set(
-        irq,
-        vector_tables::InterruptHandleContainer::Generic(handle),
-    )
+    unsafe {
+        let handle = vector_tables::InterruptHandle::new(queue, message);
+        vector_tables::IHR.set(
+            irq,
+            vector_tables::InterruptHandleContainer::Generic(handle),
+        )
+    }
 }
 
 /// Other interrupt config fns are stupid, use this one.
@@ -349,17 +354,16 @@ pub fn alloc_interrupt() -> Option<InterruptIndex> {
 /// The caller must ensure that the IRQ will not be raised.
 /// If the IRQ is raised the may cause UB.
 pub(crate) unsafe fn free_irq(irq: InterruptIndex) -> Result<(), ()> {
-    vector_tables::IHR.free_irq(irq)
+    unsafe { vector_tables::IHR.free_irq(irq) }
 }
 
 pub(crate) fn reg_waker(irq: InterruptIndex, waker: &core::task::Waker) -> Result<(), ()> {
-    if let vector_tables::InterruptHandleContainer::Generic(g) =
-        &*vector_tables::IHR.get(irq.as_u8()).write()
-    {
-        g.register(waker);
-        Ok(())
-    } else {
-        Err(())
+    match &*vector_tables::IHR.get(irq.as_u8()).write() {
+        vector_tables::InterruptHandleContainer::Generic(g) => {
+            g.register(waker);
+            Ok(())
+        }
+        _ => Err(()),
     }
 }
 
@@ -373,8 +377,10 @@ pub fn load_idt() {
 ///
 /// This does not explicitly declare EOI to any producers, the caller must ensure that producers receive EOI.
 pub unsafe fn eoi() {
-    #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
-    apic::apic_eoi()
+    unsafe {
+        #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+        apic::apic_eoi()
+    }
 }
 
 /// Indicates how the interrupt is received or handled by the CPU.

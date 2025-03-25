@@ -13,8 +13,8 @@ pub struct AhciBlockDev {
 }
 
 impl AhciBlockDev {
-    pub(crate) fn new(gen: &alloc::sync::Arc<Port>, id: block::BlockDeviceId) -> Self {
-        let port = alloc::sync::Arc::downgrade(gen);
+    pub(crate) fn new(r#gen: &alloc::sync::Arc<Port>, id: block::BlockDeviceId) -> Self {
+        let port = alloc::sync::Arc::downgrade(r#gen);
 
         Self {
             id,
