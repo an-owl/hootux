@@ -1,6 +1,6 @@
 use super::file::*;
-use crate::fs::device::{DeviceFile, FileSystem};
 use crate::fs::IoError;
+use crate::fs::device::{DeviceFile, FileSystem};
 /// This module contains th Virtual File System. The VFS is responsible for operating the system-wide
 /// filesystem. This includes managing pseudo files, like pipes FIFOs and character devices.
 ///
@@ -13,6 +13,7 @@ use alloc::boxed::Box;
 use alloc::collections::BTreeMap;
 use alloc::string::{String, ToString};
 use cast_trait_object::DynCastExt;
+use core::cmp::max;
 use core::fmt::{Display, Formatter};
 use futures_util::FutureExt as _;
 
@@ -115,8 +116,8 @@ impl VirtualFileSystem {
             let last = p_iter.next_back().unwrap(); // is_absolute guarantees that this is always some
             let mut depth = 0;
             let _ = p_iter.next(); // returns "" we ignore this. Using skip() makes this not double ended
-                                   // Does not consume last element in p_iter
-                                   // traverses to the directory containing the requested file
+            // Does not consume last element in p_iter
+            // traverses to the directory containing the requested file
             for f_name in p_iter {
                 depth += 1;
                 if f_name == "." || f_name == "" {
@@ -490,6 +491,11 @@ impl DevID {
     // todo add make major a private type
     pub fn new(maj: MajorNum, minor: usize) -> Self {
         Self(maj.0, minor)
+    }
+
+    pub fn as_int(self) -> (usize, usize) {
+        let Self(major, minor) = self;
+        (major, minor)
     }
 }
 
