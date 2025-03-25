@@ -686,6 +686,7 @@ fn controller_timeout_handler() {
 pub(crate) mod file {
     use crate::controller::Controller;
     use alloc::boxed::Box;
+
     use core::any::Any;
     use core::fmt::{Arguments, Formatter, Write as _};
     use core::pin::{Pin, pin};
@@ -1022,11 +1023,13 @@ pub(crate) mod file {
             "i8042"
         }
 
-        fn id(&self) -> Arguments {
+        fn id(&self) -> alloc::string::String {
+            use alloc::string::ToString;
             match self.port {
                 PortNum::One => format_args!("port-1"),
                 PortNum::Two => format_args!("port-2"),
             }
+            .to_string()
         }
 
         fn as_any(self: Box<Self>) -> Box<dyn Any> {

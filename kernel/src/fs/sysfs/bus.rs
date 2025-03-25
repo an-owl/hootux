@@ -1,7 +1,7 @@
 use super::super::IoResult;
 use super::{SysfsDirectory, SysfsFile};
-use crate::fs::file::*;
 use crate::fs::IoError;
+use crate::fs::file::*;
 use alloc::boxed::Box;
 use alloc::string::ToString;
 use futures_util::FutureExt;
@@ -105,19 +105,7 @@ impl SysfsBus {
             rl.get(bus_name).unwrap() // Always returns Some()
         };
 
-        let bind = match core::fmt::Arguments::as_str(&s) {
-            Some(str) => (Some(str), None),
-            None => (None, Some(ToString::to_string(&s))),
-        };
-
-        let s = match bind {
-            (Some(s), None) => s,
-            (None, Some(ref s)) => &*s,
-            // SAFETY: Only one of the options will ever be Some.
-            _ => unsafe { core::hint::unreachable_unchecked() },
-        };
-
-        SysfsDirectory::store(bus, s, super::clone_sysfs_file(&*device)).unwrap();
+        SysfsDirectory::store(bus, &*s, super::clone_sysfs_file(&*device)).unwrap();
     }
 }
 
@@ -210,7 +198,7 @@ pub trait BusDeviceFile: SysfsFile {
     fn bus(&self) -> &'static str;
 
     /// Returns the bus ID of the device represented.
-    fn id(&self) -> core::fmt::Arguments;
+    fn id(&self) -> alloc::string::String;
 
     // This is required because sysfs wants to allow using concrete types wherever possible.
     fn as_any(self: Box<Self>) -> Box<dyn core::any::Any>;
