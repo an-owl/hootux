@@ -688,7 +688,7 @@ pub(crate) mod file {
     use alloc::boxed::Box;
 
     use core::any::Any;
-    use core::fmt::{Arguments, Formatter, Write as _};
+    use core::fmt::{Formatter, Write as _};
     use core::pin::{Pin, pin};
     use core::task::{Context, Poll};
     use futures_util::FutureExt;
