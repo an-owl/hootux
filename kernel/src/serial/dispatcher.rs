@@ -6,12 +6,14 @@ use crate::mem::dma::DmaBuff;
 use crate::serial::Serial;
 use crate::util::ToWritableBuffer;
 use alloc::boxed::Box;
+use alloc::string::ToString;
+use core::any::Any;
 use core::fmt::Write as _;
 use core::marker::PhantomData;
 use core::pin::Pin;
 use core::task::{Context, Poll};
-use futures_util::future::BoxFuture;
 use futures_util::FutureExt;
+use futures_util::future::BoxFuture;
 use kernel_proc_macro::ok_or_lazy;
 use x86_64::instructions::interrupts::without_interrupts;
 
@@ -48,6 +50,22 @@ struct SerialDispatcherInner {
     stream_lock: atomic::Atomic<bool>,
 
     id: DevID,
+}
+
+impl crate::fs::sysfs::SysfsFile for SerialDispatcher {}
+
+impl crate::fs::sysfs::bus::BusDeviceFile for SerialDispatcher {
+    fn bus(&self) -> &'static str {
+        "uart"
+    }
+
+    fn id(&self) -> alloc::string::String {
+        alloc::format!("uart{}", self.inner.id.as_int().1).to_string()
+    }
+
+    fn as_any(self: Box<Self>) -> Box<dyn Any> {
+        self
+    }
 }
 
 impl SerialDispatcher {
@@ -303,62 +321,6 @@ impl Read<u8> for SerialDispatcher {
             }
         }
         .boxed()
-        /*
-        async {
-            if self.fifo_lock.is_read() {
-                // This looks strange. ReadFut::poll() queries if any data has become available
-                let real = if let Some(real) = self.inner.real.upgrade() {
-                    real
-                } else {
-                    return Err((IoError::MediaError, dbuff, 0));
-                };
-
-                // SAFETY: This is safe because as_mut guarantees that this can be cast safely.
-                let buff = unsafe { &mut *crate::mem::dma::DmaTarget::as_mut(&mut *dbuff) };
-
-                // Interrupts must be blocked here to prevent deadlocks.
-                let r = without_interrupts(|| {
-                    let mut l = real.rx_tgt.lock();
-
-                    if l.is_some() {
-                        return Some(async { Err((IoError::Busy, dbuff, 0)) }.boxed());
-                    }
-
-                    let mut count = 0;
-                    while let Some(b) = real.receive() {
-                        buff[count] = b;
-                        count += 1;
-                        if count >= buff.len() {
-                            return Some(Ok((dbuff, count)));
-                        }
-                    }
-
-                    *l = Some((buff as *mut [u8], count));
-                    drop(l);
-                    return None
-                });
-                if let Some(r) = r {
-                    return r.await;
-                }
-
-                // SAFETY: Tx-ready is always set, we set Rx-ready here, we are configured and ready to receive these interrupts
-                unsafe { real.set_int_enable(super::InterruptEnable::TRANSMIT_HOLDING_REGISTER_EMPTY | super::InterruptEnable::DATA_RECEIVED); }
-
-                let rc = ReadFut {
-                    dispatch: self,
-                    phantom_buffer: PhantomData,
-                }.await;
-
-                match rc {
-                    Ok(r) => Ok((dbuff,r.len()))
-                }
-
-            } else {
-                Err((IoError::NotReady, dbuff, 0))
-            }
-        }
-
-         */
     }
 }
 
@@ -619,110 +581,3 @@ impl Write<u8> for FrameCtlBFile {
         }.boxed()
     }
 }
-
-/*
-
-#[derive(Clone)]
-#[cast_trait_object::dyn_upcast(File)]
-#[cast_trait_object::dyn_cast(File => NormalFile<u8>, Directory, crate::fs::device::FileSystem, crate::fs::device::Fifo<u8>, crate::fs::device::DeviceFile )]
-struct RingbuffCtlBFile {
-    inner: SerialDispatcher
-}
-
-impl File for RingbuffCtlBFile {
-    fn file_type(&self) -> FileType {
-        FileType::NormalFile
-    }
-
-    fn block_size(&self) -> u64 {
-        crate::mem::PAGE_SIZE as u64
-    }
-
-    fn device(&self) -> DevID {
-        self.inner.inner.id
-    }
-
-    fn clone_file(&self) -> Box<dyn File> {
-        Box::new(self.clone())
-    }
-
-    fn id(&self) -> u64 {
-        0
-    }
-
-    fn len(&self) -> IoResult<u64> {
-        async { Ok(crate::mem::PAGE_SIZE as u64) }.boxed()
-    }
-}
-
-impl NormalFile for RingbuffCtlBFile {
-    fn len_chars(&self) -> IoResult<u64> {
-        async {Ok(crate::mem::PAGE_SIZE as u64)}.boxed()
-    }
-
-    fn file_lock<'a>(self: Box<Self>) -> BoxFuture<'a, Result<LockedFile<u8>, (IoError, Box<dyn NormalFile<u8>>)>> {
-        async { Err((IoError::NotSupported, self as Box<dyn NormalFile>)) }.boxed()
-    }
-
-    unsafe fn unlock_unsafe(&self) -> IoResult<()> {
-        async {Err(IoError::NotSupported)}.boxed()
-    }
-}
-
-derive_seek_blank!(RingbuffCtlBFile);
-
-impl Read<u8> for RingbuffCtlBFile {
-    fn read<'a>(&'a mut self, buff: &'a mut [u8]) -> BoxFuture<Result<&'a mut [u8], (IoError, usize)>> {
-        async {
-            // If you modify this fn then ensure that `write!` never returns Err(_)
-
-            let mut stack_buff = [0u8; 8];
-            let real = self.inner.inner.real.upgrade().ok_or((IoError::MediaError, 0))?;
-            let len = real.read_buff.read().as_ref().map_or(0,|b| b.len());
-
-            let _ = write!(stack_buff.writable(),"{}",len); // will never fail
-            let pos = stack_buff.iter().position(|c| *c == 0).unwrap(); // will never be null
-
-            let end = pos.min(buff.len());
-            buff[0..end].copy_from_slice(&stack_buff[0..pos]);
-            if buff.len() < pos {
-                Err((IoError::EndOfFile,pos))
-            } else {
-                Ok(&mut buff[..pos])
-            }
-        }.boxed()
-    }
-}
-
-impl Write<u8> for RingbuffCtlBFile {
-    fn write<'a>(&'a mut self, buff: &'a [u8]) -> BoxFuture<Result<usize, (IoError, usize)>> {
-        async {
-            let real  = self.inner.inner.real.upgrade().ok_or((IoError::MediaError,0))?;
-            let l = real.read_buff.upgradeable_read();
-            let n_len: u16 = core::str::from_utf8(buff).map_err(|_| (IoError::InvalidData,0))?.parse().map_err(|_| (IoError::InvalidData,0))?;
-
-            // Buffer must be empty before we can modify it.
-            if l.as_ref().map_or(true,|b| b.is_empty()) {
-
-                let queue;
-                if n_len == 0 {
-                    queue = None;
-                } else {
-                    queue = Some(crossbeam_queue::ArrayQueue::new(n_len as usize));
-                }
-
-                x86_64::instructions::interrupts::without_interrupts(||
-                    {
-                        let mut l = l.upgrade();
-                        *l = queue;
-                    }
-                );
-                Ok(buff.len())
-            } else {
-                Err((IoError::NotReady,0))
-            }
-        }.boxed()
-    }
-}
-
- */

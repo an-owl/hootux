@@ -9,6 +9,7 @@
 //! If I ever write serial drivers for other devices (i.e PCI) I need to check if this module owns
 //! the device  and claim ownership.  
 
+use crate::serial::dispatcher::SerialDispatcher;
 use alloc::boxed::Box;
 use alloc::string::ToString;
 use core::pin::Pin;
@@ -527,7 +528,7 @@ const SERIAL_ADDR: [u16; 8] = [0x3f8, 0x2f8, 0x3e8, 0x2e8, 0x5f8, 0x4f8, 0x5e8, 
 
 pub fn init_rt_serial() {
     let mut com = alloc::vec::Vec::new();
-    let mut dispatchers = alloc::vec::Vec::new();
+    let mut dispatchers: alloc::vec::Vec<SerialDispatcher> = alloc::vec::Vec::new();
 
     for (i, a) in SERIAL_ADDR.iter().enumerate() {
         match Serial::new(*a) {
@@ -571,15 +572,9 @@ pub fn init_rt_serial() {
                 let p = alloc::sync::Arc::new(p);
                 let d = dispatcher::SerialDispatcher::new(&p);
 
-                // todo store in sysfs
-                // root must always be present as a directory
-                //let fs_dst = cast_file!(Directory: crate::task::util::block_on!(crate::fs::get_vfs().open("/")).unwrap()).unwrap();
-                //fs_dst.store( &format_args!("COM{i}").to_string() ,Box::new(d.clone()));
-                let name = format_args!("{FS_LOCATION}COM{i}").to_string();
-                crate::task::util::block_on!(
-                    crate::fs::get_vfs().mount_dev(Box::new(d.clone()), &name)
-                )
-                .expect("Failed to crate mount FIFO for UART to VFS");
+                crate::fs::sysfs::SysFsRoot::new()
+                    .bus
+                    .insert_device(Box::new(d.clone()));
 
                 com.push(p);
 
@@ -632,6 +627,7 @@ pub fn init_rt_serial() {
         }
     }
 
+    // todo: Are these still needed?
     *COM_REAL.write() = com;
     *COM.write() = dispatchers;
 }
