@@ -1,5 +1,5 @@
 [package]
-name = "libboot"
+name = "hatcher"
 version = "0.1.0"
 edition = "2024"
 

@@ -11,12 +11,12 @@ extern crate alloc;
 use alloc::boxed::Box;
 use alloc::vec::Vec;
 use core::ptr::NonNull;
+use hatcher::boot_info::PixelFormat;
 use hootux::exit_qemu;
 use hootux::graphics::basic_output::BasicTTY;
 use hootux::interrupts::apic::Apic;
 use hootux::time::kernel_init_timer;
 use hootux::*;
-use libboot::boot_info::PixelFormat;
 use log::debug;
 use x86_64::addr::VirtAddr;
 
@@ -41,7 +41,7 @@ impl Pad {
 }
 
 #[unsafe(no_mangle)]
-fn kernel_main(b: *mut libboot::boot_info::BootInfo) -> ! {
+fn kernel_main(b: *mut hatcher::boot_info::BootInfo) -> ! {
     serial_println!("Kernel start");
     let mut b = unsafe { b.read() };
 
@@ -153,10 +153,10 @@ fn kernel_main(b: *mut libboot::boot_info::BootInfo) -> ! {
     task::run_exec(); //executor.run();
 }
 
-libboot::kernel_entry!(_libboot_entry);
+hatcher::kernel_entry!(_hatcher_entry);
 
 #[unsafe(no_mangle)]
-pub extern "C" fn _libboot_entry(bi: *mut libboot::boot_info::BootInfo) -> ! {
+pub extern "C" fn _hatcher_entry(bi: *mut hatcher::boot_info::BootInfo) -> ! {
     kernel_main(bi)
 }
 

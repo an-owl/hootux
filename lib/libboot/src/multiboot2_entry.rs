@@ -533,7 +533,7 @@ fn cx_switch(
 ) -> ! {
     let l4 = mapper.level_4_table();
     let sp = stack_pointer.get_ptr();
-    let entry = super::_libboot_entry;
+    let entry = super::_hatcher_entry;
 
     unsafe {
         core::arch::asm!(

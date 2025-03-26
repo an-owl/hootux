@@ -350,6 +350,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bf151400ff0baff5465007dd2f3e717f3fe502074ca563069ce3a6629d07b289"
 
 [[package]]
+name = "hatcher"
+version = "0.1.0"
+dependencies = [
+ "cfg-if",
+ "multiboot2 0.19.0",
+ "multiboot2-header 0.3.2",
+ "uefi",
+ "x86_64",
+]
+
+[[package]]
 name = "hid-8042"
 version = "0.1.0"
 dependencies = [
@@ -386,9 +397,9 @@ dependencies = [
  "conquer-once",
  "crossbeam-queue",
  "futures-util",
+ "hatcher",
  "kernel-proc-macro",
  "lazy_static",
- "libboot",
  "linked_list_allocator",
  "log",
  "modular-bitfield",
@@ -411,10 +422,10 @@ dependencies = [
  "ahci",
  "cast_trait_object",
  "futures-util",
+ "hatcher",
  "hid-ps2",
  "hootux",
  "kernel-proc-macro",
- "libboot",
  "log",
  "multiboot2-header 0.4.0",
  "x86_64",
@@ -462,17 +473,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e2abad23fbc42b3700f2f279844dc832adb2b2eb069b2df918f455c4e18cc646"
 dependencies = [
  "spin 0.5.2",
-]
-
-[[package]]
-name = "libboot"
-version = "0.1.0"
-dependencies = [
- "cfg-if",
- "multiboot2 0.19.0",
- "multiboot2-header 0.3.2",
- "uefi",
- "x86_64",
 ]
 
 [[package]]

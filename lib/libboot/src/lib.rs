@@ -37,7 +37,7 @@ unsafe extern "C" {
     #[allow(improper_ctypes)]
     // This is intended to be a rust fn anyway, but it needs a stable ABI
     // will switch this to crabi when its stable.
-    fn _libboot_entry(info: *mut boot_info::BootInfo) -> !;
+    fn _hatcher_entry(info: *mut boot_info::BootInfo) -> !;
 }
 
 /// libboot requires an entry point to call in order to hand over control to the kernel.

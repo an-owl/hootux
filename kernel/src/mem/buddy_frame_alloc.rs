@@ -13,14 +13,14 @@ const HIGH_ORDER_BLOCK_SIZE: u32 = (ORDER_MAX_SIZE as u32) * HIGH_ORDER_BLOCK_RA
 
 static MEM_MAP: crate::util::KernelStatic<PreInitFrameAlloc> = crate::util::KernelStatic::new();
 
-pub(super) unsafe fn init_mem_map(regions: libboot::boot_info::MemoryMap) {
+pub(super) unsafe fn init_mem_map(regions: hatcher::boot_info::MemoryMap) {
     unsafe {
         MEM_MAP.init(PreInitFrameAlloc::new(regions));
     }
 }
 
 struct PreInitFrameAlloc {
-    list: libboot::boot_info::MemoryMap,
+    list: hatcher::boot_info::MemoryMap,
     mem_16_n: Option<usize>,
     mem_32_n: Option<usize>,
     mem_64_n: Option<usize>,
@@ -33,7 +33,7 @@ impl PreInitFrameAlloc {
     ///
     /// This fn is unsafe because the caller must ensure that `regions` correctly describes physical
     /// memory
-    unsafe fn new(regions: libboot::boot_info::MemoryMap) -> Self {
+    unsafe fn new(regions: hatcher::boot_info::MemoryMap) -> Self {
         let mut mem_16_n = None;
         let mut mem_32_n = None;
         let mut mem_64_n = None;
@@ -45,7 +45,7 @@ impl PreInitFrameAlloc {
             ($regions:ident) => {
                 $regions
                     .iter()
-                    .filter(|p| p.ty == libboot::boot_info::MemoryRegionType::Usable)
+                    .filter(|p| p.ty == hatcher::boot_info::MemoryRegionType::Usable)
             };
         }
 
@@ -110,7 +110,7 @@ impl PreInitFrameAlloc {
         let mut iter = self
             .list
             .iter()
-            .filter(|p| p.ty == libboot::boot_info::MemoryRegionType::Usable);
+            .filter(|p| p.ty == hatcher::boot_info::MemoryRegionType::Usable);
 
         // Loops over memory region list to locate the next region.
         'base: while let Some(i) = iter.next() {
