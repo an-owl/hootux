@@ -38,7 +38,7 @@ macro_rules! offset_mem_flags {
 #[cfg(all(feature = "uefi"))]
 core::arch::global_asm!(
     r#"
-.section .text.libboot.entry.mb2_efi64
+.section .text.hatcher.entry.mb2_efi64
 .global _kernel_preload_entry_mb2efi64
 _kernel_preload_entry_mb2efi64:
     xor rdi,rdi
@@ -62,7 +62,7 @@ unsafe extern "C" {
 // not here that mbi_ptr is a 32-bit pointer but _kernel_preload_entry ensures that the top half of rsi is clear
 #[cfg(all(feature = "uefi"))]
 #[unsafe(no_mangle)]
-#[unsafe(link_section = ".text.libboot.multiboot2.kernel_preload_efi64")]
+#[unsafe(link_section = ".text.hatcher.multiboot2.kernel_preload_efi64")]
 extern "C" fn _kernel_mb2_preload_efi64(
     magic: u32,
     mbi_ptr: *const multiboot2::BootInformationHeader,
@@ -183,7 +183,7 @@ extern "C" fn _kernel_mb2_preload_efi64(
     // We will not call set_virtual_address_map() here because it can only be called once, and the kernel may not want to use our map.
     // can I make this unconditional jump instead of call
     cx_switch(new_stack, mapper, bi_ptr)
-    // I would put something here in case _libboot_entry DOES return but lldb does that for me
+    // I would put something here in case _hatcher_entry DOES return but lldb does that for me
     // Here will be either ud2 or int3 instructions
     // So the worst that can happen is exceptions, and not some random code being executed
 }
@@ -518,10 +518,12 @@ fn map_framebuffer(
         };
         for i in range {
             // never none?
-            unsafe { mapper.identity_map(
-                x86_64::structures::paging::PhysFrame::<x86_64::structures::paging::Size2MiB>::from_start_address_unchecked(x86_64::PhysAddr::new(i.start_address().as_u64())),
-                PageTableFlags::WRITABLE | PageTableFlags::NO_CACHE | PageTableFlags::PRESENT,
-                &mut HalfArsedFrameAllocator { st }) }.map_err(|_| efi_panic(st,"Failed to map framebuffer")).unwrap().ignore();
+            unsafe {
+                mapper.identity_map(
+                    x86_64::structures::paging::PhysFrame::<x86_64::structures::paging::Size2MiB>::from_start_address_unchecked(x86_64::PhysAddr::new(i.start_address().as_u64())),
+                    PageTableFlags::WRITABLE | PageTableFlags::NO_CACHE | PageTableFlags::PRESENT,
+                    &mut HalfArsedFrameAllocator { st })
+            }.map_err(|_| efi_panic(st, "Failed to map framebuffer")).unwrap().ignore();
         }
     }
 }
