@@ -354,8 +354,8 @@ name = "hatcher"
 version = "0.1.0"
 dependencies = [
  "cfg-if",
- "multiboot2 0.19.0",
- "multiboot2-header 0.3.2",
+ "multiboot2",
+ "suffix",
  "uefi",
  "x86_64",
 ]
@@ -427,7 +427,8 @@ dependencies = [
  "hootux",
  "kernel-proc-macro",
  "log",
- "multiboot2-header 0.4.0",
+ "multiboot2",
+ "multiboot2-header",
  "x86_64",
 ]
 
@@ -535,19 +536,6 @@ dependencies = [
 
 [[package]]
 name = "multiboot2"
-version = "0.19.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "be7a13d71fc2f7747af3ce60e5eccb638acd687b3a580d0bd579c6d0f7b9d010"
-dependencies = [
- "bitflags 2.8.0",
- "derive_more",
- "log",
- "ptr_meta",
- "uefi-raw 0.3.0",
-]
-
-[[package]]
-name = "multiboot2"
 version = "0.20.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3d67e1b461b49127f2226c78a2b4090f72212c44fa27342bcfef93dd39bd6b86"
@@ -556,17 +544,7 @@ dependencies = [
  "derive_more",
  "log",
  "ptr_meta",
- "uefi-raw 0.5.2",
-]
-
-[[package]]
-name = "multiboot2-header"
-version = "0.3.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b297dc15376dc7eef5e1175e770d5c9ad69c262589638990527d1b12cdf5ae02"
-dependencies = [
- "derive_more",
- "multiboot2 0.19.0",
+ "uefi-raw",
 ]
 
 [[package]]
@@ -576,7 +554,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e8bc033c3c641faa8b8a6fecaa6eec912f25ec7056d35d0332a03c626bd750ba"
 dependencies = [
  "derive_more",
- "multiboot2 0.20.0",
+ "multiboot2",
 ]
 
 [[package]]
@@ -882,6 +860,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
 
 [[package]]
+name = "suffix"
+version = "0.0.0"
+source = "git+https://github.com/an-owl/suffix#7c05f3884298888e6b62f57c23c99c1d61ec8ddd"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.100",
+]
+
+[[package]]
 name = "syn"
 version = "1.0.109"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -999,7 +987,7 @@ dependencies = [
  "ptr_meta",
  "ucs2",
  "uefi-macros",
- "uefi-raw 0.5.2",
+ "uefi-raw",
  "uguid",
 ]
 
@@ -1012,17 +1000,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.100",
-]
-
-[[package]]
-name = "uefi-raw"
-version = "0.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "62642516099c6441a5f41b0da8486d5fc3515a0603b0fdaea67b31600e22082e"
-dependencies = [
- "bitflags 2.8.0",
- "ptr_meta",
- "uguid",
 ]
 
 [[package]]
