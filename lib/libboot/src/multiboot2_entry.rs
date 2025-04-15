@@ -642,8 +642,6 @@ mod pm {
         initial_stack:
             .fill 32,4,0
 
-
-
         /// This handles switching the CPU to long mode, and handing over to rust code.
         /// ebx will point to the MBI structure until rust code is called.
         hinit: // todo remove, this is for debugging
@@ -654,16 +652,12 @@ mod pm {
             jnz .L_fail
 
             // we need to use att because using intel causes this to be sub ebp, dword ptr [symbol] regardless of what it try to do about it.
-            .att_syntax
-            call +.L_get_eip
-            .intel_syntax noprefix
+            call .L_get_eip
 
             .L_get_eip:
             pop ebp
 
-            .att_syntax
-            addl $entry_pointer_offset,%ebp // locates the address of hatcher_multiboot2_pm_entry if we are relocated
-            .intel_syntax noprefix
+            lea ebp,[entry_pointer_offset] // locates the address of hatcher_multiboot2_pm_entry if we are relocated
 
             mov ecx,{CR0_INITIAL}
             mov cr0,ecx
@@ -673,9 +667,7 @@ mod pm {
 
             mov ecx,{MEMORY_MAP_TAG}
 
-            .att_syntax
-            call +__hatcher_mb2pm_tag_finder
-            .intel_syntax noprefix
+            call __hatcher_mb2pm_tag_finder
 
 
         // We need to allocate memory.
