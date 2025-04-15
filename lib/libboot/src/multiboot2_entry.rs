@@ -644,7 +644,6 @@ mod pm {
 
         /// This handles switching the CPU to long mode, and handing over to rust code.
         /// ebx will point to the MBI structure until rust code is called.
-        hinit: // todo remove, this is for debugging
         hatcher_multiboot2_pm_entry:
             // Assert the magic number is correct
 
@@ -683,7 +682,6 @@ mod pm {
             mov [edi],eax
         .L_setup_l3_table:
             call __hatcher_mb2pm_alloc_mem
-        break3:
             mov edi,eax
             mov ecx,{GIANT_PAGE_BITS}
             xor esi,esi
@@ -698,7 +696,7 @@ mod pm {
             cmp esi,{PAGE}
             jc .L_setup_l3_inner // While page offset < {PAGE} continue
 
-           break:
+
         .L_setup_l4_table:
             push edi
             call __hatcher_mb2pm_alloc_mem
