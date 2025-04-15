@@ -11,27 +11,22 @@
 //! The binary using this library must provide libboot an entry point named "_libboot_entry" see
 //! [kernel_entry] macro for details
 // todo add config file to configure libBoot behaviour
+//! The "define-start" feature will enable the [start] module which defines the `_start` symbol
+//! which bootloaders will call by default after loading the kernel. This will attempt to resolve
+//! which protocol the kernel was booted with and jump to the required initialization mechanism.
+//! A kernel may override this and explicitly and provide an entry point explicitly.
 
 pub mod boot_info;
 pub(crate) mod common;
 #[cfg(feature = "multiboot2")]
 mod multiboot2_entry;
 
+#[cfg(feature = "define-start")]
+mod start;
+
 // Throw an error if all loader features are disabled
 #[cfg(not(any(feature = "multiboot2")))]
 compile_error!("Must use at least one bootloader feature");
-
-pub mod entry_points {
-    /// This is the entry point for the multiboot2 EFI64 entry.
-    /// This must be passed to the multiboot2 entry as a u32, this is checked at link and will
-    /// result in a very unsightly linker error if it occurs.
-    ///
-    /// A section named ` .text.libboot.multiboot2.kernel_preload_entry_efi64` stores this function
-    /// and may be linked separately to allow this address to be safely truncated while linking the
-    /// rest of this code elsewhere.
-    #[cfg(all(feature = "multiboot2", feature = "uefi", target_arch = "x86_64"))]
-    pub use crate::multiboot2_entry::_kernel_preload_entry_mb2efi64;
-}
 
 unsafe extern "C" {
     #[allow(improper_ctypes)]
