@@ -1,3 +1,4 @@
+#[cfg(feature = "define-start")]
 core::arch::global_asm!(
     "
     .code32

@@ -21,7 +21,6 @@ pub(crate) mod common;
 #[cfg(feature = "multiboot2")]
 mod multiboot2_entry;
 
-#[cfg(feature = "define-start")]
 pub mod start;
 
 // Throw an error if all loader features are disabled
