@@ -26,6 +26,8 @@ mod multiboot2_entry;
 
 pub mod start;
 
+pub mod variables;
+
 // Throw an error if all loader features are disabled
 #[cfg(not(any(feature = "multiboot2")))]
 compile_error!("Must use at least one bootloader feature");
