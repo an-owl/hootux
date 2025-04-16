@@ -759,6 +759,7 @@ pub(crate) mod pm {
             mov fs,cx
             mov gs,cx
 
+            mov edi,ebx
             jmp fword ptr [esp-6]
 
         .L_fail:
