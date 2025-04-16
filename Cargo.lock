@@ -230,6 +230,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "derive_more"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4a9b99b9cbbe49445b21764dc0625032a89b145a2642e67603e1c936f5458d05"
+dependencies = [
+ "derive_more-impl",
+]
+
+[[package]]
+name = "derive_more-impl"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cb7330aeadfbe296029522e6c40f315320aba36fc43a5b3632f3795348f3bd22"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.100",
+ "unicode-xid",
+]
+
+[[package]]
 name = "either"
 version = "1.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -354,7 +375,7 @@ name = "hatcher"
 version = "0.1.0"
 dependencies = [
  "cfg-if",
- "multiboot2",
+ "multiboot2 0.23.1",
  "suffix",
  "uefi",
  "x86_64",
@@ -427,7 +448,7 @@ dependencies = [
  "hootux",
  "kernel-proc-macro",
  "log",
- "multiboot2",
+ "multiboot2 0.20.0",
  "multiboot2-header",
  "x86_64",
 ]
@@ -541,10 +562,34 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3d67e1b461b49127f2226c78a2b4090f72212c44fa27342bcfef93dd39bd6b86"
 dependencies = [
  "bitflags 2.8.0",
- "derive_more",
+ "derive_more 0.99.17",
  "log",
  "ptr_meta",
- "uefi-raw",
+ "uefi-raw 0.5.2",
+]
+
+[[package]]
+name = "multiboot2"
+version = "0.23.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "43fcee184de68e344a888bc4f2b9d6b2f2f527cae8cedbb4d62a4df727d1ceae"
+dependencies = [
+ "bitflags 2.8.0",
+ "derive_more 1.0.0",
+ "log",
+ "multiboot2-common",
+ "ptr_meta",
+ "uefi-raw 0.8.0",
+]
+
+[[package]]
+name = "multiboot2-common"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fbabf8d9980d55576ba487924fa0b9a467fc0012b996b93d2319904f168ed8ab"
+dependencies = [
+ "derive_more 1.0.0",
+ "ptr_meta",
 ]
 
 [[package]]
@@ -553,8 +598,8 @@ version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e8bc033c3c641faa8b8a6fecaa6eec912f25ec7056d35d0332a03c626bd750ba"
 dependencies = [
- "derive_more",
- "multiboot2",
+ "derive_more 0.99.17",
+ "multiboot2 0.20.0",
 ]
 
 [[package]]
@@ -987,7 +1032,7 @@ dependencies = [
  "ptr_meta",
  "ucs2",
  "uefi-macros",
- "uefi-raw",
+ "uefi-raw 0.5.2",
  "uguid",
 ]
 
@@ -1014,6 +1059,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "uefi-raw"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b463030b802e1265a3800fab24df95d3229c202c2e408832a206f05b4d1496ca"
+dependencies = [
+ "bitflags 2.8.0",
+ "ptr_meta",
+ "uguid",
+]
+
+[[package]]
 name = "uguid"
 version = "2.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1030,6 +1086,12 @@ name = "unicode-width"
 version = "0.1.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "68f5e5f3158ecfd4b8ff6fe086db7c8467a2dfdac97fe420f2b7c4aa97af66d6"
+
+[[package]]
+name = "unicode-xid"
+version = "0.2.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ebc1c04c71510c7f702b52b7c350734c9ff1295c464a03335b00bb84fc54f853"
 
 [[package]]
 name = "volatile"
