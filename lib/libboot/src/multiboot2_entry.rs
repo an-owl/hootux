@@ -599,10 +599,16 @@ fn throw<T, E: core::fmt::Debug>(st: &mut SysTable, o: Result<T, E>) -> T {
     }
 }
 
-mod pm {
-    #![allow(bad_asm_style)]
-    extern "C" fn hatcher_entry_mb2pm() -> ! {
-        todo!()
+pub(crate) mod pm {
+    unsafe extern "C" {
+        pub fn hatcher_multiboot2_pm_entry() -> !;
+    }
+    extern "C" fn hatcher_entry_mb2pm(mbi: *mut multiboot2::BootInformationHeader) -> ! {
+        // I cant remember if switching to long mode clears the higher half of the register, so clear the higher bits anyway;
+        let mbi =
+            (mbi.addr() & (suffix::metric!(4Gi) - 1)) as *mut multiboot2::BootInformationHeader;
+
+        panic!()
     }
 
     use core::arch::global_asm;

@@ -26,8 +26,14 @@ core::arch::global_asm!(
 /// This must be passed to the multiboot2 entry as a u32, this is checked at link and will
 /// result in a very unsightly linker error if it occurs.
 ///
-/// A section named ` .text.libboot.multiboot2.kernel_preload_entry_efi64` stores this function
+/// A section named ` .text.hatcher.multiboot2.kernel_preload_entry_efi64` stores this function
 /// and may be linked separately to allow this address to be safely truncated while linking the
 /// rest of this code elsewhere.
 #[cfg(all(feature = "multiboot2", feature = "uefi", target_arch = "x86_64"))]
 pub use crate::multiboot2_entry::_kernel_preload_entry_mb2efi64;
+
+/// This the entry point for the multiboot2 protected mode entry point.
+///
+/// This entry point is defined in the section ` .text.hatcher.entry.multiboot2.protected_mode`
+#[cfg(all(feature = "multiboot2", target_arch = "x86_64"))]
+pub use crate::multiboot2_entry::pm::hatcher_multiboot2_pm_entry;
