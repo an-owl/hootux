@@ -6,18 +6,7 @@ use x86_64::structures::paging::{FrameAllocator, Mapper, Page, PageTableFlags, T
 
 type SysTable = uefi::table::SystemTable<uefi::table::Boot>;
 
-// todo make this configurable
-const PHYS_OFFSET_ADDR: usize = {
-    #[cfg(target_pointer_width = "64")]
-    {
-        0xFFFF808000000000 // entry 2 of l4 table
-    }
-    #[cfg(not(target_pointer_width = "64"))]
-    0
-};
-
-// todo make configurable
-const STACK_SIZE: usize = 0x100000;
+use crate::variables::*;
 
 const _ASSERT: () = {
     assert!(STACK_SIZE & 0xfff == 0, "STACK_SIZE must be page aligned");
