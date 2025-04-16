@@ -16,6 +16,9 @@
 //! which protocol the kernel was booted with and jump to the required initialization mechanism.
 //! A kernel may override this and explicitly and provide an entry point explicitly.
 
+#[cfg(feature = "multiboot2")]
+pub extern crate multiboot2;
+
 pub mod boot_info;
 pub(crate) mod common;
 #[cfg(feature = "multiboot2")]
