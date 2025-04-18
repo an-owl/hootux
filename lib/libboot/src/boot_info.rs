@@ -1,8 +1,7 @@
-
-#[cfg(feature = "uefi")]
-pub use ::uefi::table::boot::MemoryType;
 #[cfg(feature = "uefi")]
 pub use ::uefi::table::boot::MemoryAttribute;
+#[cfg(feature = "uefi")]
+pub use ::uefi::table::boot::MemoryType;
 use cfg_if::cfg_if;
 
 cfg_if! {
@@ -13,6 +12,11 @@ cfg_if! {
     }
 }
 
+// ensure that the page size is less than one whole page
+const _: () = {
+    assert!(size_of::<BootInfo>() <= PAGE_SIZE);
+};
+
 pub struct BootInfo {
     /// Address of the physical address offset.
     /// This is always a [u64] even on 32bit systems.
@@ -22,11 +26,10 @@ pub struct BootInfo {
     /// This must always be present when [crate::_libboot_entry] is called.
     /// This is an option so that [Option::take] can be used.
     pub memory_map: Option<MemoryMap>,
-    pub optionals: BootInfoOptionals
+    pub optionals: BootInfoOptionals,
 }
 
 impl BootInfo {
-
     /// This doesn't work correctly. It should locate the PT_TLS segment from the ELF program headers,
     /// however I cannot figure out how to locate the program headers.
     ///
@@ -42,7 +45,12 @@ impl BootInfo {
                 match n {
                     ".tdata" => {
                         // SAFETY: This address and size is given by the bootloader
-                        init = Some( unsafe { core::slice::from_raw_parts(s.start_address() as usize as *const u8, s.size() as usize) } );
+                        init = Some(unsafe {
+                            core::slice::from_raw_parts(
+                                s.start_address() as usize as *const u8,
+                                s.size() as usize,
+                            )
+                        });
                         len += s.size() as usize
                     }
                     ".tbss" => {
@@ -57,7 +65,7 @@ impl BootInfo {
             None
         } else {
             Some(TlsTemplate {
-                file: init.unwrap_or( &[]),
+                file: init.unwrap_or(&[]),
                 size: len,
             })
         }
@@ -74,7 +82,9 @@ impl BootInfo {
             } else {
                 None
             }
-        } else { None } // more to come
+        } else {
+            None
+        } // more to come
     }
 }
 
@@ -111,7 +121,6 @@ pub struct BootInfoOptionals {
     pub graphic_info: Option<GraphicInfo>,
 }
 
-
 /// Contains information required to operate the framebuffer.
 ///
 /// The width and height fields represent the resolution of the display in pixels.
@@ -125,7 +134,7 @@ pub struct GraphicInfo {
     pub height: u64,
     pub stride: u64,
     pub pixel_format: PixelFormat,
-    pub framebuffer: &'static mut [u8]
+    pub framebuffer: &'static mut [u8],
 }
 
 pub enum PixelFormat {
@@ -141,8 +150,8 @@ pub enum PixelFormat {
         red: u32,
         green: u32,
         blue: u32,
-        reserved: u32
-    }
+        reserved: u32,
+    },
 }
 
 #[cfg(feature = "uefi")]
@@ -151,17 +160,29 @@ pub type UefiMemoryMap = uefi::table::boot::MemoryMap<'static>;
 #[non_exhaustive]
 pub enum MemoryMap {
     #[cfg(feature = "uefi")]
-    Uefi(UefiMemoryMap)
+    Uefi(UefiMemoryMap),
+
+    /// ## Safety
+    ///
+    /// The kernel must ensure that the MultiBoot information struct is not modified while this is referenced
+    #[cfg(feature = "multiboot2")]
+    Multiboot2(Multiboot2PmMemoryState),
 }
 
 #[non_exhaustive]
 pub enum MapIter<'a> {
     #[cfg(feature = "uefi")]
     Uefi(uefi::table::boot::MemoryMapIter<'a>)
+    Uefi(uefi::table::boot::MemoryMapIter<'a>),
 }
 
 impl MemoryMap {
-    pub fn iter(&self) -> MapIter {
+    /// Returns an iterator over the memory map
+    ///
+    /// # Safety
+    ///
+    /// Some variants have safety requirements which must be upheld.
+    pub unsafe fn iter(&self) -> MapIter {
         match self {
             #[cfg(feature = "uefi")]
             Self::Uefi(u) => MapIter::Uefi(u.entries()),
@@ -182,7 +203,7 @@ pub struct MemoryRegion {
     pub phys_addr: u64,
     pub size: u64,
     pub ty: MemoryRegionType,
-    pub distinct: MemoryRegionDistinct
+    pub distinct: MemoryRegionDistinct,
 }
 
 #[cfg(feature = "uefi")]
@@ -191,22 +212,22 @@ impl From<uefi::table::boot::MemoryDescriptor> for MemoryRegion {
         let ty = match value.ty {
             MemoryType::LOADER_DATA => MemoryRegionType::Bootloader,
 
-            MemoryType::RESERVED |
-            MemoryType::UNUSABLE |
-            MemoryType::MMIO |
-            MemoryType::RUNTIME_SERVICES_CODE |
-            MemoryType::RUNTIME_SERVICES_DATA |
-            MemoryType::ACPI_RECLAIM |
-            MemoryType::ACPI_NON_VOLATILE |
-            MemoryType::PAL_CODE |
-            MemoryType::MMIO_PORT_SPACE => MemoryRegionType::Unusable(value.ty.0),
+            MemoryType::RESERVED
+            | MemoryType::UNUSABLE
+            | MemoryType::MMIO
+            | MemoryType::RUNTIME_SERVICES_CODE
+            | MemoryType::RUNTIME_SERVICES_DATA
+            | MemoryType::ACPI_RECLAIM
+            | MemoryType::ACPI_NON_VOLATILE
+            | MemoryType::PAL_CODE
+            | MemoryType::MMIO_PORT_SPACE => MemoryRegionType::Unusable(value.ty.0),
 
-            MemoryType::CONVENTIONAL |
-            MemoryType::BOOT_SERVICES_DATA |
-            MemoryType::BOOT_SERVICES_CODE |
-            MemoryType::LOADER_CODE => MemoryRegionType::Usable,
+            MemoryType::CONVENTIONAL
+            | MemoryType::BOOT_SERVICES_DATA
+            | MemoryType::BOOT_SERVICES_CODE
+            | MemoryType::LOADER_CODE => MemoryRegionType::Usable,
 
-            e => MemoryRegionType::Unknown(e.0)
+            e => MemoryRegionType::Unknown(e.0),
         };
 
         Self {
@@ -216,7 +237,7 @@ impl From<uefi::table::boot::MemoryDescriptor> for MemoryRegion {
             distinct: MemoryRegionDistinct::Uefi {
                 ty: value.ty,
                 virt_addr: value.virt_start,
-                attribute: value.att
+                attribute: value.att,
             },
         }
     }
@@ -268,9 +289,227 @@ impl<'a> Iterator for MapIter<'a> {
     fn next(&mut self) -> Option<Self::Item> {
         match self {
             #[cfg(feature = "uefi")]
-            MapIter::Uefi(i) => {
-                Some(i.next()?.clone().into())
-            },
+            MapIter::Uefi(i) => Some(i.next()?.clone().into()),
+            MapIter::Multiboot2(i) => i.next(),
         }
+    }
+}
+
+#[cfg(feature = "multiboot2")]
+pub struct Multiboot2PmMemoryState {
+    pub(crate) mbi_region: core::ops::Range<u64>,
+    pub(crate) elf_sections: &'static multiboot2::ElfSectionsTag,
+    pub(crate) mem_map: &'static multiboot2::MemoryMapTag,
+    pub(crate) used_boundary: u64,
+    pub(crate) low_boundary: u64,
+}
+
+#[cfg(feature = "multiboot2")]
+impl Multiboot2PmMemoryState {
+    fn iter(&self) -> Multiboot2PmMemoryStateIter {
+        Multiboot2PmMemoryStateIter {
+            parent: self,
+            next_addr: 0,
+            last_index: 0,
+            hit_boundary: false,
+            hit_low_boundary: false,
+        }
+    }
+}
+
+#[cfg(feature = "multiboot2")]
+pub struct Multiboot2PmMemoryStateIter<'a> {
+    parent: &'a Multiboot2PmMemoryState,
+    next_addr: u64,
+    last_index: usize,
+    hit_boundary: bool,
+    hit_low_boundary: bool,
+    // All memory below the low boundary was freed prior to handing control to calling [crate::hatcher_entry]
+}
+
+#[cfg(feature = "multiboot2")]
+impl Multiboot2PmMemoryStateIter<'_> {
+    /// Determines if `range` is occupied and if so how much.
+    ///
+    /// The range bounds should be page aligned.
+    fn address_occupied(
+        &self,
+        mut range: core::ops::Range<u64>,
+    ) -> (core::ops::Range<u64>, MemoryRegionType) {
+        for i in self.parent.elf_sections.sections() {
+            let start = x86_64::align_down(i.start_address(), PAGE_SIZE as u64);
+            let end = x86_64::align_up(i.end_address(), PAGE_SIZE as u64);
+
+            let (b, ty) = Self::cmp_range(range, start..end);
+            range = b;
+            if ty == MemoryRegionType::Bootloader {
+                return (range, ty);
+            }
+        }
+
+        Self::cmp_range(range, self.parent.mbi_region.clone())
+    }
+
+    fn cmp_range(
+        memory_range: core::ops::Range<u64>,
+        cmp_range: core::ops::Range<u64>,
+    ) -> (core::ops::Range<u64>, MemoryRegionType) {
+        use core::ops::RangeBounds as _;
+        use ranges::{Arrangement, GenericRange};
+        let memory_range = ranges::GenericRange::from(memory_range);
+        let cmp_range = ranges::GenericRange::from(cmp_range);
+
+        let (range, ty) = match memory_range.arrangement(&cmp_range) {
+            Arrangement::Disjoint { .. } | Arrangement::Touching { .. } => {
+                (memory_range, MemoryRegionType::Usable)
+            }
+            Arrangement::Overlapping {
+                self_less: true, ..
+            } => {
+                let start = memory_range.start_bound().map(|e| *e);
+                let core::ops::Bound::Included(end) = cmp_range.start_bound().map(|e| *e) else {
+                    panic!()
+                };
+                let end = core::ops::Bound::Excluded(end);
+
+                (
+                    GenericRange::new_with_bounds(start, end),
+                    MemoryRegionType::Usable,
+                )
+            }
+            Arrangement::Overlapping {
+                self_less: false, ..
+            } => {
+                let start = memory_range.start_bound().map(|e| *e);
+                let end = cmp_range.end_bound().map(|e| *e);
+
+                (
+                    GenericRange::new_with_bounds(start, end),
+                    MemoryRegionType::Bootloader,
+                )
+            }
+
+            Arrangement::Containing { self_shorter: true } => {
+                (memory_range, MemoryRegionType::Bootloader)
+            }
+            Arrangement::Containing {
+                self_shorter: false,
+            } => {
+                let start = memory_range.start_bound().map(|e| *e);
+                let core::ops::Bound::Included(end) = cmp_range.start_bound().map(|e| *e) else {
+                    panic!()
+                };
+                let end = core::ops::Bound::Excluded(end);
+
+                (
+                    GenericRange::new_with_bounds(start, end),
+                    MemoryRegionType::Usable,
+                )
+            }
+            Arrangement::Starting { self_shorter, .. } => {
+                let start = memory_range.start_bound().map(|e| *e);
+                let end = if self_shorter {
+                    memory_range.end_bound().map(|e| *e)
+                } else {
+                    memory_range.end_bound().map(|e| *e)
+                };
+
+                (
+                    GenericRange::new_with_bounds(start, end),
+                    MemoryRegionType::Bootloader,
+                )
+            }
+
+            Arrangement::Ending {
+                self_shorter: false,
+                ..
+            } => {
+                let start = memory_range.start_bound().map(|e| *e);
+                let core::ops::Bound::Included(end) = cmp_range.start_bound().map(|e| *e) else {
+                    panic!()
+                }; // sub one because this is inclusive
+                let end = core::ops::Bound::Excluded(end);
+
+                (
+                    GenericRange::new_with_bounds(start, end),
+                    MemoryRegionType::Usable,
+                )
+            }
+
+            Arrangement::Ending {
+                self_shorter: true, ..
+            } => (memory_range, MemoryRegionType::Bootloader),
+
+            Arrangement::Equal => (cmp_range, MemoryRegionType::Bootloader),
+            Arrangement::Empty { .. } => {
+                panic!()
+            } // invalid inputs
+        };
+
+        let core::ops::Bound::Included(start) = range.start_bound().map(|e| *e) else {
+            unreachable!()
+        };
+        let core::ops::Bound::Excluded(end) = range.end_bound().map(|e| *e) else {
+            unreachable!()
+        };
+
+        (start..end, ty)
+    }
+}
+
+#[cfg(feature = "multiboot2")]
+impl<'a> Iterator for Multiboot2PmMemoryStateIter<'a> {
+    type Item = MemoryRegion;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.parent.mem_map.memory_areas()[self.last_index].end_address() == self.next_addr {
+            self.last_index += 1;
+        };
+        let area = self.parent.mem_map.memory_areas().get(self.last_index)?;
+        let start = x86_64::align_up(area.start_address(), PAGE_SIZE as u64);
+        let end = x86_64::align_down(area.end_address(), PAGE_SIZE as u64);
+
+        let (mut range, mut ty) = self.address_occupied(start..end);
+
+        if range.contains(&self.parent.low_boundary) {
+            range.end = self.parent.low_boundary;
+            self.next_addr = self.parent.low_boundary;
+            self.hit_low_boundary = true;
+            assert_eq!(
+                ty,
+                MemoryRegionType::Usable,
+                "Bug in {} memory below low_boundary was marked as not-free",
+                core::any::type_name::<Self>()
+            );
+            ty = MemoryRegionType::Usable;
+        } else if range.contains(&self.parent.used_boundary) {
+            range.end = self.parent.used_boundary;
+            self.next_addr = self.parent.used_boundary;
+            self.hit_low_boundary = true;
+            assert_eq!(
+                ty,
+                MemoryRegionType::Usable,
+                "Bug in {} memory below low_boundary was marked as not-free",
+                core::any::type_name::<Self>()
+            );
+            ty = MemoryRegionType::Bootloader;
+        } else {
+            ty = match (self.hit_low_boundary, self.hit_boundary) {
+                (false, false) => MemoryRegionType::Usable, // no boundary hit yet
+                (true, false) => MemoryRegionType::Bootloader, // Occupied by libbatcher allocated data
+                (true, true) => MemoryRegionType::Usable,
+                (false, true) => core::unreachable!(),
+            };
+        }
+
+        self.next_addr = range.end;
+
+        let distinct_region: MemoryAreaType = area.typ().into();
+        Some(MemoryRegion {
+            phys_addr: range.start,
+            size: range.end - range.start,
+            ty,
+            distinct: MemoryRegionDistinct::E820(distinct_region.into()),
+        })
     }
 }
