@@ -7,7 +7,7 @@ use cfg_if::cfg_if;
 
 cfg_if! {
     if #[cfg(any(target_arch = "x86",target_arch = "x86_64"))] {
-        const PAGE_SIZE: usize = 4096;
+        pub const PAGE_SIZE: usize = 4096;
     } else {
         compiler_error!("Page size unknown for arch")
     }
