@@ -3,6 +3,7 @@ pub use ::uefi::table::boot::MemoryAttribute;
 #[cfg(feature = "uefi")]
 pub use ::uefi::table::boot::MemoryType;
 use cfg_if::cfg_if;
+use multiboot2::MemoryAreaType;
 
 cfg_if! {
     if #[cfg(any(target_arch = "x86",target_arch = "x86_64"))] {
@@ -172,8 +173,9 @@ pub enum MemoryMap {
 #[non_exhaustive]
 pub enum MapIter<'a> {
     #[cfg(feature = "uefi")]
-    Uefi(uefi::table::boot::MemoryMapIter<'a>)
     Uefi(uefi::table::boot::MemoryMapIter<'a>),
+    #[cfg(feature = "multiboot2")]
+    Multiboot2(Multiboot2PmMemoryStateIter<'a>),
 }
 
 impl MemoryMap {
@@ -186,6 +188,8 @@ impl MemoryMap {
         match self {
             #[cfg(feature = "uefi")]
             Self::Uefi(u) => MapIter::Uefi(u.entries()),
+            #[cfg(feature = "multiboot2")]
+            Self::Multiboot2(m) => MapIter::Multiboot2(m.iter()),
         }
     }
 
@@ -194,6 +198,7 @@ impl MemoryMap {
         match self {
             #[cfg(feature = "uefi")]
             MemoryMap::Uefi(_) => {} // already sanitized
+            Self::Multiboot2(_) => {} // sanitizes inline
         }
     }
 }
@@ -280,6 +285,32 @@ pub enum MemoryRegionDistinct {
         ty: MemoryType,
         virt_addr: u64,
         attribute: MemoryAttribute,
+    },
+
+    E820(E820Type),
+}
+
+#[repr(u32)]
+#[derive(Clone, Copy, Debug)]
+pub enum E820Type {
+    Usable = 1,
+    Reserved = 2,
+    AcpiReclaimable = 3,
+    AcpiNonVolatileStorage = 4,
+    BadRam = 5,
+    Other(u32),
+}
+
+impl From<MemoryAreaType> for E820Type {
+    fn from(ty: MemoryAreaType) -> Self {
+        match ty {
+            MemoryAreaType::Available => Self::Usable,
+            MemoryAreaType::Reserved => Self::Reserved,
+            MemoryAreaType::AcpiAvailable => Self::AcpiReclaimable,
+            MemoryAreaType::ReservedHibernate => Self::AcpiNonVolatileStorage,
+            MemoryAreaType::Defective => Self::BadRam,
+            MemoryAreaType::Custom(n) => Self::Other(n),
+        }
     }
 }
 
