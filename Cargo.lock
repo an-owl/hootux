@@ -376,6 +376,7 @@ version = "0.1.0"
 dependencies = [
  "cfg-if",
  "multiboot2 0.23.1",
+ "ranges",
  "suffix",
  "uefi",
  "x86_64",
@@ -774,6 +775,12 @@ name = "rand_core"
 version = "0.6.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ec0be4795e2f6a28069bec0b5ff3e2ac9bafc99e6a9a7dc3547996c5c816922c"
+
+[[package]]
+name = "ranges"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "350932f7e8b2d0333d2537f42671a837473576c00e128fbee84c819ea08783b5"
 
 [[package]]
 name = "raw-cpuid"
