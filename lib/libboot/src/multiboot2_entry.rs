@@ -589,18 +589,528 @@ fn throw<T, E: core::fmt::Debug>(st: &mut SysTable, o: Result<T, E>) -> T {
 }
 
 pub(crate) mod pm {
+    /// Causes an UD exception, which either triple faults the CPU or will be caught by the firmware
+    /// and probably kill us.
+    fn pb_panic() -> ! {
+        // SAFETY: Not safe lol that's the point
+        unsafe { core::arch::asm!("ud2", options(noreturn)) }
+    }
+
+    fn pb_unwrap<T>(this: Option<T>) -> T {
+        this.unwrap_or_else(|| pb_panic())
+    }
+
+    fn pb_unwrapr<T, U>(this: Result<T, U>) -> T {
+        this.unwrap_or_else(|_| {
+            // SAFETY: Not safe lol that's the point
+            pb_panic()
+        })
+    }
+
+    use crate::boot_info::{BootInfo, GraphicInfo};
+    use core::arch::global_asm;
+    use suffix::metric;
+    use x86_64::PhysAddr;
+    use x86_64::structures::paging::page_table::PageTableFlags as Flags;
+    use x86_64::structures::paging::{
+        Mapper, PageTable, PhysFrame, Size4KiB, mapper::OffsetPageTable,
+    };
+
     unsafe extern "C" {
         pub fn hatcher_multiboot2_pm_entry() -> !;
     }
     extern "C" fn hatcher_entry_mb2pm(mbi: *mut multiboot2::BootInformationHeader) -> ! {
         // I cant remember if switching to long mode clears the higher half of the register, so clear the higher bits anyway;
-        let mbi =
-            (mbi.addr() & (suffix::metric!(4Gi) - 1)) as *mut multiboot2::BootInformationHeader;
+        let mbi_ptr = (mbi.addr() & (metric!(4Gi) - 1)) as *mut multiboot2::BootInformationHeader;
 
-        panic!()
+        // SAFETY: *mbi_ptr will not be modified and is a valid pointer
+        let mbi = pb_unwrapr(unsafe { multiboot2::BootInformation::load(mbi_ptr) });
+
+        // SAFETY: Memory is identity mapped, so we can cast the phys addr to a reference.
+        let mapper = unsafe {
+            OffsetPageTable::new(
+                &mut *(x86_64::registers::control::Cr3::read()
+                    .0
+                    .start_address()
+                    .as_u64() as usize as *mut PageTable),
+                x86_64::VirtAddr::new(0),
+            )
+        };
+
+        let mut alloc = BasicPhysAllocator::new(&mbi);
+        let knl_l4 = unsafe {
+            &mut *(alloc.alloc_mem(&mapper).start_address().as_u64() as usize as *mut PageTable)
+        };
+        // zero the table
+        for i in knl_l4.iter_mut() {
+            *i = x86_64::structures::paging::page_table::PageTableEntry::new();
+        }
+        // we use the current address offset
+        let mut kernel_context_mapper =
+            unsafe { OffsetPageTable::new(knl_l4, x86_64::VirtAddr::new(0)) };
+        let stack = setup_stack(&mut alloc, &mapper, &mut kernel_context_mapper);
+        map_phys_offset(
+            &mut alloc,
+            &mapper,
+            &mut kernel_context_mapper,
+            &pb_unwrap(mbi.memory_map_tag()),
+        );
+        map_kernel(
+            &mut alloc,
+            &mapper,
+            &mut kernel_context_mapper,
+            pb_unwrap(mbi.elf_sections_tag()),
+        );
+        let graphic = map_framebuffer(&mut alloc, &mapper, &mut kernel_context_mapper, &mbi);
+
+        // SAFETY: The caller must ensure that the MBI is not modified.
+        // `transmute` relies on above assurance
+        let bi = unsafe {
+            setup_boot_info(
+                core::mem::transmute(alloc),
+                &mapper,
+                &mut kernel_context_mapper,
+                mbi,
+                graphic,
+            )
+        };
+
+        super::cx_switch(stack, mapper, bi);
     }
 
-    use core::arch::global_asm;
+    fn setup_stack(
+        mut alloc: &mut BasicPhysAllocator,
+        mapper: &OffsetPageTable,
+        knl_cx_mapper: &mut OffsetPageTable,
+    ) -> crate::common::StackPointer {
+        let req_pages = crate::variables::STACK_SIZE / uefi::table::boot::PAGE_SIZE;
+        let mut tgt_page = x86_64::structures::paging::Page::<Size4KiB>::containing_address(
+            x86_64::VirtAddr::new(crate::variables::STACK_ADDR as u64),
+        );
+        tgt_page -= 1; // this is the pointer for the top of the stack, using the initial tgt_page will disable the guard page
+        for _ in 0..req_pages {
+            let frame = alloc.alloc_mem(&mapper);
+            unsafe {
+                // SAFETY: We are mapping unused memory to a non-live context
+                // The mapped memory cannot be accessed (yet)
+                pb_unwrapr(knl_cx_mapper.map_to(
+                    tgt_page,
+                    frame,
+                    Flags::PRESENT | Flags::WRITABLE | Flags::NO_EXECUTE,
+                    &mut FrameAllocator::new(&mut alloc, &mapper),
+                ))
+                .ignore();
+            }
+            tgt_page -= 1;
+        }
+
+        unsafe {
+            crate::common::StackPointer::new_from_top(
+                (tgt_page + 1).start_address().as_mut_ptr(),
+                req_pages * crate::variables::STACK_SIZE,
+            )
+        }
+    }
+
+    fn map_phys_offset(
+        alloc: &mut BasicPhysAllocator,
+        mapper: &OffsetPageTable,
+        knl_cx_mapper: &mut OffsetPageTable,
+        mem_map: &multiboot2::MemoryMapTag,
+    ) {
+        // locate last byte in physical memory
+        let mut max = 0;
+        for i in mem_map.memory_areas() {
+            max = max.max(i.end_address());
+        }
+
+        let phys_iter = x86_64::structures::paging::frame::PhysFrameRangeInclusive {
+            start: PhysFrame::<x86_64::structures::paging::Size2MiB>::containing_address(
+                PhysAddr::new(0),
+            ),
+            end: PhysFrame::<x86_64::structures::paging::Size2MiB>::containing_address(
+                PhysAddr::new(max),
+            ),
+        };
+
+        let tgt_page = x86_64::structures::paging::page::Page::containing_address(
+            x86_64::VirtAddr::new(crate::variables::PHYS_OFFSET_ADDR as u64),
+        );
+
+        for i in phys_iter {
+            // SAFETY: This is not technically safe because it aliases memory.
+            // This mapper is not life until the context is switched so it is the kernels responsibility to cause UB
+            pb_unwrapr(unsafe {
+                knl_cx_mapper.map_to(
+                    tgt_page,
+                    i,
+                    Flags::PRESENT | Flags::WRITABLE | Flags::NO_EXECUTE | Flags::HUGE_PAGE,
+                    &mut FrameAllocator::new(alloc, mapper),
+                )
+            })
+            .ignore();
+        }
+    }
+
+    fn map_kernel(
+        alloc: &mut BasicPhysAllocator,
+        mapper: &OffsetPageTable,
+        knl_cx_mapper: &mut OffsetPageTable,
+        elf_sections: &multiboot2::ElfSectionsTag,
+    ) {
+        // This iterator iterates over each page that contains data from the kernel binary
+        // Some pages may be repeated
+
+        for i in elf_sections.sections() {
+            let base = x86_64::align_down(i.start_address(), uefi::table::boot::PAGE_SIZE as u64);
+            let top = x86_64::align_up(i.end_address(), uefi::table::boot::PAGE_SIZE as u64);
+
+            let pages = x86_64::structures::paging::frame::PhysFrameRange::<Size4KiB> {
+                start: pb_unwrapr(PhysFrame::from_start_address(PhysAddr::new(base))),
+                end: pb_unwrapr(PhysFrame::from_start_address(PhysAddr::new(top))),
+            };
+
+            let mut flags = Flags::NO_EXECUTE;
+            if i.flags().contains(multiboot2::ElfSectionFlags::WRITABLE) {
+                flags |= Flags::WRITABLE;
+            }
+            if i.flags().contains(multiboot2::ElfSectionFlags::EXECUTABLE) {
+                flags ^= Flags::NO_EXECUTE; // the flag is set this will disable it
+            }
+
+            'page: for page in pages {
+                unsafe {
+                    match knl_cx_mapper.identity_map(
+                        page,
+                        flags,
+                        &mut FrameAllocator::new(alloc, mapper),
+                    ) {
+                        Ok(flush) => flush.ignore(),
+                        Err(x86_64::structures::paging::mapper::MapToError::PageAlreadyMapped(
+                            _,
+                        )) => continue 'page,
+                        Err(_) => pb_panic(), // ParentEntryHugePage is a bug, FrameAllocationFailed is fatal
+                    }
+                }
+            }
+        }
+    }
+
+    /// Maps the framebuffer if its a recognised type, if it's not then it aborts.
+    ///
+    /// On success returns [GraphicInfo]
+    ///
+    /// If the "graphic info" field is present in [BootInfo] then it will be mapped.
+    fn map_framebuffer(
+        mut alloc: &mut BasicPhysAllocator,
+        mapper: &OffsetPageTable,
+        knl_cx_mapper: &mut OffsetPageTable,
+        mbi: &multiboot2::BootInformation,
+    ) -> Option<GraphicInfo> {
+        if let Some(Ok(buff)) = mbi.framebuffer_tag() {
+            if let Ok(multiboot2::FramebufferType::RGB { .. }) = buff.buffer_type() {
+                let len =
+                    (((buff.pitch() + buff.height()) * buff.bpp() as u32) as u64) / u8::BITS as u64;
+                let start = buff.address();
+                // multiplied by bits per pixel so we bets the number of bits which is divided by bits-per-byte
+                let end = buff.address() + len;
+
+                let iter = x86_64::structures::paging::frame::PhysFrameRangeInclusive::<Size4KiB> {
+                    start: PhysFrame::containing_address(PhysAddr::new(start)),
+                    end: PhysFrame::containing_address(PhysAddr::new(end)),
+                };
+
+                for i in iter {
+                    pb_unwrapr(unsafe {
+                        knl_cx_mapper.identity_map(
+                            i,
+                            Flags::PRESENT | Flags::WRITABLE | Flags::NO_CACHE,
+                            &mut FrameAllocator::new(&mut alloc, &mapper),
+                        )
+                    })
+                    .ignore();
+                }
+
+                let pixformat = match buff.buffer_type() {
+                    Ok(multiboot2::FramebufferType::RGB {
+                        red:
+                            multiboot2::FramebufferField {
+                                position: 0,
+                                size: 8,
+                            },
+                        green:
+                            multiboot2::FramebufferField {
+                                position: 8,
+                                size: 8,
+                            },
+                        blue:
+                            multiboot2::FramebufferField {
+                                position: 16,
+                                size: 8,
+                            },
+                    }) => crate::boot_info::PixelFormat::Rgb32,
+                    Ok(multiboot2::FramebufferType::RGB {
+                        red:
+                            multiboot2::FramebufferField {
+                                position: 16,
+                                size: 8,
+                            },
+                        green:
+                            multiboot2::FramebufferField {
+                                position: 8,
+                                size: 8,
+                            },
+                        blue:
+                            multiboot2::FramebufferField {
+                                position: 0,
+                                size: 8,
+                            },
+                    }) => crate::boot_info::PixelFormat::Bgr32,
+                    Ok(multiboot2::FramebufferType::RGB { red, green, blue }) => {
+                        fn set_mask(pix: multiboot2::FramebufferField) -> u32 {
+                            let mut mask = 0;
+                            for i in 0..pix.size {
+                                mask |= 1 << i + pix.position;
+                            }
+                            mask
+                        }
+
+                        crate::boot_info::PixelFormat::ColourMask {
+                            red: set_mask(red),
+                            green: set_mask(green),
+                            blue: set_mask(blue),
+                            reserved: 0,
+                        }
+                    }
+                    Err(_) => core::unreachable!(),
+                    _ => pb_panic(),
+                };
+
+                return Some(GraphicInfo {
+                    width: buff.width() as u64,
+                    height: buff.height() as u64,
+                    stride: buff.pitch() as u64,
+                    pixel_format: pixformat,
+                    framebuffer: unsafe {
+                        core::slice::from_raw_parts_mut(
+                            x86_64::VirtAddr::new(buff.address()).as_mut_ptr(),
+                            len as usize,
+                        )
+                    },
+                });
+            }
+        };
+        None
+    }
+
+    /// Constructs [BootInfo], this requires the [multiboot2::BootInformation] and length (in bytes)
+    /// of the framebuffer when configured.
+    ///
+    /// # Safety
+    ///
+    /// The caller must ensure the MBI is not modified.
+    unsafe fn setup_boot_info(
+        mut alloc: BasicPhysAllocator<'static>,
+        mapper: &OffsetPageTable,
+        knl_cx_mapper: &mut OffsetPageTable,
+        mbi: multiboot2::BootInformation<'static>,
+        graphic_info: Option<GraphicInfo>,
+    ) -> *mut BootInfo {
+        // l4[254], I dont have any particular reason for choosing this addr, apart from it seems out of hte way
+        const BOOT_INFO_ADDR: usize = 0x7F0000000000;
+        // SAFETY: `BOOT_INFO_ADDR` must be aligned
+        let base = unsafe {
+            x86_64::structures::paging::Page::<Size4KiB>::from_start_address_unchecked(
+                x86_64::VirtAddr::new(BOOT_INFO_ADDR as u64),
+            )
+        };
+
+        let frame = alloc.alloc_mem(&mapper);
+
+        unsafe {
+            pb_unwrapr(knl_cx_mapper.map_to(
+                base,
+                frame,
+                Flags::PRESENT | Flags::WRITABLE | Flags::NO_EXECUTE,
+                &mut FrameAllocator::new(&mut alloc, mapper),
+            ))
+            .ignore();
+        };
+
+        if frame.start_address().as_u64() >= metric!(512Gi) {
+            pb_panic()
+        }
+
+        let bootinfo = frame.start_address().as_u64() as usize as *mut BootInfo;
+
+        // SAFETY: All addresses below 512GiB are mapped, this points to the physical address of the previously allocated frame
+        unsafe {
+            bootinfo.write(BootInfo {
+                physical_address_offset: 0,
+                memory_map: Some(crate::boot_info::MemoryMap::Multiboot2(
+                    alloc.to_static_context(),
+                )),
+                optionals: crate::boot_info::BootInfoOptionals {
+                    mb2_info: Some(mbi),
+                    graphic_info,
+                    ..Default::default()
+                },
+            })
+        }
+        bootinfo
+    }
+
+    struct BasicPhysAllocator<'a> {
+        mbi_region: core::ops::Range<u64>,
+        elf_sections: &'a multiboot2::ElfSectionsTag,
+        mem_map: &'a multiboot2::MemoryMapTag,
+        curr_state: u64,
+    }
+
+    impl<'a> BasicPhysAllocator<'a> {
+        fn new(mbi: &'a multiboot2::BootInformation) -> Self {
+            // SAFETY: This is safe, we cast to a raw slice to describe the region not the data within that region.
+
+            let mbi_region = x86_64::align_down(mbi.start_address() as u64, metric!(4Ki))
+                ..x86_64::align_up(mbi.end_address() as u64, metric!(4Ki));
+
+            Self {
+                mbi_region,
+                elf_sections: pb_unwrap(mbi.get_tag()),
+                mem_map: pb_unwrap(mbi.get_tag()),
+                curr_state: 0,
+            }
+        }
+
+        /// Fetches an address from the memory map to be allocated.
+        /// This address may be already occupied,
+        /// the caller must ensure that the memory is not occupied before writing to it.
+        fn fetch_address(&mut self) -> u64 {
+            // iterator which only contains free regions and iterates regions until the region with the next iteration is found
+            let mem_iter = self
+                .mem_map
+                .memory_areas()
+                .iter()
+                .filter(|area| area.typ() == multiboot2::MemoryAreaType::Available)
+                .skip_while(|i: &&multiboot2::MemoryArea| {
+                    (i.start_address()..i.end_address()).contains(&self.curr_state)
+                });
+
+            for i in mem_iter {
+                let aligned_base = x86_64::align_up(i.start_address(), suffix::bin!(4Ki));
+                let aligned_top = x86_64::align_down(i.end_address(), suffix::bin!(4Ki));
+
+                if self.curr_state + suffix::bin!(4Ki) >= aligned_top {
+                    // use next region
+                    continue;
+                } else {
+                    // If area contains curr_state then add 1 page to curr_state and return the old value
+                    // If it doesnt then this area is untouched and cna return the first address
+                    return if (aligned_base..aligned_top).contains(&self.curr_state) {
+                        let r = self.curr_state;
+                        self.curr_state = self.curr_state + suffix::bin!(4Ki);
+                        r
+                    } else {
+                        i.start_address()
+                    };
+                }
+            }
+            pb_panic() // OOM, no other options so shit pant
+        }
+
+        fn alloc_mem(&mut self, mapper: &OffsetPageTable) -> PhysFrame {
+            fn page_range(page_addr: u64, addr: u64) -> bool {
+                (x86_64::align_down(page_addr, suffix::bin!(4Ki))
+                    ..x86_64::align_up(page_addr, suffix::bin!(4Ki)))
+                    .contains(&addr)
+            }
+
+            loop {
+                let addr = self.fetch_address();
+
+                let sp: u64;
+                #[cfg(target_arch = "x86_64")]
+                // SAFETY: Just reads `rsp`
+                // I don't think this can be marked `pure`
+                unsafe {
+                    core::arch::asm!("mov {},rsp", out(reg) sp, options(nomem))
+                }
+                let l4_addr = mapper.level_4_table() as *const _ as usize as u64;
+                let l3_addr = mapper.level_4_table()[0].addr().as_u64();
+                if page_range(sp, addr)
+                    | page_range(l4_addr, addr)
+                    | page_range(l3_addr, addr)
+                    | self.mbi_region.contains(&addr)
+                    | (addr >= metric!(512Gi))
+                // we cannot access memory above 512GiB, that shouldn't be a problem, but we're still going to check
+                {
+                    continue;
+                }
+
+                for i in self.elf_sections.sections() {
+                    let align_start = x86_64::align_down(i.start_address(), suffix::bin!(4Ki));
+                    let align_end = x86_64::align_up(i.end_address(), suffix::bin!(4Ki));
+
+                    if (align_start..align_end).contains(&addr) {
+                        continue;
+                    }
+                }
+
+                return unsafe { PhysFrame::from_start_address_unchecked(PhysAddr::new(addr)) }; // addresses are guaranteed to be page aligned.
+            }
+        }
+
+        /// Casts self into a [crate::boot_info::Multiboot2PmMemoryState] which is used by the kernel
+        /// to initialize the memory map.
+        ///
+        /// # Safety
+        ///
+        /// This fn casts `'a` into `'static` the caller must ensure that the multiboot information struct
+        unsafe fn to_static_context(self) -> crate::boot_info::Multiboot2PmMemoryState {
+            unsafe {
+                crate::boot_info::Multiboot2PmMemoryState {
+                    mbi_region: self.mbi_region,
+                    elf_sections: core::mem::transmute(self.elf_sections),
+                    mem_map: core::mem::transmute(self.mem_map),
+                    used_boundary: self.curr_state,
+                    // SAFETY: This is safe, this is defined in the global_asm block where all variables are dword sized
+                    // This symbol will never be written to once
+                    low_boundary: MEM_MAP_BASE as u64,
+                }
+            }
+        }
+    }
+
+    /// Implements [x86_64::structures::paging::FrameAllocator] because [BasicPhysAllocator]
+    /// requires the live page tables to allocate memory.
+    struct FrameAllocator<'a, 'b, 'c> {
+        alloc: &'a mut BasicPhysAllocator<'c>,
+        mapper: &'b OffsetPageTable<'b>,
+    }
+
+    impl<'a, 'b, 'c> FrameAllocator<'a, 'b, 'c> {
+        fn new(alloc: &'a mut BasicPhysAllocator<'c>, mapper: &'b OffsetPageTable) -> Self {
+            Self { alloc, mapper }
+        }
+    }
+
+    unsafe impl x86_64::structures::paging::FrameAllocator<Size4KiB> for FrameAllocator<'_, '_, '_> {
+        fn allocate_frame(&mut self) -> Option<PhysFrame<Size4KiB>> {
+            Some(self.alloc.alloc_mem(self.mapper))
+        }
+    }
+
+    unsafe extern "C" {
+
+        /// Indicates how many pages were freed when switching to the kernel.
+        ///
+        /// ## SAFETY
+        ///
+        /// This symbol must not be written to after entering long-mode,
+        /// and no references to it may escape libhatcher.
+        #[link_name = "mem_map_base"]
+        static MEM_MAP_BASE: u32;
+    }
 
     global_asm!(
         "
