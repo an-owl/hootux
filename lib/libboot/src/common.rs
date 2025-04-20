@@ -1,4 +1,3 @@
-
 /// This is basically just a fat pointer with a negative len
 #[derive(Debug)]
 pub struct StackPointer {
@@ -7,11 +6,10 @@ pub struct StackPointer {
     ptr: *mut (),
     // This will be needed at some point
     #[allow(dead_code)]
-    len: usize
+    len: usize,
 }
 
 impl StackPointer {
-
     /// Creates self from a pointer and len, where `ptr` points to the bottom of the memory region
     ///
     /// # Panics
@@ -23,15 +21,34 @@ impl StackPointer {
     /// See [core::slice::from_raw_parts_mut] for safety information
     pub unsafe fn new_from_bottom(ptr: *mut (), len: usize) -> Self {
         Self {
-            ptr: unsafe { ptr.byte_offset(len.try_into().expect("Failed to locate stack pointer, len too large")) },
+            ptr: unsafe {
+                ptr.byte_offset(
+                    len.try_into()
+                        .expect("Failed to locate stack pointer, len too large"),
+                )
+            },
             len,
         }
+    }
+
+    /// Creates self from a pointer and len where `ptr` points to the top of the memory region.
+    ///
+    /// # Safety
+    ///
+    /// See [core::slice::from_raw_parts_mut] for safety information
+    pub unsafe fn new_from_top(ptr: *mut (), len: usize) -> Self {
+        Self { ptr, len }
     }
 
     pub fn get_ptr(&self) -> *mut () {
         self.ptr
     }
     pub unsafe fn as_slice(&self) -> *mut [u8] {
-        unsafe { core::slice::from_raw_parts_mut(self.ptr.byte_offset(-(self.len as isize)).cast(), self.len) }
+        unsafe {
+            core::slice::from_raw_parts_mut(
+                self.ptr.byte_offset(-(self.len as isize)).cast(),
+                self.len,
+            )
+        }
     }
 }
