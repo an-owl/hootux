@@ -107,10 +107,12 @@ impl PreInitFrameAlloc {
             }
         };
 
-        let mut iter = self
-            .list
-            .iter()
-            .filter(|p| p.ty == hatcher::boot_info::MemoryRegionType::Usable);
+        // SAFETY: The MBI header will not be modified before this point.
+        let mut iter = unsafe {
+            self.list
+                .iter()
+                .filter(|p| p.ty == hatcher::boot_info::MemoryRegionType::Usable)
+        };
 
         // Loops over memory region list to locate the next region.
         'base: while let Some(i) = iter.next() {
