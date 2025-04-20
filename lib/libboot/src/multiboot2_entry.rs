@@ -1161,7 +1161,7 @@ pub(crate) mod pm {
             .L_get_eip:
             pop ebp
 
-            lea ebp,[entry_pointer_offset] // locates the address of hatcher_multiboot2_pm_entry if we are relocated
+            lea ebp,[ebp+entry_pointer_offset] // locates the address of hatcher_multiboot2_pm_entry if we are relocated
 
             mov ecx,{CR0_INITIAL}
             mov cr0,ecx
