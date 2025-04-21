@@ -626,6 +626,9 @@ pub(crate) mod pm {
         // SAFETY: *mbi_ptr will not be modified and is a valid pointer
         let mbi = pb_unwrapr(unsafe { multiboot2::BootInformation::load(mbi_ptr) });
 
+        //let slice = unsafe { core::slice::from_raw_parts(mbi_ptr as *const u8, 0xb28) };
+        //panic!("{slice:x?}");
+
         // SAFETY: Memory is identity mapped, so we can cast the phys addr to a reference.
         let mapper = unsafe {
             OffsetPageTable::new(
@@ -1327,7 +1330,7 @@ pub(crate) mod pm {
             sub eax,16
             xor edx,edx
             div ecx
-            mov dword ptr [esi+4],eax // write number of mem elements to stack
+            mov dword ptr [esp+4],eax // write number of mem elements to stack
 
             add esi,16 // move esi to first mem map element
 
