@@ -990,16 +990,22 @@ pub(crate) mod pm {
         /// the caller must ensure that the memory is not occupied before writing to it.
         fn fetch_address(&mut self) -> u64 {
             // iterator which only contains free regions and iterates regions until the region with the next iteration is found
-            let mem_iter = self
-                .mem_map
-                .memory_areas()
+            let mem_iter = self.mem_map.memory_areas();
+            let mem_iter = mem_iter
                 .iter()
-                .filter(|area| area.typ() == multiboot2::MemoryAreaType::Available)
-                .skip_while(|i: &&multiboot2::MemoryArea| {
-                    (i.start_address()..i.end_address()).contains(&self.curr_state)
-                });
+                .filter(|area| area.typ() == multiboot2::MemoryAreaType::Available);
 
+            let mut hit_state = false;
             for i in mem_iter {
+                // Skips all iterations before self.curr_state
+                if !hit_state {
+                    if (i.start_address()..i.end_address()).contains(&self.curr_state) {
+                        hit_state = true;
+                    } else {
+                        continue;
+                    }
+                }
+
                 let aligned_base = x86_64::align_up(i.start_address(), suffix::bin!(4Ki));
                 let aligned_top = x86_64::align_down(i.end_address(), suffix::bin!(4Ki));
 
