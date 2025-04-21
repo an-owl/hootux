@@ -1009,18 +1009,25 @@ pub(crate) mod pm {
                 let aligned_base = x86_64::align_up(i.start_address(), suffix::bin!(4Ki));
                 let aligned_top = x86_64::align_down(i.end_address(), suffix::bin!(4Ki));
 
+                // Some "free" regions may be <4K if so we cant use them
+                if aligned_base == aligned_top {
+                    continue;
+                }
+
                 if self.curr_state + suffix::bin!(4Ki) >= aligned_top {
                     // use next region
                     continue;
                 } else {
                     // If area contains curr_state then add 1 page to curr_state and return the old value
-                    // If it doesnt then this area is untouched and cna return the first address
+                    // If it doesnt then this area is untouched and cna return the first address and increment the curr state
                     return if (aligned_base..aligned_top).contains(&self.curr_state) {
                         let r = self.curr_state;
                         self.curr_state = self.curr_state + suffix::bin!(4Ki);
                         r
                     } else {
-                        i.start_address()
+                        let r = i.start_address();
+                        self.curr_state = r + suffix::bin!(4Ki);
+                        r
                     };
                 }
             }
