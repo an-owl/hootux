@@ -1036,9 +1036,8 @@ pub(crate) mod pm {
 
         fn alloc_mem(&mut self, mapper: &OffsetPageTable) -> PhysFrame {
             fn page_range(page_addr: u64, addr: u64) -> bool {
-                (x86_64::align_down(page_addr, suffix::bin!(4Ki))
-                    ..x86_64::align_up(page_addr, suffix::bin!(4Ki)))
-                    .contains(&addr)
+                let r = page_addr..page_addr + suffix::bin!(4Ki);
+                r.contains(&addr)
             }
 
             loop {
@@ -1053,7 +1052,7 @@ pub(crate) mod pm {
                 }
                 let l4_addr = mapper.level_4_table() as *const _ as usize as u64;
                 let l3_addr = mapper.level_4_table()[0].addr().as_u64();
-                if page_range(sp, addr)
+                if page_range(x86_64::align_down(sp, metric!(4Ki)), addr)
                     | page_range(l4_addr, addr)
                     | page_range(l3_addr, addr)
                     | self.mbi_region.contains(&addr)
