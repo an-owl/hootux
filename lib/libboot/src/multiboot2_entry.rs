@@ -688,7 +688,7 @@ pub(crate) mod pm {
     ) -> crate::common::StackPointer {
         let req_pages = crate::variables::STACK_SIZE / uefi::table::boot::PAGE_SIZE;
         let mut tgt_page = x86_64::structures::paging::Page::<Size4KiB>::containing_address(
-            x86_64::VirtAddr::new(crate::variables::STACK_ADDR as u64),
+            x86_64::VirtAddr::new_truncate(crate::variables::STACK_ADDR as u64),
         );
         tgt_page -= 1; // this is the pointer for the top of the stack, using the initial tgt_page will disable the guard page
         for _ in 0..req_pages {
