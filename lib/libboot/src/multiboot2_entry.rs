@@ -778,13 +778,13 @@ pub(crate) mod pm {
             x86_64::VirtAddr::new(crate::variables::PHYS_OFFSET_ADDR as u64),
         );
 
-        for i in phys_iter {
+        for (i, frame) in phys_iter.enumerate() {
             // SAFETY: This is not technically safe because it aliases memory.
             // This mapper is not life until the context is switched so it is the kernels responsibility to cause UB
             pb_unwrapr(unsafe {
                 knl_cx_mapper.map_to(
-                    tgt_page,
-                    i,
+                    tgt_page + i as u64,
+                    frame,
                     Flags::PRESENT | Flags::WRITABLE | Flags::NO_EXECUTE | Flags::HUGE_PAGE,
                     &mut FrameAllocator::new(alloc, mapper),
                 )
