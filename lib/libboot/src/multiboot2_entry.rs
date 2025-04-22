@@ -770,12 +770,12 @@ pub(crate) mod pm {
                 end: pb_unwrapr(PhysFrame::from_start_address(PhysAddr::new(top))),
             };
 
-            let mut flags = Flags::NO_EXECUTE;
+            let mut flags = Flags::PRESENT;
             if i.flags().contains(multiboot2::ElfSectionFlags::WRITABLE) {
                 flags |= Flags::WRITABLE;
             }
-            if i.flags().contains(multiboot2::ElfSectionFlags::EXECUTABLE) {
-                flags ^= Flags::NO_EXECUTE; // the flag is set this will disable it
+            if !i.flags().contains(multiboot2::ElfSectionFlags::EXECUTABLE) {
+                flags |= Flags::NO_EXECUTE; // the flag is set this will disable it
             }
 
             'page: for page in pages {
