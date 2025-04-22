@@ -720,7 +720,16 @@ pub(crate) mod pm {
     ) {
         // locate last byte in physical memory
         let mut max = 0;
-        for i in mem_map.memory_areas() {
+        for i in mem_map.memory_areas().iter().filter(|a| {
+            // ignore reserved and defective memory
+            let ty: multiboot2::MemoryAreaType = a.typ().into();
+            match ty {
+                multiboot2::MemoryAreaType::Reserved | multiboot2::MemoryAreaType::Defective => {
+                    false
+                }
+                _ => true,
+            }
+        }) {
             max = max.max(i.end_address());
         }
 
