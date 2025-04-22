@@ -616,6 +616,27 @@ pub(crate) mod pm {
         Mapper, PageTable, PhysFrame, Size4KiB, mapper::OffsetPageTable,
     };
 
+    #[cfg(feature = "debug-bits")]
+    struct DebugWrite;
+    use core::fmt::Write;
+    #[cfg(feature = "debug-bits")]
+    impl Write for DebugWrite {
+        fn write_str(&mut self, s: &str) -> core::fmt::Result {
+            for b in s.bytes() {
+                unsafe {
+                    core::arch::asm!("
+                mov dx,0x3f8
+                out dx,al
+                ",
+                    in("al") b,
+                    out("dx") _,
+                    options(nomem))
+                };
+            }
+            Ok(())
+        }
+    }
+
     unsafe extern "C" {
         pub fn hatcher_multiboot2_pm_entry() -> !;
     }
@@ -625,6 +646,15 @@ pub(crate) mod pm {
 
         // SAFETY: *mbi_ptr will not be modified and is a valid pointer
         let mbi = pb_unwrapr(unsafe { multiboot2::BootInformation::load(mbi_ptr) });
+
+        #[cfg(feature = "debug-bits")]
+        for i in mbi.elf_sections_tag().unwrap().sections() {
+            core::writeln!(DebugWrite, "{:x?} {}", i, i.name().unwrap()).unwrap();
+        }
+        #[cfg(feature = "debug-bits")]
+        for i in mbi.memory_map_tag().unwrap().memory_areas() {
+            core::writeln!(DebugWrite, "{:x?}", i).unwrap();
+        }
 
         // SAFETY: Memory is identity mapped, so we can cast the phys addr to a reference.
         let mapper = unsafe {
@@ -642,6 +672,7 @@ pub(crate) mod pm {
             &mut *(alloc.alloc_mem(&mapper).start_address().as_u64() as usize as *mut PageTable)
         };
         // zero the table
+        // Note we cant use write(PageTable::new()) due to the limited size of the stack
         for i in knl_l4.iter_mut() {
             *i = x86_64::structures::paging::page_table::PageTableEntry::new();
         }
@@ -1118,7 +1149,15 @@ pub(crate) mod pm {
 
     unsafe impl x86_64::structures::paging::FrameAllocator<Size4KiB> for FrameAllocator<'_, '_, '_> {
         fn allocate_frame(&mut self) -> Option<PhysFrame<Size4KiB>> {
-            Some(self.alloc.alloc_mem(self.mapper))
+            let addr = self.alloc.alloc_mem(self.mapper);
+            #[cfg(feature = "debug-bits")]
+            core::writeln!(
+                DebugWrite,
+                "Allocated: {:#x}",
+                addr.start_address().as_u64()
+            )
+            .unwrap();
+            Some(addr)
         }
     }
 
