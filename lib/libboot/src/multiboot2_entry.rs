@@ -648,18 +648,19 @@ pub(crate) mod pm {
         // we use the current address offset
         let mut kernel_context_mapper =
             unsafe { OffsetPageTable::new(knl_l4, x86_64::VirtAddr::new(0)) };
+
+        map_kernel(
+            &mut alloc,
+            &mapper,
+            &mut kernel_context_mapper,
+            pb_unwrap(mbi.elf_sections_tag()),
+        );
         let stack = setup_stack(&mut alloc, &mapper, &mut kernel_context_mapper);
         map_phys_offset(
             &mut alloc,
             &mapper,
             &mut kernel_context_mapper,
             &pb_unwrap(mbi.memory_map_tag()),
-        );
-        map_kernel(
-            &mut alloc,
-            &mapper,
-            &mut kernel_context_mapper,
-            pb_unwrap(mbi.elf_sections_tag()),
         );
         let graphic = map_framebuffer(&mut alloc, &mapper, &mut kernel_context_mapper, &mbi);
 
