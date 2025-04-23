@@ -855,13 +855,13 @@ pub(crate) mod pm {
         knl_cx_mapper: &mut OffsetPageTable,
         mbi: &multiboot2::BootInformation,
     ) -> Option<GraphicInfo> {
-        if let Some(Ok(buff)) = mbi.framebuffer_tag() {
-            if let Ok(multiboot2::FramebufferType::RGB { .. }) = buff.buffer_type() {
-                let len =
-                    (((buff.pitch() + buff.height()) * buff.bpp() as u32) as u64) / u8::BITS as u64;
-                let start = buff.address();
+        if let Some(Ok(descriptor)) = mbi.framebuffer_tag() {
+            if let Ok(multiboot2::FramebufferType::RGB { .. }) = descriptor.buffer_type() {
+                let len = (descriptor.pitch() * descriptor.height()) as u64;
+
+                let start = descriptor.address();
                 // multiplied by bits per pixel so we bets the number of bits which is divided by bits-per-byte
-                let end = buff.address() + len;
+                let end = descriptor.address() + len;
 
                 let iter = x86_64::structures::paging::frame::PhysFrameRangeInclusive::<Size4KiB> {
                     start: PhysFrame::containing_address(PhysAddr::new(start)),
@@ -879,7 +879,7 @@ pub(crate) mod pm {
                     .ignore();
                 }
 
-                let pixformat = match buff.buffer_type() {
+                let pixformat = match descriptor.buffer_type() {
                     Ok(multiboot2::FramebufferType::RGB {
                         red:
                             multiboot2::FramebufferField {
@@ -935,13 +935,13 @@ pub(crate) mod pm {
                 };
 
                 return Some(GraphicInfo {
-                    width: buff.width() as u64,
-                    height: buff.height() as u64,
-                    stride: buff.pitch() as u64,
+                    width: descriptor.width() as u64,
+                    height: descriptor.height() as u64,
+                    stride: descriptor.pitch() as u64,
                     pixel_format: pixformat,
                     framebuffer: unsafe {
                         core::slice::from_raw_parts_mut(
-                            x86_64::VirtAddr::new(buff.address()).as_mut_ptr(),
+                            x86_64::VirtAddr::new(descriptor.address()).as_mut_ptr(),
                             len as usize,
                         )
                     },
