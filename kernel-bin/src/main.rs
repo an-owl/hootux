@@ -84,6 +84,7 @@ fn kernel_main(b: *mut hatcher::boot_info::BootInfo) -> ! {
             PixelFormat::Rgb32 => panic!("Big endian is a mental disorder"),
             PixelFormat::Bgr32 => graphics::PixelFormat::Bgr4Byte,
             PixelFormat::ColourMask { .. } => panic!("Custom pixel format specified"),
+            _ => panic!("We dont do 24 bit here"),
         };
 
         // SAFETY: This is safe, we need a NonNull above and are just casting it back.
