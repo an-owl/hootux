@@ -707,7 +707,7 @@ pub(crate) mod pm {
             )
         };
 
-        super::cx_switch(stack, mapper, bi);
+        super::cx_switch(stack, kernel_context_mapper, bi);
     }
 
     fn setup_stack(
