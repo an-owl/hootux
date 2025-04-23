@@ -138,11 +138,16 @@ pub struct GraphicInfo {
     pub framebuffer: &'static mut [u8],
 }
 
+#[derive(Clone, Copy, Debug, PartialOrd, PartialEq)]
 pub enum PixelFormat {
     /// Big endian RGB
     Rgb32,
+    /// Big endian RGB with 24bits per pixel
+    Rgb24,
     /// Little endian RGB
     Bgr32,
+    /// Little endian RGB with 24bits per pixel.
+    Bgr24,
     /// Video hardware is using a custom pixel format.
     /// Masks for each channel are given below.
     /// `reserved` contains bits which are ignored.
