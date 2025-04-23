@@ -715,31 +715,38 @@ pub(crate) mod pm {
         mapper: &OffsetPageTable,
         knl_cx_mapper: &mut OffsetPageTable,
     ) -> crate::common::StackPointer {
-        let req_pages = crate::variables::STACK_SIZE / uefi::table::boot::PAGE_SIZE;
-        let mut tgt_page = x86_64::structures::paging::Page::<Size4KiB>::containing_address(
+        // top of stack
+        let origin_page = x86_64::structures::paging::Page::<Size4KiB>::containing_address(
             x86_64::VirtAddr::new_truncate(crate::variables::STACK_ADDR as u64),
         );
-        tgt_page -= 1; // this is the pointer for the top of the stack, using the initial tgt_page will disable the guard page
-        for _ in 0..req_pages {
-            let frame = alloc.alloc_mem(&mapper);
+        let bottom_page = x86_64::structures::paging::Page::<Size4KiB>::containing_address(
+            x86_64::VirtAddr::new_truncate(
+                (crate::variables::STACK_ADDR as u64) - crate::variables::STACK_SIZE as u64,
+            ),
+        );
+
+        let iter = x86_64::structures::paging::page::PageRange {
+            start: bottom_page,
+            end: origin_page,
+        };
+
+        for page in iter {
+            // SAFETY: This is safe because all physical frames are guaranteed to be unused
             unsafe {
-                // SAFETY: We are mapping unused memory to a non-live context
-                // The mapped memory cannot be accessed (yet)
                 pb_unwrapr(knl_cx_mapper.map_to(
-                    tgt_page,
-                    frame,
+                    page,
+                    alloc.alloc_mem(&mapper),
                     Flags::PRESENT | Flags::WRITABLE | Flags::NO_EXECUTE,
                     &mut FrameAllocator::new(&mut alloc, &mapper),
                 ))
                 .ignore();
             }
-            tgt_page -= 1;
         }
 
         unsafe {
             crate::common::StackPointer::new_from_top(
-                (tgt_page + 1).start_address().as_mut_ptr(),
-                req_pages * crate::variables::STACK_SIZE,
+                origin_page.start_address().as_mut_ptr(),
+                crate::variables::STACK_SIZE,
             )
         }
     }
