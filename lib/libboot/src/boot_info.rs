@@ -376,6 +376,10 @@ impl Multiboot2PmMemoryStateIter<'_> {
             let start = x86_64::align_down(i.start_address(), PAGE_SIZE as u64);
             let end = x86_64::align_up(i.end_address(), PAGE_SIZE as u64);
 
+            if start == end {
+                continue;
+            }
+
             let (b, ty) = Self::cmp_range(range, start..end);
             range = b;
             if ty == MemoryRegionType::Bootloader {
