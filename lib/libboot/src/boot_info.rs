@@ -498,7 +498,12 @@ impl<'a> Iterator for Multiboot2PmMemoryStateIter<'a> {
     type Item = MemoryRegion;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.parent.mem_map.memory_areas()[self.last_index].end_address() == self.next_addr {
+        // If the last available page is this region is next_address then this region is depleted
+        if x86_64::align_down(
+            self.parent.mem_map.memory_areas()[self.last_index].end_address(),
+            PAGE_SIZE as u64,
+        ) == self.next_addr
+        {
             self.last_index += 1;
         };
         let area = self.parent.mem_map.memory_areas().get(self.last_index)?;
