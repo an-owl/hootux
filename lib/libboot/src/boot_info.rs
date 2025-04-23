@@ -163,6 +163,15 @@ pub enum PixelFormat {
 #[cfg(feature = "uefi")]
 pub type UefiMemoryMap = uefi::table::boot::MemoryMap<'static>;
 
+/// When this is present the memory map provides an iterator over the existing memory map.
+///
+/// All [MemoryRegion]'s yielded by the iterator describe a page-aligned memory region along with a
+/// type indicating what this memory region contains.
+/// This iterator may not exactly reflect the memory map given to libhatcher.
+/// For this reason the unmodified memory map will also be contained within the [BootInfo].
+/// Regions that are not either [MemoryRegionType::Usable] or [MemoryRegionType::Bootloader] may overlap,
+/// or otherwise not exactly reflect region that it describes. For this reason when attempting to
+/// reclaim memory the exact memory map should be inspected instead of this one.
 #[non_exhaustive]
 pub enum MemoryMap {
     #[cfg(feature = "uefi")]
