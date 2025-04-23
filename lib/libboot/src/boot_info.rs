@@ -520,8 +520,35 @@ impl<'a> Iterator for Multiboot2PmMemoryStateIter<'a> {
             self.last_index += 1;
         };
         let area = self.parent.mem_map.memory_areas().get(self.last_index)?;
-        let start = x86_64::align_up(area.start_address(), PAGE_SIZE as u64);
-        let end = x86_64::align_down(area.end_address(), PAGE_SIZE as u64);
+        let (start, end) = {
+            if multiboot2::MemoryAreaType::from(area.typ()) == multiboot2::MemoryAreaType::Available
+            {
+                let start = x86_64::align_up(area.start_address(), PAGE_SIZE as u64);
+                let end = x86_64::align_down(area.end_address(), PAGE_SIZE as u64);
+                (start, end)
+            } else {
+                let start = x86_64::align_down(area.start_address(), PAGE_SIZE as u64);
+
+                let end = x86_64::align_up(area.end_address(), PAGE_SIZE as u64);
+
+                // we always return the whole region when the current one is not Usable
+                // So unconditionally incrementing it here is fine.
+                self.last_index += 1;
+
+                // Update next address
+                let next_area = self.parent.mem_map.memory_areas()[self.last_index];
+                self.next_addr = x86_64::align_up(next_area.start_address(), PAGE_SIZE as u64);
+
+                return Some(MemoryRegion {
+                    phys_addr: start,
+                    size: end - start,
+                    ty: MemoryRegionType::Unusable(area.typ().into()),
+                    distinct: MemoryRegionDistinct::E820(
+                        multiboot2::MemoryAreaType::from(area.typ()).into(),
+                    ),
+                });
+            }
+        };
 
         let (mut range, mut ty) = self.address_occupied(start..end);
 
