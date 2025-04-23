@@ -14,4 +14,4 @@ pub const STACK_SIZE: usize = 0x100000;
 /// Unused for EFI
 /// Indicates the top of the stack. Note that on x86 targets the indicated address should not be mapped.
 // l4 entry #510 last 4K page is stack guard.
-pub const STACK_ADDR: usize = 0xFFFFFFFFF000;
+pub const STACK_ADDR: usize = 0xFF7FFFFFE000;
