@@ -358,6 +358,7 @@ impl Multiboot2PmMemoryState {
             last_index: 0,
             hit_boundary: false,
             hit_low_boundary: false,
+            low_boundary_counter: 0,
         }
     }
 }
@@ -369,6 +370,8 @@ pub struct Multiboot2PmMemoryStateIter<'a> {
     last_index: usize,
     hit_boundary: bool,
     hit_low_boundary: bool,
+    // Counts returned pages, if this is >= parent.low_boundary then the boundary has been hit.
+    low_boundary_counter: u64,
     // All memory below the low boundary was freed prior to handing control to calling [crate::hatcher_entry]
 }
 
@@ -513,7 +516,11 @@ impl<'a> Iterator for Multiboot2PmMemoryStateIter<'a> {
     fn next(&mut self) -> Option<Self::Item> {
         // If the last available page is this region is next_address then this region is depleted
         if x86_64::align_down(
-            self.parent.mem_map.memory_areas()[self.last_index].end_address(),
+            self.parent
+                .mem_map
+                .memory_areas()
+                .get(self.last_index)?
+                .end_address(),
             PAGE_SIZE as u64,
         ) == self.next_addr
         {
@@ -523,7 +530,8 @@ impl<'a> Iterator for Multiboot2PmMemoryStateIter<'a> {
         let (start, end) = {
             if multiboot2::MemoryAreaType::from(area.typ()) == multiboot2::MemoryAreaType::Available
             {
-                let start = x86_64::align_up(area.start_address(), PAGE_SIZE as u64);
+                let start =
+                    x86_64::align_up(area.start_address().max(self.next_addr), PAGE_SIZE as u64);
                 let end = x86_64::align_down(area.end_address(), PAGE_SIZE as u64);
                 (start, end)
             } else {
@@ -536,8 +544,13 @@ impl<'a> Iterator for Multiboot2PmMemoryStateIter<'a> {
                 self.last_index += 1;
 
                 // Update next address
-                let next_area = self.parent.mem_map.memory_areas()[self.last_index];
-                self.next_addr = x86_64::align_up(next_area.start_address(), PAGE_SIZE as u64);
+                let next_area = self.parent.mem_map.memory_areas().get(self.last_index);
+                self.next_addr = x86_64::align_up(
+                    next_area
+                        .map(|a| a.start_address())
+                        .unwrap_or(area.end_address()),
+                    PAGE_SIZE as u64,
+                );
 
                 return Some(MemoryRegion {
                     phys_addr: start,
@@ -552,9 +565,15 @@ impl<'a> Iterator for Multiboot2PmMemoryStateIter<'a> {
 
         let (mut range, mut ty) = self.address_occupied(start..end);
 
-        if range.contains(&self.parent.low_boundary) {
-            range.end = self.parent.low_boundary;
-            self.next_addr = self.parent.low_boundary;
+        let num_pages = (range.end - range.start) / PAGE_SIZE as u64;
+
+        // Checks if this iteration has crossed the low boundary.
+        if self.low_boundary_counter + num_pages >= self.parent.low_boundary
+            && !self.hit_low_boundary
+        {
+            let pages_until_boundary = self.parent.low_boundary - self.low_boundary_counter;
+            range.end = range.start + (pages_until_boundary * PAGE_SIZE as u64);
+            self.next_addr = range.end;
             self.hit_low_boundary = true;
             assert_eq!(
                 ty,
@@ -563,16 +582,10 @@ impl<'a> Iterator for Multiboot2PmMemoryStateIter<'a> {
                 core::any::type_name::<Self>()
             );
             ty = MemoryRegionType::Usable;
-        } else if range.contains(&self.parent.used_boundary) {
+        } else if range.contains(&self.parent.used_boundary) && !self.hit_boundary {
             range.end = self.parent.used_boundary;
             self.next_addr = self.parent.used_boundary;
-            self.hit_low_boundary = true;
-            assert_eq!(
-                ty,
-                MemoryRegionType::Usable,
-                "Bug in {} memory below low_boundary was marked as not-free",
-                core::any::type_name::<Self>()
-            );
+            self.hit_boundary = true;
             ty = MemoryRegionType::Bootloader;
         } else {
             ty = match (self.hit_low_boundary, self.hit_boundary) {
