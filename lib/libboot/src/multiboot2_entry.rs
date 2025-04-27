@@ -994,7 +994,7 @@ pub(crate) mod pm {
         // SAFETY: All addresses below 512GiB are mapped, this points to the physical address of the previously allocated frame
         unsafe {
             bootinfo.write(BootInfo {
-                physical_address_offset: 0,
+                physical_address_offset: crate::variables::PHYS_OFFSET_ADDR as u64,
                 memory_map: Some(crate::boot_info::MemoryMap::Multiboot2(
                     alloc.to_static_context(),
                 )),
@@ -1135,7 +1135,7 @@ pub(crate) mod pm {
                     used_boundary: self.curr_state,
                     // SAFETY: This is safe, this is defined in the global_asm block where all variables are dword sized
                     // This symbol will never be written to once
-                    low_boundary: MEM_MAP_BASE as u64,
+                    low_boundary: ALLOC_COUNTER as u64,
                 }
             }
         }
@@ -1176,8 +1176,8 @@ pub(crate) mod pm {
         ///
         /// This symbol must not be written to after entering long-mode,
         /// and no references to it may escape libhatcher.
-        #[link_name = "mem_map_base"]
-        static MEM_MAP_BASE: u32;
+        #[link_name = "alloc_counter"]
+        static ALLOC_COUNTER: u32;
     }
 
     global_asm!(
