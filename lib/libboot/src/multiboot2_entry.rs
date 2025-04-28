@@ -978,6 +978,36 @@ pub(crate) mod pm {
             )
         };
 
+        // map MBI
+        {
+            let start = PhysFrame::<Size4KiB>::containing_address(PhysAddr::new(
+                mbi.start_address() as u64,
+            ));
+            let end = PhysFrame::containing_address(PhysAddr::new(mbi.end_address() as u64));
+
+            let iter = x86_64::structures::paging::frame::PhysFrameRangeInclusive { start, end };
+            for i in iter {
+                // SAFETY: This is safe because this does not represent  the current context so cannot alias memory.
+                match unsafe {
+                    knl_cx_mapper.identity_map(
+                        i,
+                        Flags::PRESENT,
+                        &mut FrameAllocator::new(&mut alloc, &mapper),
+                    )
+                } {
+                    Ok(flush) => {
+                        flush.ignore();
+                    }
+                    Err(x86_64::structures::paging::mapper::MapToError::FrameAllocationFailed) => {
+                        // OOM, shit bed
+                        pb_panic()
+                    }
+                    Err(x86_64::structures::paging::mapper::MapToError::PageAlreadyMapped(_))
+                    | Err(x86_64::structures::paging::mapper::MapToError::ParentEntryHugePage) => {}
+                }
+            }
+        }
+
         let frame = alloc.alloc_mem(&mapper);
 
         unsafe {
