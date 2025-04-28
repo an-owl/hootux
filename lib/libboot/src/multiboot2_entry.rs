@@ -934,10 +934,15 @@ pub(crate) mod pm {
                     _ => pb_panic(),
                 };
 
+                // We keep stride as pixels.
+                // We may need to change to keeping stride as bytes
+                let stride =
+                    descriptor.pitch() as u64 / (descriptor.bpp() as u64 / u8::BITS as u64);
+
                 return Some(GraphicInfo {
                     width: descriptor.width() as u64,
                     height: descriptor.height() as u64,
-                    stride: descriptor.pitch() as u64,
+                    stride,
                     pixel_format: pixformat,
                     framebuffer: unsafe {
                         core::slice::from_raw_parts_mut(
