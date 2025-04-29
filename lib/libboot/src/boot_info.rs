@@ -379,11 +379,17 @@ pub struct Multiboot2PmMemoryStateIter<'a> {
 impl Multiboot2PmMemoryStateIter<'_> {
     /// Determines if `range` is occupied and if so how much.
     ///
-    /// The range bounds should be page aligned.
+    /// The range bounds must be page aligned.
     fn address_occupied(
         &self,
         mut range: core::ops::Range<u64>,
     ) -> (core::ops::Range<u64>, MemoryRegionType) {
+        match Self::cmp_range(range.clone(), self.parent.mbi_region.clone()) {
+            (r, MemoryRegionType::Usable) => range = r,
+            (r, MemoryRegionType::Bootloader) => return (r, MemoryRegionType::Bootloader),
+            _ => unreachable!(), // other variants are not returned
+        }
+
         for i in self.parent.elf_sections.sections() {
             let start = x86_64::align_down(i.start_address(), PAGE_SIZE as u64);
             let end = x86_64::align_up(i.end_address(), PAGE_SIZE as u64);
@@ -463,7 +469,7 @@ impl Multiboot2PmMemoryStateIter<'_> {
                 let end = if self_shorter {
                     memory_range.end_bound().map(|e| *e)
                 } else {
-                    memory_range.end_bound().map(|e| *e)
+                    cmp_range.end_bound().map(|e| *e)
                 };
 
                 (
@@ -587,7 +593,8 @@ impl<'a> Iterator for Multiboot2PmMemoryStateIter<'a> {
             self.next_addr = self.parent.used_boundary;
             self.hit_boundary = true;
             ty = MemoryRegionType::Bootloader;
-        } else {
+        } else if ty == MemoryRegionType::Usable {
+            // this must be skipped if region is unusable
             ty = match (self.hit_low_boundary, self.hit_boundary) {
                 (false, false) => MemoryRegionType::Usable, // no boundary hit yet
                 (true, false) => MemoryRegionType::Bootloader, // Occupied by libbatcher allocated data
