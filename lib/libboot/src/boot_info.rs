@@ -408,6 +408,12 @@ impl Multiboot2PmMemoryStateIter<'_> {
         Self::cmp_range(range, self.parent.mbi_region.clone())
     }
 
+    /// Compares `memory_range` against `cmp_range` which determines whether the given ranges overlap.
+    ///
+    /// This returns a range from beginning at `memory_range.start` and continues until it intersects
+    /// one of the range boundaries. This returns [MemoryRegionType::Bootloader] then the returned
+    /// range is within `cmp_range`, else it will be [MemoryRegionType::Usable].
+    /// This fn will not return other [MemoryRegionType] variants.
     fn cmp_range(
         memory_range: core::ops::Range<u64>,
         cmp_range: core::ops::Range<u64>,
