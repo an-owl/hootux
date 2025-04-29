@@ -18,9 +18,10 @@ seems stupid.
 ### Dependencies
 
 - Rust is required to build this project. Installation instructions can be found [here](https://rustup.rs/)
-- `llvm-tools-preview` and `rust-src` is required to build the bootloader and can be installed using
-  `rustup component add llvm-tools-preview rust-src`
-- all other dependencies will be fetched by cargo during the build process.
+- A nightly version of the rust compiler is required which can be installed with `rustup toolchain install nightly`
+- The `x86_64-unknown-none` nightly target must be installed which can be done with `rustup +nightly target add
+  x86_64-unknown-none
+- NASM is required to compile some assembly.
 
 ### Actually building
 
