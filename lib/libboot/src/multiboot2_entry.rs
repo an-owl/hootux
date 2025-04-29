@@ -1192,13 +1192,6 @@ pub(crate) mod pm {
     unsafe impl x86_64::structures::paging::FrameAllocator<Size4KiB> for FrameAllocator<'_, '_, '_> {
         fn allocate_frame(&mut self) -> Option<PhysFrame<Size4KiB>> {
             let addr = self.alloc.alloc_mem(self.mapper);
-            #[cfg(feature = "debug-bits")]
-            core::writeln!(
-                DebugWrite,
-                "Allocated: {:#x}",
-                addr.start_address().as_u64()
-            )
-            .unwrap();
             Some(addr)
         }
     }
