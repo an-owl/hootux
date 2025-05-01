@@ -24,7 +24,9 @@ pub(super) unsafe fn start_mp(tls_data: *const u8, tls_file_size: usize, tls_dat
         .get_acpi()
         .find_table::<acpi::madt::Madt>()
         .unwrap();
+
     let cpus = acpi
+        .get()
         .parse_interrupt_model_in(alloc::alloc::Global)
         .unwrap()
         .1

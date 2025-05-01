@@ -23,7 +23,7 @@ linked_list_allocator = "0.9.1"
 crossbeam-queue = { version = "0.3.3", default-features = false, features = ["alloc"] }
 conquer-once = { version = "0.3.2", default-features = false }
 futures-util = { version = "0.3.19", default-features = false, features = ["alloc", "sink"] }
-acpi = "5.0.0"
+acpi = "5.2.0"
 x86_msr = { path = "../x86_msr" }
 raw-cpuid = "11.2.0"
 log = "0.4.22"
@@ -39,6 +39,7 @@ hatcher = { path = "../lib/libboot", features = ["uefi", "multiboot2"] }
 cast_trait_object = "0.1.4"
 
 slablike = { git = "https://github.com/an-owl/slablike-allocator" }
+suffix = { git = "https://github.com/an-owl/suffix" }
 
 [[test]]
 name = "should_panic"

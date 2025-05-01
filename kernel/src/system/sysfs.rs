@@ -37,7 +37,7 @@ impl SysFsRoot {
         &self.firmware
     }
 
-    pub fn setup_ioapic(&self, madt: &acpi::madt::Madt) {
+    pub fn setup_ioapic(&self, madt: core::pin::Pin<&acpi::madt::Madt>) {
         self.systemctl.ioapic.cfg_madt(madt)
     }
 }

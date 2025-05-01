@@ -4,11 +4,12 @@ version = 4
 
 [[package]]
 name = "acpi"
-version = "5.0.0"
+version = "5.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e248409195304021f61b39ba2628f62a45a3abf6119669d44b3399d60eabe4c3"
+checksum = "94476c7ef97af4c4d998b3f422c1b01d5211aad57c80ed200baf148d1f1efab6"
 dependencies = [
  "bit_field",
+ "bitflags 2.8.0",
  "log",
 ]
 
@@ -430,6 +431,7 @@ dependencies = [
  "raw-cpuid 11.2.0",
  "slablike",
  "spin 0.9.8",
+ "suffix",
  "uart_16550",
  "volatile",
  "x86_64",
@@ -449,7 +451,6 @@ dependencies = [
  "hootux",
  "kernel-proc-macro",
  "log",
- "multiboot2 0.20.0",
  "multiboot2-header",
  "x86_64",
 ]

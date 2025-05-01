@@ -69,7 +69,7 @@ impl GlobalIoApic {
         Err(())
     }
 
-    pub(super) fn cfg_madt(&self, madt: &acpi::madt::Madt) {
+    pub(super) fn cfg_madt(&self, madt: core::pin::Pin<&acpi::madt::Madt>) {
         let parsed = madt
             .parse_interrupt_model_in(alloc::alloc::Global)
             .expect("Failed to parse interrupt model")
