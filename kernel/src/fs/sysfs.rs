@@ -20,6 +20,7 @@ use futures_util::FutureExt;
 use futures_util::future::BoxFuture;
 
 pub mod bus;
+pub mod firmware;
 
 static mut SYSFS_ROOT: Option<SysFsRoot> = None;
 
@@ -45,6 +46,7 @@ pub fn init() {
 #[kernel_proc_macro::impl_sysfs_root_traits]
 pub struct SysFsRoot {
     pub bus: bus::SysfsBus, // inode 1
+    pub firmware: firmware::FirmwareContainer,
 }
 
 impl SysFsRoot {
@@ -63,6 +65,7 @@ impl SysFsRoot {
         unsafe {
             let dupe = Self {
                 bus: bus::SysfsBus::init(),
+                firmware: firmware::FirmwareContainer::new(),
             };
             assert!(
                 core::ptr::replace(&raw mut SYSFS_ROOT, Some(dupe.clone()),).is_none(),

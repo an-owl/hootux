@@ -128,7 +128,7 @@ fn kernel_main(b: *mut hatcher::boot_info::BootInfo) -> ! {
     }
 
     let madt = acpi_tables.find_table::<acpi::madt::Madt>().unwrap();
-    system::sysfs::get_sysfs().setup_ioapic(&madt);
+    system::sysfs::get_sysfs().setup_ioapic(madt.get());
 
     log::info!("Scanning pcie bus");
 
@@ -136,6 +136,10 @@ fn kernel_main(b: *mut hatcher::boot_info::BootInfo) -> ! {
     let pci_cfg = acpi::mcfg::PciConfigRegions::new(&acpi_tables).unwrap();
     system::pci::enumerate_devices(&pci_cfg);
     log::info!("Bus scan complete");
+
+    for i in acpi_tables.headers() {
+        log::debug!("{i:?}")
+    }
 
     // SAFETY: MP not initialized, race conditions are impossible.gugui
     unsafe { system::sysfs::get_sysfs().firmware().cfg_acpi(acpi_tables) }
