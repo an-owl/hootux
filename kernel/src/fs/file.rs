@@ -558,6 +558,7 @@ pub enum FileType {
     MountPoint,
     Directory,
     CharDev,
+    Native,
     BlkDev,
 }
 
