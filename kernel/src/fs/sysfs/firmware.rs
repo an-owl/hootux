@@ -13,13 +13,13 @@ const FIRMWARE_INODE_ID: u64 = 2;
 
 #[file]
 pub struct FirmwareContainer {
-    acpi: spin::Mutex<Option<acpi::Tables>>, // ACPI may not be present and should be initialized separately
+    acpi: alloc::sync::Arc<spin::Mutex<Option<acpi::Tables>>>, // ACPI may not be present and should be initialized separately
 }
 
 impl FirmwareContainer {
-    pub const fn new() -> FirmwareContainer {
+    pub fn new() -> FirmwareContainer {
         Self {
-            acpi: spin::Mutex::new(None),
+            acpi: alloc::sync::Arc::new(spin::Mutex::new(None)),
         }
     }
 
@@ -27,7 +27,10 @@ impl FirmwareContainer {
     pub fn load_acpi(&self, rsdt: ::acpi::AcpiTables<crate::system::acpi::AcpiGrabber>) {
         let t = acpi::Tables::new(rsdt);
         core::mem::replace(&mut *self.acpi.lock(), Some(t))
-            .expect("sysfs-acpi module already initialized");
+            .ok_or(())
+            .map(|_| ())
+            .expect_err("sysfs-acpi module already initialized");
+        assert!(self.acpi.lock().is_some())
     }
 }
 
@@ -103,7 +106,7 @@ impl Clone for FirmwareContainer {
         // The mutex here is exclusively here for the Option and not the Table.
         // So we can freely clone the mutex
         Self {
-            acpi: spin::Mutex::new(self.acpi.lock().clone()),
+            acpi: self.acpi.clone(),
         }
     }
 }
