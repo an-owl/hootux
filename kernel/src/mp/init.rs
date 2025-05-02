@@ -19,13 +19,26 @@ static AP_INIT_COUNT: core::sync::atomic::AtomicU32 = core::sync::atomic::Atomic
 #[cfg(feature = "multiprocessing")]
 // in theory if this fn is not present then nothing else in this module is either.
 pub(super) unsafe fn start_mp(tls_data: *const u8, tls_file_size: usize, tls_data_size: usize) {
-    let acpi = crate::system::sysfs::get_sysfs()
-        .firmware()
-        .get_acpi()
-        .find_table::<acpi::madt::Madt>()
-        .unwrap();
+    use crate::fs::file::*;
+    let fw = crate::fs::sysfs::SysFsRoot::new().firmware.clone();
+    // gets the file object for acpi then cast it from SysfsFile > SysFsDir > Any > concrete.
+    // Guaranteed to succeed
+    let Ok(acpi) = crate::fs::sysfs::SysfsDirectory::get_file(&fw, "acpi").map(|fo| {
+        fo.into_sysfs_dir()
+            .unwrap()
+            .as_any()
+            .downcast::<crate::fs::sysfs::firmware::acpi::Tables>()
+            .unwrap()
+    }) else {
+        log::warn!("No ACPI present aborting MP startup");
+        return;
+    };
+    let Ok(madt) = acpi.get_table::<acpi::madt::Madt>() else {
+        log::warn!("No MADT present aborting MP startup");
+        return;
+    };
 
-    let cpus = acpi
+    let cpus = madt
         .get()
         .parse_interrupt_model_in(alloc::alloc::Global)
         .unwrap()

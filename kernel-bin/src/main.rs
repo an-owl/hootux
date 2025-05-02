@@ -124,26 +124,25 @@ fn kernel_main(b: *mut hatcher::boot_info::BootInfo) -> ! {
     {
         let tmpfs = fs::tmpfs::TmpFsRoot::new();
         fs::init_fs(tmpfs);
-        fs::sysfs::init()
+        fs::sysfs::init();
+        fs::sysfs::SysFsRoot::new().firmware.load_acpi(acpi_tables);
     }
 
-    let madt = acpi_tables.find_table::<acpi::madt::Madt>().unwrap();
-    system::sysfs::get_sysfs().setup_ioapic(madt.get());
+    if let Some(madt) = fs::sysfs::firmware::acpi::get_table::<acpi::madt::Madt>() {
+        system::sysfs::get_sysfs().setup_ioapic((&*madt).get());
+    } else {
+        log::warn!("No MADT was found unable to setup IOAPIC")
+    }
 
     log::info!("Scanning pcie bus");
 
     // move into task
-    let pci_cfg = acpi::mcfg::PciConfigRegions::new(&acpi_tables).unwrap();
-    system::pci::enumerate_devices(&pci_cfg);
+    if let Some(mcfg) = fs::sysfs::firmware::acpi::get_table::<acpi::mcfg::Mcfg>() {
+        system::pci::enumerate_devices(mcfg.entries());
+    }
     log::info!("Bus scan complete");
 
-    for i in acpi_tables.headers() {
-        log::debug!("{i:?}")
-    }
-
-    // SAFETY: MP not initialized, race conditions are impossible.gugui
-    unsafe { system::sysfs::get_sysfs().firmware().cfg_acpi(acpi_tables) }
-
+    // SAFETY: MP not initialized, race conditions are impossible.
     #[cfg(test)]
     test_main();
 
