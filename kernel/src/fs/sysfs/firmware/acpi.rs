@@ -137,7 +137,7 @@ cast_trait_object::impl_dyn_cast!(for <T> SdtFile<T> as File where {T: 'static +
 cast_trait_object::impl_dyn_cast!(for <T> SdtFile<T> as File where {T: 'static + AcpiTable} => crate::fs::device::DeviceFile);
 
 #[derive(Clone)]
-struct SdtFile<T: acpi::AcpiTable + 'static> {
+pub struct SdtFile<T: acpi::AcpiTable + 'static> {
     table: alloc::sync::Arc<acpi::PhysicalMapping<crate::system::acpi::AcpiGrabber, T>>,
 }
 
@@ -188,3 +188,14 @@ impl<T: acpi::AcpiTable + 'static> Deref for SdtFile<T> {
 // SAFETY: We do not allow any mutation of the tables
 unsafe impl<T: acpi::AcpiTable + 'static> Sync for SdtFile<T> {}
 unsafe impl<T: acpi::AcpiTable + 'static> Send for SdtFile<T> {}
+
+/// Convenience fn to fetch an ACPI table from the sysfs
+pub fn get_table<T: acpi::AcpiTable>() -> Option<SdtFile<T>> {
+    let fw = &crate::fs::sysfs::SysFsRoot::new().firmware;
+    let acpi = super::super::SysfsDirectory::get_file(fw, "acpi").ok()?;
+    let tables = acpi
+        .into_sysfs_dir()
+        .map(|fo| fo.as_any().downcast::<Tables>().unwrap())
+        .unwrap();
+    tables.get_table().ok()
+}
