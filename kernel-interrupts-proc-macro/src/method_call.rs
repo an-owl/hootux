@@ -99,8 +99,8 @@ impl ToTokens for MethodDefinition {
         let ts = quote::quote! {
             (#ident_str, fn_args) =>  {
                 let ::core::option::Option::Some((#(#arg_names),*)) = <dyn ::core::any::Any>::downcast_ref(fn_args) else { return ::alloc::boxed::Box::pin(async {::core::result::Result::Err(::hootux::fs::IoError::InvalidData)})};
-                ::core::convert::From::from(#exec_line)
-            },
+                ::alloc::boxed::Box::pin(async {::core::result::Result::Ok(::hootux::fs::file::MethodRc::wrap(#exec_line.await))})
+            }
         };
 
         tokens.extend(ts);
