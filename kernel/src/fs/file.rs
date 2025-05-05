@@ -44,6 +44,7 @@ use core::fmt::Formatter;
 use core::future::Future;
 use futures_util::FutureExt;
 pub use kernel_proc_macro::file;
+pub use kernel_proc_macro::impl_method_call;
 
 self::file_derive_debug!(File);
 
@@ -144,6 +145,28 @@ pub trait File:
         None
     }
 
+    /// This method allows implementations to export methods which are not provided by the file traits.
+    ///
+    /// This is done by matching `method` against the method name and downcasting `argumenta` into
+    /// their concrete types.
+    /// As you may expect this has limitations, any methods must take self as `&self` and all
+    /// arguments must be taken as a reference.
+    ///
+    /// When a method takes no arguments a reference to the unit type should be given.
+    ///
+    /// The return value of the method will be cast into a [MethodRc] which will contain a
+    /// `Box<dyn Any>` which can be downcast into the expected return type.
+    ///
+    /// Implementations must return either `Ok(future)` or `Err(IoError::NotPresent)`
+    ///
+    /// ## Implementation notes
+    ///
+    /// A macro [impl_method_call] is provided to implement this method.
+    /// It's syntax is `$method_arg:ident, $method_args:ident => $( $(async)? $method_name:ident($($method_arg:ty),*))`
+    /// This will match `$method_arg` to determine which method will be called, downcast `$method_args`
+    /// into their concrete types and call `Self::$method_name` with the downcast arguments.
+    ///
+    /// Methods must be async, of they arent specifying `async $method_name..` will place the method in an async block.
     fn method_call<'f, 'a: 'f, 'b: 'f>(
         &'b self,
         method: &str,

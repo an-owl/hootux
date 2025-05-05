@@ -207,6 +207,8 @@ mod file {
 }
 
 mod method_call;
+
+/// See `hootux::fs::file::File::method_call` for information.
 #[proc_macro]
 pub fn impl_method_call(input: TokenStream) -> TokenStream {
     let parsed: method_call::MethodCallParser = syn::parse_macro_input!(input);
