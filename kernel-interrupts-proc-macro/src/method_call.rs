@@ -1,4 +1,3 @@
-use proc_macro2::TokenStream;
 use quote::ToTokens;
 use syn::{Token, parenthesized};
 
@@ -85,7 +84,6 @@ impl ToTokens for MethodDefinition {
         for i in 0..self.args.len() {
             arg_names.push(quote::format_ident!("arg{}", i));
         }
-        let args_ty = &self.args;
 
         let mut exec_line = quote::quote! {Self::#ident #generics(self,#(#arg_names),*)};
         println!("{exec_line:?}");
