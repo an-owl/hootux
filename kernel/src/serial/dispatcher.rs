@@ -152,6 +152,18 @@ impl SerialDispatcher {
 
         Ok(())
     }
+
+    fn set_mode(
+        &self,
+        data_bits: &super::DataBits,
+        parity: &super::Parity,
+        stop_bits: &super::StopBits,
+    ) {
+        let Some(real) = self.inner.real.upgrade() else {
+            return;
+        };
+        real.set_char_mode(*data_bits, *parity, *stop_bits)
+    }
 }
 
 impl File for SerialDispatcher {
@@ -178,6 +190,16 @@ impl File for SerialDispatcher {
     fn len(&self) -> crate::fs::IoResult<u64> {
         // We make no expectation that any data is present
         async { Ok(0) }.boxed()
+    }
+
+    fn method_call<'f, 'a: 'f, 'b: 'f>(
+        &'b self,
+        method: &str,
+        arguments: &'a (dyn Any + Send + Sync + 'a),
+    ) -> IoResult<'f, MethodRc> {
+        kernel_proc_macro::impl_method_call!(method, arguments =>
+            async set_mode(super::DataBits, super::Parity, super::StopBits)
+        )
     }
 
     /// 0. Frame control see [FrameCtlBFile]
