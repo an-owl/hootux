@@ -1,4 +1,5 @@
 use proc_macro::TokenStream;
+use quote::ToTokens;
 
 mod interrupts;
 
@@ -128,8 +129,8 @@ pub fn file(_: TokenStream, input: TokenStream) -> TokenStream {
 
 mod file {
     use quote::TokenStreamExt;
-    use syn::parse::ParseStream;
     use syn::ItemStruct;
+    use syn::parse::ParseStream;
 
     pub struct FileCastImplParser {
         ty: ItemStruct,
@@ -203,4 +204,12 @@ mod file {
             println!("{}", quote::quote!(#f).to_string());
         }
     }
+}
+
+mod method_call;
+#[proc_macro]
+pub fn impl_method_call(input: TokenStream) -> TokenStream {
+    let parsed: method_call::MethodCallParser = syn::parse_macro_input!(input);
+    let ts = parsed.to_token_stream();
+    ts.into()
 }

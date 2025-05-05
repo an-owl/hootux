@@ -143,6 +143,14 @@ pub trait File:
     fn b_file(&self, _id: u64) -> Option<alloc::boxed::Box<dyn File>> {
         None
     }
+
+    fn method_call<'f, 'a: 'f, 'b: 'f>(
+        &'b self,
+        method: &str,
+        arguments: &'a (dyn core::any::Any + Send + Sync + 'a),
+    ) -> IoResult<'f, MethodRc> {
+        async { Err(IoError::NotPresent) }.boxed()
+    }
 }
 
 self::file_derive_debug!(NormalFile<u8>);
@@ -884,5 +892,17 @@ impl FileHandle {
 
     pub fn metadata(&self) -> FileMetadata {
         self.file_metadata.clone()
+    }
+}
+
+pub struct MethodRc {
+    pub inner: alloc::boxed::Box<dyn core::any::Any>,
+}
+
+impl MethodRc {
+    pub fn wrap<T: core::any::Any + Send + Sync + 'static>(t: T) -> Self {
+        Self {
+            inner: alloc::boxed::Box::new(t),
+        }
     }
 }
