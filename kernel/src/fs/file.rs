@@ -404,19 +404,19 @@ pub trait Directory: File {
 
 #[macro_export]
 macro_rules! cast_file {
-    ($ty:path: $id:expr_2021) => {{
+    ($ty:path: $id:expr) => {{
         let t: ::core::result::Result<
             ::alloc::boxed::Box<dyn $ty>,
             alloc::boxed::Box<dyn $crate::fs::file::File>,
         > = cast_trait_object::DynCastExt::dyn_cast($id);
         t
     }};
-    (& $ty:path: $id:expr_2021) => {{
+    (& $ty:path: $id:expr) => {{
         let t: ::core::result::Result<&dyn $ty, &dyn $crate::fs::file::File> =
             cast_trait_object::DynCastExt::dyn_cast($id);
         t
     }};
-    (mut $ty:path: $id:expr_2021) => {{
+    (mut $ty:path: $id:expr) => {{
         let t: ::core::result::Result<&mut dyn $ty, &mut dyn $crate::fs::file::File> =
             cast_trait_object::DynCastExt::dyn_cast($id);
         t
@@ -441,7 +441,7 @@ pub(crate) use file_derive_debug;
 /// Casts a file into a directory regardless of whether it is a filesystem or a directory
 // todo integrate this into cast_file
 macro_rules! cast_dir {
-    ($file:expr_2021) => {
+    ($file:expr) => {
         match cast_file!($crate::fs::file::Directory: $file) {
             Ok(dir) => Ok(dir),
             Err(file) => {
