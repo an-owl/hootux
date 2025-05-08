@@ -148,6 +148,9 @@ fn kernel_main(b: *mut hatcher::boot_info::BootInfo) -> ! {
 
     init_static_drivers();
 
+    #[cfg(feature = "kernel-shell")]
+    task::run_task(Box::pin(start_kshell()));
+
     // Should this be started before or after init_static_drivers()?
     {
         let tls = b.get_tls_template().unwrap();
@@ -210,4 +213,39 @@ fn test_runner(tests: &[&dyn Testable]) {
 #[panic_handler]
 fn panic(info: &core::panic::PanicInfo) -> ! {
     test_panic(info)
+}
+
+#[cfg(feature = "kernel-shell")]
+async fn start_kshell() -> task::TaskResult {
+    const SHELL_INPUT: &str = "/sys/bus/uart/uart0";
+    hootux::task::util::sleep(1000).await;
+
+    let dir = cast_file!(fs::file::Directory: fs::get_vfs().open("/sys/bus/uart").await.unwrap())
+        .unwrap();
+    for i in dir.file_list().await.unwrap() {
+        log::info!("{i}");
+    }
+
+    let file = match hootux::fs::get_vfs().open(SHELL_INPUT).await {
+        Ok(file) => file,
+        Err(e) => {
+            log::error!("Failed to open {SHELL_INPUT}: {:?}", e);
+            return task::TaskResult::Error;
+        }
+    };
+
+    let Ok(fifo) = cast_file!(fs::device::Fifo<u8>: file) else {
+        log::error!("{SHELL_INPUT} is not a FIFO");
+        return task::TaskResult::Error;
+    };
+    match kshell::KernelShell::new(&*fifo) {
+        Ok(kshell) => kshell.run().await,
+        Err(e) => {
+            log::error!(
+                "Failed to spawn kshell, {SHELL_INPUT} returned {:?} when opened",
+                e
+            );
+            task::TaskResult::Error
+        }
+    }
 }

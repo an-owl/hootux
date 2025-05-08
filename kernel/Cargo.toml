@@ -10,6 +10,7 @@ default = ["write-combining", "multiprocessing"]
 alloc-debug-serial = [] #This is for debugging the memory allocator
 multiprocessing = []
 write-combining = []
+kernel-shell = []
 
 [dependencies]
 volatile = "0.4.6"

@@ -27,6 +27,9 @@ pub mod fs;
 pub mod gdt;
 pub mod graphics;
 pub mod interrupts;
+
+#[cfg(feature = "kernel-shell")]
+pub mod kshell;
 pub mod llvm;
 mod logger;
 pub mod mem;
