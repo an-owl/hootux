@@ -7,7 +7,7 @@ use crate::fs::{IoError, get_vfs};
 use crate::mem::dma::{DmaClaimable, DmaGuard};
 use crate::println;
 use alloc::boxed::Box;
-use alloc::string::ToString;
+use alloc::string::{String, ToString};
 use alloc::vec;
 use alloc::vec::Vec;
 use futures_util::FutureExt;
@@ -44,7 +44,7 @@ impl KernelShell {
         let mut buffer = vec![0u8; 256];
         loop {
             if self.buffered.is_empty() {
-                crate::print!("KSHELL# ")
+                crate::print!("\nKSHELL# ")
             }
             // indicates if we should run the command or wait for more data
             let mut exec = false;
@@ -165,6 +165,12 @@ impl Command for BuiltinCommands {
                     log::error!("ls: file was not a directory");
                     return CommandResult::Err;
                 };
+
+                let Ok(len) = dir.len().await else {
+                    log::error!("ls: Failed to open {path}");
+                    return CommandResult::Err;
+                };
+                println!("{path}: {len} files",);
                 let Ok(iter) = dir.file_list().await else {
                     log::error!("ls: Failed to enumerate files");
                     return CommandResult::Err;
