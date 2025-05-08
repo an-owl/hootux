@@ -14,7 +14,7 @@ x86_64 = "0.15.2"
 acpi = "5.2.0"
 
 multiboot2-header = "0.4.0"
-hatcher = { path = "../lib/libboot", features = ["uefi", "multiboot2", "debug-bits", "define-start"] }
+hatcher = { path = "../lib/libboot", features = ["uefi", "multiboot2", "define-start"] }
 kernel-proc-macro = { path = "../kernel-interrupts-proc-macro" }
 cast_trait_object = "0.1.3"
 futures-util = { version = "0.3.28", default-features = false, features = ["alloc", "sink"] }
