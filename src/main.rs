@@ -588,7 +588,9 @@ fn build_kernel() -> Option<std::path::PathBuf> {
     cargo
         .arg("build")
         .arg("--message-format=json")
-        .arg("--target=x86_64-unknown-none");
+        .arg("--target=x86_64-unknown-none")
+        .arg("--features")
+        .arg("kernel-shell");
     cargo.stdout(Stdio::piped());
 
     let mut child = cargo.spawn().ok()?;
