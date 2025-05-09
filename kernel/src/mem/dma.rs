@@ -326,6 +326,18 @@ impl<T: DmaClaimable> DmaClaimed<T> {
     }
 }
 
+/// Bogus buffer for when no data IO occurs.
+///
+/// This is just intended for optimisation.
+pub struct BogusBuffer;
+
+unsafe impl DmaTarget for BogusBuffer {
+    fn as_mut(&mut self) -> *mut [u8] {
+        // SAFETY: Always empty
+        unsafe { core::slice::from_raw_parts_mut(core::ptr::null_mut(), 0) }
+    }
+}
+
 #[test_case]
 #[cfg(test)]
 fn test_dmaguard() {
