@@ -6,6 +6,7 @@
 use crate::fs::{IoError, get_vfs};
 use crate::mem::dma::{DmaClaimable, DmaGuard};
 use crate::println;
+use crate::task::TaskResult;
 use alloc::boxed::Box;
 use alloc::string::{String, ToString};
 use alloc::vec;
@@ -21,6 +22,7 @@ pub struct KernelShell {
 }
 
 impl KernelShell {
+    const BUFER_SIZE: usize = 256;
     /// Constructs a new instance of Self using the stream from `input` as the input.
     ///
     /// On failure this will return the error returned when opening `input`
@@ -41,7 +43,7 @@ impl KernelShell {
     }
 
     pub async fn run(mut self) -> hootux::task::TaskResult {
-        let mut buffer = vec![0u8; 256];
+        let mut buffer = vec![0u8; Self::BUFER_SIZE];
         loop {
             if self.buffered.is_empty() {
                 crate::print!("\nKSHELL# ")
@@ -56,28 +58,48 @@ impl KernelShell {
                     let t = claimed.unwrap().ok().unwrap().unwrap();
                     // echo
                     // Note: this allocates a string if `t` is not utf8
-                    crate::print!("{}", alloc::string::String::from_utf8_lossy(&t[..len]));
+                    crate::print!("{}", String::from_utf8_lossy(&t[..len]));
                     buffer = t;
 
-                    // We may receive data before the command string has been fully received
-                    if buffer.contains(&b'\n') {
-                        exec = true;
-                    }
-                    // If we filled the buffer or the internal buffer contains data
-                    if len == buffer.len() || self.buffered.len() != 0 {
-                        self.buffered.extend_from_slice(&buffer);
-                    }
-
-                    if exec {
-                        let b = if self.buffered.len() == 0 {
-                            &buffer[..len - 1]
-                        } else {
-                            &self.buffered[..self.buffered.len() - 1]
-                        };
-                        if self.parse_input(b).await {
-                            return hootux::task::TaskResult::ExitedNormally;
+                    match len {
+                        0 => {} // ???
+                        1 => {
+                            // unbuffered handling.
+                            self.buffered.extend_from_slice(&buffer[..len]);
+                            if buffer[0] == b'\n' {
+                                // if newline char run command
+                                if self
+                                    .parse_input(&self.buffered[..self.buffered.len() - 1])
+                                    .await
+                                {
+                                    return TaskResult::ExitedNormally;
+                                }
+                            };
                         }
-                        self.buffered.clear();
+                        Self::BUFER_SIZE if buffer.last() != Some(&b'\n') => {
+                            self.buffered.extend_from_slice(&buffer[..len]);
+                        }
+                        _ => {
+                            let use_buffer = if buffer.last() == Some(&b'\n') {
+                                &buffer[..len - 1] // strip trailing newline
+                            } else {
+                                &buffer[..len]
+                            };
+                            // buffered run command
+                            if self.buffered.len() != 0 {
+                                self.buffered.extend_from_slice(&use_buffer);
+                                if self
+                                    .parse_input(&self.buffered[..self.buffered.len()])
+                                    .await
+                                {
+                                    return TaskResult::ExitedNormally;
+                                }
+                            } else {
+                                if self.parse_input(&use_buffer).await {
+                                    return TaskResult::ExitedNormally;
+                                }
+                            }
+                        }
                     }
                 }
                 Err((IoError::EndOfFile, out, ..)) => {
@@ -96,6 +118,7 @@ impl KernelShell {
     /// Passes the input to the command-sets.
     ///
     /// If the input string starts with "exit" then this will indicate the shell should stop.
+    #[must_use]
     async fn parse_input(&self, buffer: &[u8]) -> bool {
         let args = match str::from_utf8(buffer) {
             Ok(args) => args,
@@ -133,6 +156,7 @@ trait Command: Send + Sync {
     fn execute<'a>(&self, args: &'a str) -> BoxFuture<'a, CommandResult>;
 }
 
+#[derive(Debug, Clone, Copy, Ord, PartialOrd, Eq, PartialEq)]
 enum CommandResult {
     /// Command completed without error
     Ok,
