@@ -516,6 +516,7 @@ impl MajorNum {
     /// Lowest value for publicly available Major numbers.
     /// All values below this must be documented in the [Self]'s doc comment.
     const PUBLIC_BASE: usize = 2;
+    pub(crate) const SYSFS_NUM: Self = MajorNum(1);
 
     pub fn new() -> Self {
         static NEXT: core::sync::atomic::AtomicUsize =
