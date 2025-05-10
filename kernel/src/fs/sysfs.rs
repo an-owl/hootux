@@ -12,12 +12,18 @@
 use super::device::*;
 use super::file::*;
 use crate::fs::{IoError, IoResult};
+use crate::mem::dma::DmaBuff;
 use alloc::boxed::Box;
 use alloc::string::String;
+use alloc::vec;
 use alloc::vec::Vec;
 use cast_trait_object::DynCastExt;
+use core::any::Any;
+use core::pin::Pin;
+use core::task::{Context, Poll, Waker};
 use futures_util::FutureExt;
 use futures_util::future::BoxFuture;
+use kernel_proc_macro::SysfsDir;
 
 pub mod bus;
 pub mod firmware;
@@ -205,5 +211,140 @@ where
 
     fn remove<'f, 'a: 'f, 'b: 'f>(&'a self, name: &'b str) -> IoResult<'f, ()> {
         async { SysfsDirectory::remove(self, name) }.boxed()
+    }
+}
+
+#[file]
+struct EventFile {
+    slaves: spin::Mutex<Vec<alloc::sync::Arc<EventWait>>>,
+}
+
+impl EventFile {
+    const fn new() -> Self {
+        Self {
+            slaves: spin::Mutex::new(vec![]),
+        }
+    }
+
+    fn notify_event(&self) {
+        let slaves = core::mem::replace(&mut *self.slaves.lock(), Vec::new());
+        for slave in slaves {
+            slave.ready()
+        }
+    }
+}
+
+impl File for EventFile {
+    fn file_type(&self) -> FileType {
+        FileType::NormalFile
+    }
+
+    fn block_size(&self) -> u64 {
+        1
+    }
+
+    fn device(&self) -> DevID {
+        DevID::new(crate::fs::vfs::MajorNum::SYSFS_NUM, 0)
+    }
+
+    fn clone_file(&self) -> Box<dyn File> {
+        Box::new(Self)
+    }
+
+    fn id(&self) -> u64 {
+        u64::MAX
+    }
+
+    fn len(&self) -> IoResult<u64> {
+        async { Ok(0) }
+    }
+
+    fn method_call<'f, 'a: 'f, 'b: 'f>(
+        &'b self,
+        method: &str,
+        arguments: &'a (dyn Any + Send + Sync + 'a),
+    ) -> IoResult<'f, MethodRc> {
+        impl_method_call!(method, arguments => notify_event())
+    }
+}
+
+impl SysfsFile for EventFile {}
+
+impl NormalFile for EventFile {
+    fn len_chars(&self) -> IoResult<u64> {
+        async { Ok(0) }
+    }
+
+    fn file_lock<'a>(
+        self: Box<Self>,
+    ) -> BoxFuture<'a, Result<LockedFile<u8>, (IoError, Box<dyn NormalFile<u8>>)>> {
+        async { Err((IoError::NotSupported, self)) }.boxed()
+    }
+
+    unsafe fn unlock_unsafe(&self) -> IoResult<()> {
+        async { Err(IoError::Exclusive) }.boxed()
+    }
+}
+
+impl Write<u8> for EventFile {
+    fn write<'f, 'a: 'f, 'b: 'f>(
+        &'a self,
+        _: u64,
+        buff: DmaBuff<'b>,
+    ) -> BoxFuture<'f, Result<(DmaBuff<'b>, usize), (IoError, DmaBuff<'b>, usize)>> {
+        async {
+            self.read(0, Box::new(hootux::mem::dma::BogusBuffer))
+                .await
+                .unwrap()?;
+            Ok((buff, 0))
+        }
+    }
+}
+
+impl Read<u8> for EventFile {
+    fn read<'f, 'a: 'f, 'b: 'f>(
+        &'a self,
+        _: u64,
+        buff: DmaBuff<'b>,
+    ) -> BoxFuture<'f, Result<(DmaBuff<'b>, usize), (IoError, DmaBuff<'b>, usize)>> {
+        async {
+            let event_fut = alloc::sync::Arc::new(EventWait::new());
+            self.slaves.lock().push(event_fut.clone());
+            event_fut.await
+        }
+    }
+}
+
+struct EventWait {
+    ready: core::sync::atomic::AtomicBool,
+    waker: futures_util::task::AtomicWaker,
+}
+
+impl EventWait {
+    const fn new() -> Self {
+        Self {
+            ready: core::sync::atomic::AtomicBool::new(false),
+            waker: futures_util::task::AtomicWaker::new(),
+        }
+    }
+
+    fn ready(&self) {
+        self.ready.store(true, atomic::Ordering::Relaxed); // this might be fine as relaxed?
+        core::sync::atomic::fence(atomic::Ordering::Release);
+        self.waker.wake();
+    }
+}
+
+impl Future for EventWait {
+    type Output = (); // we never ever return error
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        match self.ready.load(atomic::Ordering::Acquire) {
+            true => Poll::Ready(()),
+            false => {
+                self.waker.register(cx.waker());
+                Poll::Pending
+            }
+        }
     }
 }
