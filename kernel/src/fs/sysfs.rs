@@ -20,10 +20,9 @@ use alloc::vec::Vec;
 use cast_trait_object::DynCastExt;
 use core::any::Any;
 use core::pin::Pin;
-use core::task::{Context, Poll, Waker};
+use core::task::{Context, Poll};
 use futures_util::FutureExt;
 use futures_util::future::BoxFuture;
-use kernel_proc_macro::SysfsDir;
 
 pub mod bus;
 pub mod firmware;
@@ -214,15 +213,23 @@ where
     }
 }
 
+/// This file is used to notify tasks when an event within the sysfs occurs.
+///
+/// When either [Read::read] is called this file will return only after an event occurs and the
+/// function will return no data.
+///
+/// sysfs modules that use this file must call [Self::notify_event] in order to notify waiting tasks
+/// of an event. [Self::notify_event] is exported via [File::method_call].
 #[file]
-struct EventFile {
-    slaves: spin::Mutex<Vec<alloc::sync::Arc<EventWait>>>,
+#[derive(Clone)]
+pub struct EventFile {
+    slaves: alloc::sync::Arc<spin::Mutex<Vec<alloc::sync::Arc<EventWait>>>>,
 }
 
 impl EventFile {
-    const fn new() -> Self {
+    fn new() -> Self {
         Self {
-            slaves: spin::Mutex::new(vec![]),
+            slaves: alloc::sync::Arc::new(spin::Mutex::new(vec![])),
         }
     }
 
@@ -248,7 +255,7 @@ impl File for EventFile {
     }
 
     fn clone_file(&self) -> Box<dyn File> {
-        Box::new(Self)
+        Box::new(self.clone())
     }
 
     fn id(&self) -> u64 {
@@ -256,7 +263,7 @@ impl File for EventFile {
     }
 
     fn len(&self) -> IoResult<u64> {
-        async { Ok(0) }
+        async { Ok(0) }.boxed()
     }
 
     fn method_call<'f, 'a: 'f, 'b: 'f>(
@@ -264,7 +271,7 @@ impl File for EventFile {
         method: &str,
         arguments: &'a (dyn Any + Send + Sync + 'a),
     ) -> IoResult<'f, MethodRc> {
-        impl_method_call!(method, arguments => notify_event())
+        impl_method_call!(method, arguments => async notify_event())
     }
 }
 
@@ -272,13 +279,13 @@ impl SysfsFile for EventFile {}
 
 impl NormalFile for EventFile {
     fn len_chars(&self) -> IoResult<u64> {
-        async { Ok(0) }
+        async { Ok(0) }.boxed()
     }
 
     fn file_lock<'a>(
         self: Box<Self>,
     ) -> BoxFuture<'a, Result<LockedFile<u8>, (IoError, Box<dyn NormalFile<u8>>)>> {
-        async { Err((IoError::NotSupported, self)) }.boxed()
+        async { Err((IoError::NotSupported, self as Box<dyn NormalFile<u8>>)) }.boxed()
     }
 
     unsafe fn unlock_unsafe(&self) -> IoResult<()> {
@@ -292,12 +299,7 @@ impl Write<u8> for EventFile {
         _: u64,
         buff: DmaBuff<'b>,
     ) -> BoxFuture<'f, Result<(DmaBuff<'b>, usize), (IoError, DmaBuff<'b>, usize)>> {
-        async {
-            self.read(0, Box::new(hootux::mem::dma::BogusBuffer))
-                .await
-                .unwrap()?;
-            Ok((buff, 0))
-        }
+        self.read(0, buff) // read will yield the same return value as write
     }
 }
 
@@ -310,8 +312,10 @@ impl Read<u8> for EventFile {
         async {
             let event_fut = alloc::sync::Arc::new(EventWait::new());
             self.slaves.lock().push(event_fut.clone());
-            event_fut.await
+            EventWaitNewType(event_fut).await;
+            Ok((buff, 0))
         }
+        .boxed()
     }
 }
 
@@ -335,16 +339,18 @@ impl EventWait {
     }
 }
 
-impl Future for EventWait {
+impl Future for EventWaitNewType {
     type Output = (); // we never ever return error
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        match self.ready.load(atomic::Ordering::Acquire) {
+        match self.0.ready.load(atomic::Ordering::Acquire) {
             true => Poll::Ready(()),
             false => {
-                self.waker.register(cx.waker());
+                self.0.waker.register(cx.waker());
                 Poll::Pending
             }
         }
     }
 }
+
+struct EventWaitNewType(alloc::sync::Arc<EventWait>);
