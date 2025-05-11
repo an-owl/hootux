@@ -29,7 +29,7 @@ impl<T: ?Sized> SingleArc<T> {
             .weak_count
             .fetch_add(1, atomic::Ordering::Acquire);
         Weak {
-            inner: Some(self.inner),
+            inner: spin::Mutex::new(Some(self.inner)),
         }
     }
 
@@ -85,23 +85,26 @@ impl<T: ?Sized> From<Box<T>> for SingleArc<T> {
 
 /// Weak reference to the inner data.
 pub struct Weak<T: ?Sized> {
-    inner: Option<*mut SingleArcInner<T>>,
+    inner: spin::Mutex<Option<*mut SingleArcInner<T>>>,
 }
 
 impl<T: ?Sized> Default for Weak<T> {
     fn default() -> Self {
-        Self { inner: None }
+        Self {
+            inner: spin::Mutex::new(None),
+        }
     }
 }
 
 impl<T: ?Sized> Drop for Weak<T> {
     fn drop(&mut self) {
         unsafe {
-            if let Some(inner) = self.inner {
-                // SAFETY: self.inner is synchronized and owned by self, so we can access it freely
-                let inner = &mut *inner;
-                inner.weak_count.fetch_sub(1, atomic::Ordering::Release);
-                if inner.weak_count.load(atomic::Ordering::Relaxed) == 0
+            if let Some(inner) = self.inner.lock().as_mut() {
+                // SAFETY: We dont modify any non-atomics unless we guarantee that weare the only
+                // reference to the data.
+                let inner = &mut **inner;
+                // Check that we are the only weak and if the Strong was dropped.
+                if inner.weak_count.fetch_sub(1, atomic::Ordering::Acquire) == 1
                     && (&*inner.data.get()).is_none()
                 {
                     // SAFETY: this is constructed using Box::new and leaked, we just undo it here
@@ -122,23 +125,40 @@ impl<T: ?Sized> Weak<T> {
         // SAFETY: All data in here is guaranteed to be accessible.
         // SAFETY: This *could* cause a use after free. But its up to the caller to actually
         // validate that the returned pointer is valid.
-        let t = unsafe { &mut *(&**self.inner.as_ref()?).data.get() };
-        if let Some(t) = t {
-            let data: &mut T = &mut *t;
-            Some(data)
-        } else {
-            None
-        }
+        let l = self.inner.lock();
+        let arc = unsafe { &mut **l.as_ref()? };
+        let data = unsafe { &mut *arc.data.get() };
+        Some(&mut **data.as_mut()? as *mut T)
     }
 
-    /// Drops any inner references freeing memory is possible.
+    /// Drops any inner references, freeing memory is possible.
     pub fn clear(&mut self) {
         core::mem::take(self);
     }
 
     /// Sets self to point to the data contained within `strong`.
-    pub fn set(&mut self, strong: &SingleArc<T>) {
-        *self = strong.downgrade()
+    ///
+    /// returns whether this was successfully rebound.
+    pub fn set(&mut self, strong: &SingleArc<T>) -> Result<(), ()> {
+        if self.inner.lock().is_none() {
+            // If self is unbound
+            *self = strong.downgrade();
+            return Ok(());
+        }
+        let l = self.inner.lock();
+        if let Some(ref inner) = *l {
+            // else if the data has been dropped
+            let inner = unsafe { &mut **inner };
+            let data = unsafe { &mut *inner.data.get() };
+            if data.is_none() {
+                drop(l);
+                // drop data and bind self
+                self.clear();
+                *self = strong.downgrade();
+                return Ok(());
+            }
+        }
+        Err(())
     }
 
     /// Compares the inner value with `other` if they have the same address then this returns true.
