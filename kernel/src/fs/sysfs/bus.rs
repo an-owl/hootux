@@ -3,7 +3,9 @@ use super::{SysfsDirectory, SysfsFile};
 use crate::fs::IoError;
 use crate::fs::file::*;
 use alloc::boxed::Box;
-use alloc::string::ToString;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+use core::any::Any;
 use futures_util::FutureExt;
 use hootux::fs::vfs::MajorNum;
 
@@ -39,13 +41,58 @@ impl IndexExtension
  */
 
 /// Sysfs-Bus File-object.
-#[derive(Clone, kernel_proc_macro::SysfsDir)]
+#[derive(Clone)]
 #[kernel_proc_macro::file]
 pub struct SysfsBus {
-    #[index(
-        keys=self.files.read().keys().map(|s| s.to_string()),
-        getter={self.files.read().get(name).map(|d| Box::new(d.clone()) as Box<dyn SysfsFile>).ok_or(IoError::NotPresent)})]
+    event: super::EventFile,
     files: alloc::sync::Arc<spin::RwLock<alloc::collections::BTreeMap<&'static str, UniqueBus>>>,
+}
+
+impl SysfsBus {
+    const STATIC_FILES_NAMES: &'static [&'static str] = &["event"];
+}
+
+impl SysfsDirectory for SysfsBus {
+    fn entries(&self) -> usize {
+        self.files.read().keys().len() + Self::STATIC_FILES_NAMES.len()
+    }
+
+    fn file_list(&self) -> Vec<String> {
+        self.files
+            .read()
+            .keys()
+            .map(|s| s.to_string())
+            .chain(Self::STATIC_FILES_NAMES.into_iter().map(|s| s.to_string()))
+            .collect()
+    }
+
+    fn get_file(&self, name: &str) -> Result<Box<dyn SysfsFile>, IoError> {
+        match name {
+            "event" => Ok(Box::new(self.event.clone())),
+            _ => self
+                .files
+                .read()
+                .get(name)
+                .map(|d| Box::new(d.clone()) as Box<dyn SysfsFile>)
+                .ok_or(IoError::NotSupported),
+        }
+    }
+
+    fn store(&self, _: &str, _: Box<dyn SysfsFile>) -> Result<(), IoError> {
+        log::warn!(
+            "called <{0} as SysfsDirectory>::store() use {0}::insert_device() instead",
+            core::any::type_name::<Self>()
+        );
+        Err(IoError::NotSupported)
+    }
+
+    fn remove(&self, _: &str) -> Result<(), IoError> {
+        Err(IoError::NotSupported)
+    }
+
+    fn as_any(self: Box<Self>) -> Box<dyn Any> {
+        self
+    }
 }
 
 impl File for SysfsBus {
@@ -77,6 +124,7 @@ impl File for SysfsBus {
 impl SysfsBus {
     pub(super) fn init() -> Self {
         Self {
+            event: super::EventFile::new(),
             files: alloc::sync::Arc::new(spin::RwLock::new(alloc::collections::BTreeMap::new())),
         }
     }
@@ -106,6 +154,7 @@ impl SysfsBus {
         };
 
         SysfsDirectory::store(bus, &*s, super::clone_sysfs_file(&*device)).unwrap();
+        self.event.notify_event()
     }
 }
 
