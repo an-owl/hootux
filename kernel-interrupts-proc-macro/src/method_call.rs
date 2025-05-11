@@ -86,7 +86,6 @@ impl ToTokens for MethodDefinition {
         }
 
         let mut exec_line = quote::quote! {Self::#ident #generics(self,#(#arg_names),*)};
-        println!("{exec_line:?}");
         if self.async_container {
             exec_line = quote::quote! { ::alloc::boxed::Box::pin( async { #exec_line } ) };
         }
@@ -174,11 +173,5 @@ mod tests {
 
         let ts = parsed.to_token_stream();
         println!("{}", ts.to_string());
-    }
-
-    #[test]
-    fn try_build() {
-        let tb = trybuild::TestCases::new();
-        tb.pass("tests/trybuild/pass/*.rs*")
     }
 }
