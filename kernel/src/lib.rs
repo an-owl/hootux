@@ -39,7 +39,7 @@ pub mod serial;
 pub mod system;
 pub mod task;
 pub mod time;
-mod util;
+pub mod util;
 
 pub use util::{ToWritableBuffer, WriteableBuffer};
 
