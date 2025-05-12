@@ -503,13 +503,11 @@ impl NormalFile<u8> for TmpFsNormalFile {
         async {
             let b = self.accessor.clone();
             let mut l = b.lock.lock();
-            if let None = l.get() {
-                let s = crate::util::SingleArc::new(self as Box<dyn NormalFile<u8>>);
-                l.set(&s);
-
+            let s = crate::util::SingleArc::new(self as Box<dyn NormalFile<u8>>);
+            if let Ok(()) = l.set(&s) {
                 Ok(LockedFile::new_from_lock(s))
             } else {
-                Err((IoError::Exclusive, self as Box<dyn NormalFile<u8>>))
+                Err((IoError::Exclusive, s.take()))
             }
         }
         .boxed()
