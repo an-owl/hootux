@@ -14,6 +14,7 @@ use core::{cmp::Ordering, fmt::Formatter};
 
 pub mod capabilities;
 mod configuration;
+mod file;
 mod scan;
 
 lazy_static::lazy_static! {
@@ -66,6 +67,15 @@ impl DeviceAddress {
 
     pub fn as_int(&self) -> (u16, u8, u8, u8) {
         (self.segment_group, self.bus, self.device, self.function)
+    }
+
+    /// returns a 34bit integer containing the full PCI-function address.
+    fn as_int_joined(&self) -> u64 {
+        let mut n = self.function as u64; // 4 bit
+        n |= (self.device as u64) << 4; // 5 bit
+        n |= (self.bus as u64) << 9; // 8 bit
+        n |= (self.segment_group as u64) << 18; // 16 bit
+        n
     }
 
     /// Creates a new `Self` with a the function number set to `f_num`
