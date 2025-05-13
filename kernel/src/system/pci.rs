@@ -17,18 +17,6 @@ mod configuration;
 mod file;
 mod scan;
 
-lazy_static::lazy_static! {
-    static ref PCI_DEVICES: HwMap<DeviceAddress,alloc::sync::Arc<spin::Mutex<DeviceControl>>> = HwMap::new();
-}
-
-/// Attempts to lock a device function returns None is the device does not exist fr is not found.
-#[allow(dead_code)] // this will be used at some point
-pub(crate) fn get_function(
-    addr: DeviceAddress,
-) -> Option<alloc::sync::Arc<spin::Mutex<DeviceControl>>> {
-    Some(PCI_DEVICES.get(&addr)?.clone())
-}
-
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct DeviceAddress {
     segment_group: u16,
