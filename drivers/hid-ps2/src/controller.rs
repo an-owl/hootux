@@ -881,7 +881,7 @@ pub(crate) mod file {
                         };
 
                         let (mut b, len) = IoFuture::new(lock, buff, self.port).await;
-                        let b_ref = unsafe { &mut *DmaTarget::as_mut(&mut *b) };
+                        let b_ref = unsafe { &mut *DmaTarget::data_ptr(&mut *b) };
 
                         let mut decoder = pc_keyboard::EventDecoder::new(
                             pc_keyboard::layouts::Us104Key,
@@ -930,7 +930,7 @@ pub(crate) mod file {
                     }
                     2 => {
                         let ctl = self.ctl.lock().await;
-                        let t = DmaTarget::as_mut(&mut *buff);
+                        let t = DmaTarget::data_ptr(&mut *buff);
                         let mut b = unsafe { hootux::ToWritableBuffer::writable(&mut *t) };
 
                         let port = match self.port {
@@ -969,7 +969,7 @@ pub(crate) mod file {
             port_num: PortNum,
         ) -> Self {
             let tgt = alloc::sync::Arc::new((
-                DmaTarget::as_mut(&mut *buff),
+                DmaTarget::data_ptr(&mut *buff),
                 core::sync::atomic::AtomicUsize::new(0),
             ));
 

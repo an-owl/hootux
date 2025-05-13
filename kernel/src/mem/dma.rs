@@ -56,7 +56,7 @@ impl<T, C> DmaGuard<T, C> {
 }
 
 unsafe impl<T: 'static + Send, A: Allocator + Send + 'static> DmaTarget for DmaGuard<T, Vec<T, A>> {
-    fn as_mut(&mut self) -> *mut [u8] {
+    fn data_ptr(&mut self) -> *mut [u8] {
         let ptr = self.inner.as_mut_ptr();
         let elem_size = size_of::<T>();
         unsafe { core::slice::from_raw_parts_mut(ptr as *mut _, elem_size * self.inner.len()) }
@@ -64,7 +64,7 @@ unsafe impl<T: 'static + Send, A: Allocator + Send + 'static> DmaTarget for DmaG
 }
 
 unsafe impl<T: Send + 'static, A: Send + Allocator + 'static> DmaTarget for DmaGuard<T, Box<T, A>> {
-    fn as_mut(&mut self) -> *mut [u8] {
+    fn data_ptr(&mut self) -> *mut [u8] {
         let ptr = self.inner.as_mut() as *mut T as *mut u8;
         let elem_size = size_of::<T>();
         unsafe { core::slice::from_raw_parts_mut(ptr, elem_size) }
@@ -72,7 +72,7 @@ unsafe impl<T: Send + 'static, A: Send + Allocator + 'static> DmaTarget for DmaG
 }
 
 unsafe impl<'a, T: Send> DmaTarget for DmaGuard<T, &'a mut T> {
-    fn as_mut(&mut self) -> *mut [u8] {
+    fn data_ptr(&mut self) -> *mut [u8] {
         unsafe {
             core::slice::from_raw_parts_mut(
                 self.inner.deref_mut() as *mut _ as *mut u8,
@@ -103,7 +103,7 @@ where
         }
 
         let b = Box::new(BorrowedDmaGuard {
-            data: self.as_mut(),
+            data: self.data_ptr(),
             lock: self.lock.as_ref().unwrap().clone(), // Guaranteed to be some
             _phantom: PhantomData,
         });
@@ -126,7 +126,7 @@ struct BorrowedDmaGuard<'a> {
 unsafe impl Send for BorrowedDmaGuard<'_> {}
 
 unsafe impl DmaTarget for BorrowedDmaGuard<'_> {
-    fn as_mut(&mut self) -> *mut [u8] {
+    fn data_ptr(&mut self) -> *mut [u8] {
         self.data
     }
 }
@@ -164,7 +164,7 @@ impl<'a, T: ?Sized + Send> StackDmaGuard<'a, T> {
 }
 
 unsafe impl<T: ?Sized + Send> DmaTarget for StackDmaGuard<'_, T> {
-    fn as_mut(&mut self) -> *mut [u8] {
+    fn data_ptr(&mut self) -> *mut [u8] {
         let count = core::mem::size_of_val(self.data);
         let ptr = self.data as *mut _ as *mut u8;
         unsafe { core::slice::from_raw_parts_mut(ptr, count) }
@@ -252,14 +252,14 @@ pub struct PhysicalRegionDescription {
 ///
 /// # Safety
 ///
-/// An implementor must ensure that the DMA region returned by [Self::as_mut] is owned by `self` is treated as volatile.
+/// An implementor must ensure that the DMA region returned by [Self::data_ptr] is owned by `self` is treated as volatile.
 pub unsafe trait DmaTarget: Send {
     /// Returns a pointer into the target buffer.
     ///
     /// # Safety
     ///
     /// Except exclusive access, implementations must ensure that the returned pointer can be safely cast to a reference.
-    fn as_mut(&mut self) -> *mut [u8];
+    fn data_ptr(&mut self) -> *mut [u8];
 
     /// Returns a Physical region describer.
     ///
@@ -267,10 +267,14 @@ pub unsafe trait DmaTarget: Send {
     /// accesses to `self` while the PRD is alive.
     fn prd(&mut self) -> PhysicalRegionDescriber {
         PhysicalRegionDescriber {
-            data: self.as_mut(),
+            data: self.data_ptr(),
             next: 0,
             phantom: Default::default(),
         }
+    }
+
+    fn len(&mut self) -> usize {
+        self.data_ptr().len()
     }
 }
 
@@ -332,7 +336,7 @@ impl<T: DmaClaimable> DmaClaimed<T> {
 pub struct BogusBuffer;
 
 unsafe impl DmaTarget for BogusBuffer {
-    fn as_mut(&mut self) -> *mut [u8] {
+    fn data_ptr(&mut self) -> *mut [u8] {
         // SAFETY: Always empty
         unsafe { core::slice::from_raw_parts_mut(core::ptr::null_mut(), 0) }
     }
@@ -367,7 +371,7 @@ fn test_dmaguard() {
     b.resize(0x4000, 0u8);
     let mut g = mem::dma::DmaGuard::from(b);
     let t = g.claim();
-    let helper = g.as_mut();
+    let helper = g.data_ptr();
 
     drop(g);
 

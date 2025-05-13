@@ -555,7 +555,7 @@ impl Read<u8> for TmpFsNormalFile {
         mut dbuff: DmaBuff<'b>,
     ) -> BoxFuture<'f, Result<(DmaBuff<'b>, usize), (IoError, DmaBuff<'b>, usize)>> {
         async move {
-            let buff = unsafe { &mut *DmaTarget::as_mut(&mut *dbuff) };
+            let buff = unsafe { &mut *DmaTarget::data_ptr(&mut *dbuff) };
             if !self.accessor.lock.lock().cmp_t(self) {
                 return Err((IoError::Exclusive, dbuff, 0));
             }
@@ -578,7 +578,7 @@ impl Write<u8> for TmpFsNormalFile {
         mut dbuff: DmaBuff<'b>,
     ) -> BoxFuture<'f, Result<(DmaBuff<'b>, usize), (IoError, DmaBuff<'b>, usize)>> {
         async move {
-            let buff = unsafe { &mut *DmaTarget::as_mut(&mut *dbuff) };
+            let buff = unsafe { &mut *DmaTarget::data_ptr(&mut *dbuff) };
             if !self.accessor.lock.lock().cmp_t(self) {
                 return Err((IoError::Exclusive, dbuff, 0));
             }

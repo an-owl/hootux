@@ -299,7 +299,7 @@ impl Read<u8> for SerialDispatcher {
                 };
 
                 // SAFETY: This is safe because as_mut guarantees that this can be cast safely.
-                let buff = unsafe { &mut *crate::mem::dma::DmaTarget::as_mut(&mut *dbuff) };
+                let buff = unsafe { &mut *crate::mem::dma::DmaTarget::data_ptr(&mut *dbuff) };
 
                 // Interrupts must be blocked here to prevent deadlocks.
                 // returning Some(_) here indicates early completion.
@@ -399,7 +399,7 @@ impl Write<u8> for SerialDispatcher {
         async {
             if self.fifo_lock.is_write() {
                 // SAFETY: as_mut guarantees that this is safe.
-                let buff = unsafe { &mut *crate::mem::dma::DmaTarget::as_mut(&mut *dbuff) };
+                let buff = unsafe { &mut *crate::mem::dma::DmaTarget::data_ptr(&mut *dbuff) };
                 // Returning here indicates that the driver has closed the controller.
                 let real =
                     ok_or_lazy!(self.inner.real.upgrade() => Err((IoError::MediaError, dbuff, 0)));
@@ -496,7 +496,7 @@ impl Read<u8> for FrameCtlBFile {
         mut dbuff: DmaBuff<'b>,
     ) -> BoxFuture<'f, Result<(DmaBuff<'b>, usize), (IoError, DmaBuff<'b>, usize)>> {
         async {
-            let buff = unsafe { &mut *crate::mem::dma::DmaTarget::as_mut(&mut *dbuff) };
+            let buff = unsafe { &mut *crate::mem::dma::DmaTarget::data_ptr(&mut *dbuff) };
             let real = ok_or_lazy!(self.dispatch.inner.real.upgrade() => Err((IoError::MediaError, dbuff, 0)));
             let b_rate = 115200f32/(real.divisor.load(atomic::Ordering::Relaxed) as f32); // use emulated float for conversion to baud-rate
             let data_bits: u8 = real.bits.load(atomic::Ordering::Relaxed).into();
@@ -525,7 +525,7 @@ impl Write<u8> for FrameCtlBFile {
         mut dbuff: DmaBuff<'b>,
     ) -> BoxFuture<'f, Result<(DmaBuff<'b>, usize), (IoError, DmaBuff<'b>, usize)>> {
         async {
-            let buff = unsafe { &mut *crate::mem::dma::DmaTarget::as_mut(&mut *dbuff) };
+            let buff = unsafe { &mut *crate::mem::dma::DmaTarget::data_ptr(&mut *dbuff) };
             let s = match core::str::from_utf8(buff) {
                 Ok(s) => s,
                 Err(_) => return Err((IoError::InvalidData, dbuff, 0)),
