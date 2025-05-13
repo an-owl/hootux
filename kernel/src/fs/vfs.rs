@@ -539,6 +539,35 @@ impl Display for DevID {
     }
 }
 
+/// This is a helper type to assist with allocating [DevID]'s within a driver.
+/// This will lazily allocate a major number and generate monotonic minor numbers.
+pub struct DeviceIdDistributer {
+    major: spin::Mutex<Option<MajorNum>>,
+    minor: core::sync::atomic::AtomicUsize,
+}
+
+impl DeviceIdDistributer {
+    pub const fn new() -> Self {
+        Self {
+            major: spin::Mutex::new(None),
+            minor: core::sync::atomic::AtomicUsize::new(0),
+        }
+    }
+
+    /// Allocates a unique [DevID]
+    pub fn alloc_id(&self) -> DevID {
+        let mut l = self.major.lock();
+        let major = if let Some(major) = l.as_mut() {
+            *major
+        } else {
+            let n = MajorNum::new();
+            *l = Some(n);
+            n
+        };
+        DevID::new(major, self.minor.fetch_add(1, atomic::Ordering::Relaxed))
+    }
+}
+
 // todo add link count, so mountpoints may be used multiple times
 struct MountPoints {
     // todo convert this to BtreeMap<DevID,Vec<_>>, this allows multiple mount points for a single device.
