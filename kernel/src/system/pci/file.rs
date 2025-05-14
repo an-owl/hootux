@@ -9,7 +9,7 @@ use alloc::vec::Vec;
 use core::any::Any;
 use futures_util::FutureExt;
 use futures_util::future::BoxFuture;
-use hootux::fs::{device::*, file::*};
+use hootux::fs::file::*;
 
 static PCI_MAJOR_NUM: spin::Mutex<Option<MajorNum>> = spin::Mutex::new(None);
 
@@ -37,15 +37,15 @@ impl FunctionAccessor {
 
 #[file]
 #[derive(Clone)]
-struct FuncDir {
+pub(super) struct FuncDir {
     accessor: alloc::sync::Arc<FunctionAccessor>,
 }
 
 impl FuncDir {
-    fn new(addr: super::DeviceAddress, ctl: super::DeviceControl) -> Self {
+    pub(super) fn new(ctl: super::DeviceControl) -> Self {
         Self {
             accessor: alloc::sync::Arc::new(FunctionAccessor {
-                addr,
+                addr: ctl.address(),
                 ctl: alloc::sync::Arc::new(ctl),
             }),
         }
@@ -74,7 +74,7 @@ impl File for FuncDir {
     }
 
     fn len(&self) -> IoResult<u64> {
-        todo!()
+        async { Ok(SysfsDirectory::entries(self) as u64) }.boxed()
     }
 }
 
@@ -99,12 +99,26 @@ impl SysfsDirectory for FuncDir {
         }
     }
 
-    fn store(&self, name: &str, file: Box<dyn SysfsFile>) -> Result<(), IoError> {
-        async { Err(IoError::NotSupported) }
+    fn store(&self, _: &str, _: Box<dyn SysfsFile>) -> Result<(), IoError> {
+        Err(IoError::NotSupported)
     }
 
-    fn remove(&self, name: &str) -> Result<(), IoError> {
-        async { Err(IoError::NotSupported) }
+    fn remove(&self, _: &str) -> Result<(), IoError> {
+        Err(IoError::NotSupported)
+    }
+
+    fn as_any(self: Box<Self>) -> Box<dyn Any> {
+        self
+    }
+}
+
+impl hootux::fs::sysfs::bus::BusDeviceFile for FuncDir {
+    fn bus(&self) -> &'static str {
+        "pci"
+    }
+
+    fn id(&self) -> String {
+        self.accessor.addr.to_string()
     }
 
     fn as_any(self: Box<Self>) -> Box<dyn Any> {
@@ -152,13 +166,15 @@ impl NormalFile for Class {
     fn file_lock<'a>(
         self: Box<Self>,
     ) -> BoxFuture<'a, Result<LockedFile<u8>, (IoError, Box<dyn NormalFile<u8>>)>> {
-        async { Err(IoError::NotSupported).boxed() }
+        async { Err((IoError::NotSupported, self as _)) }.boxed()
     }
 
     unsafe fn unlock_unsafe(&self) -> IoResult<()> {
         async { Err(IoError::NotSupported) }.boxed()
     }
 }
+
+impl SysfsFile for Class {}
 
 impl Read<u8> for Class {
     fn read<'f, 'a: 'f, 'b: 'f>(
@@ -180,10 +196,10 @@ impl Read<u8> for Class {
 impl Write<u8> for Class {
     fn write<'f, 'a: 'f, 'b: 'f>(
         &'a self,
-        pos: u64,
+        _: u64,
         buff: DmaBuff<'b>,
     ) -> BoxFuture<'f, Result<(DmaBuff<'b>, usize), (IoError, DmaBuff<'b>, usize)>> {
-        async { Err(IoError::ReadOnly) }.boxed()
+        async { Err((IoError::ReadOnly, buff, 0)) }.boxed()
     }
 }
 
@@ -227,7 +243,7 @@ impl NormalFile for ConfigRegionFile {
     fn file_lock<'a>(
         self: Box<Self>,
     ) -> BoxFuture<'a, Result<LockedFile<u8>, (IoError, Box<dyn NormalFile<u8>>)>> {
-        async { Err((IoError::NotSupported, self)) }.boxed()
+        async { Err((IoError::NotSupported, self as _)) }.boxed()
     }
 
     unsafe fn unlock_unsafe(&self) -> IoResult<()> {
@@ -235,17 +251,20 @@ impl NormalFile for ConfigRegionFile {
     }
 }
 
+impl SysfsFile for ConfigRegionFile {}
+
 impl Read<u8> for ConfigRegionFile {
     fn read<'f, 'a: 'f, 'b: 'f>(
         &'a self,
         pos: u64,
         mut buff: DmaBuff<'b>,
     ) -> BoxFuture<'f, Result<(DmaBuff<'b>, usize), (IoError, DmaBuff<'b>, usize)>> {
-        async {
-            let tgt: &[u8] = &self.accessor.ctl.cfg_region[pos..];
+        async move {
+            let tgt: &[u8] = &self.accessor.ctl.cfg_region[pos as usize..];
             let b = unsafe { &mut *buff.data_ptr() };
             let len = tgt.len().min(buff.len());
-            tgt[..len].copy_from_slice(&buff[..len]);
+            b[..len].copy_from_slice(&tgt[..len]);
+            Ok((buff, len))
         }
         .boxed()
     }
@@ -259,10 +278,11 @@ impl Write<u8> for ConfigRegionFile {
     ) -> BoxFuture<'f, Result<(DmaBuff<'b>, usize), (IoError, DmaBuff<'b>, usize)>> {
         async {
             log::debug!(
-                "Called write on {}, which coddently does not allow writing",
+                "Called write on {}, which currently does not allow writing",
                 core::any::type_name::<Self>()
             );
             Err((IoError::ReadOnly, buff, 0))
         }
+        .boxed()
     }
 }
