@@ -1,5 +1,4 @@
 use crate::system::pci::DeviceControl;
-use acpi::mcfg::PciConfigRegions;
 
 pub fn scan_advanced(mcfg: &[acpi::mcfg::McfgEntry]) {
     for seg in mcfg {
@@ -36,22 +35,11 @@ fn check_dev(mcfg: &acpi::mcfg::McfgEntry, mut dev: DeviceControl) {
         scan_bus(mcfg, dev_addr.as_int().0, h.get_secondary_bus());
     }
 
-    /*
-    super::PCI_META
-        .write()
-        .push(super::meta::MetaInfo::from(&dev));
+    let func_dir = super::file::FuncDir::new(dev);
 
-     */
-
-    let addr = dev.address();
-    let dev_ref = alloc::sync::Arc::new(spin::Mutex::new(dev)); // for kernel
-    super::PCI_DEVICES.insert(addr, dev_ref.clone());
-    crate::system::sysfs::get_sysfs()
-        .get_discovery()
-        .register_resource(alloc::boxed::Box::new(super::PciResourceContainer::new(
-            // for everything else
-            addr, dev_ref,
-        )));
+    hootux::fs::sysfs::SysFsRoot::new()
+        .bus
+        .insert_device(alloc::boxed::Box::new(func_dir));
 }
 
 fn check_fns(mcfg: &acpi::mcfg::McfgEntry, addr: super::DeviceAddress) {
