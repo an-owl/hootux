@@ -17,6 +17,10 @@ mod configuration;
 mod file;
 mod scan;
 
+pub fn init() {
+    let t = hootux::fs::sysfs::firmware::acpi::get_table::<acpi::mcfg::Mcfg>().unwrap();
+    scan::scan_advanced(t.entries())
+}
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct DeviceAddress {
     segment_group: u16,
@@ -476,7 +480,7 @@ impl DeviceControl {
     ///
     /// This function can be considered safe if `override_count == None`.
     /// If `override_count == Some(_)` The caller must ensure that the device function will **never**
-    /// raise an interrupt above this value  
+    /// raise an interrupt above this value
     unsafe fn cfg_msi(
         &mut self,
         queue: crate::task::InterruptQueue,
