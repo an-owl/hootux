@@ -121,7 +121,11 @@ impl KernelShell {
     #[must_use]
     async fn parse_input(&self, buffer: &[u8]) -> bool {
         let args = match str::from_utf8(buffer) {
-            Ok(args) => args,
+            // intellij inputs may contain leading whitespace chars this will remove them
+            Ok(args) => {
+                args.split_at(args.find(|c| !char::is_whitespace(c)).unwrap_or(0))
+                    .1
+            }
             Err(e) => {
                 log::error!("KShell: Failed to parse args into &str {e:?}");
                 return false;
