@@ -26,7 +26,7 @@ fn get_major() -> MajorNum {
 
 struct FunctionAccessor {
     addr: super::DeviceAddress,
-    ctl: alloc::sync::Arc<super::DeviceControl>,
+    ctl: alloc::sync::Arc<async_lock::Mutex<super::DeviceControl>>,
 }
 
 impl FunctionAccessor {
@@ -46,7 +46,7 @@ impl FuncDir {
         Self {
             accessor: alloc::sync::Arc::new(FunctionAccessor {
                 addr: ctl.address(),
-                ctl: alloc::sync::Arc::new(ctl),
+                ctl: alloc::sync::Arc::new(async_lock::Mutex::new(ctl)),
             }),
         }
     }
@@ -184,7 +184,7 @@ impl Read<u8> for Class {
     ) -> BoxFuture<'f, Result<(DmaBuff<'b>, usize), (IoError, DmaBuff<'b>, usize)>> {
         async {
             let b = unsafe { &mut *buff.data_ptr() };
-            let class = self.accessor.ctl.class;
+            let class = self.accessor.ctl.lock().await.class;
             let len = b.len().min(class.len());
             b[..len].copy_from_slice(&class[..len]);
             Ok((buff, len))
@@ -260,7 +260,7 @@ impl Read<u8> for ConfigRegionFile {
         mut buff: DmaBuff<'b>,
     ) -> BoxFuture<'f, Result<(DmaBuff<'b>, usize), (IoError, DmaBuff<'b>, usize)>> {
         async move {
-            let tgt: &[u8] = &self.accessor.ctl.cfg_region[pos as usize..];
+            let tgt: &[u8] = &self.accessor.ctl.lock().await.cfg_region[pos as usize..];
             let b = unsafe { &mut *buff.data_ptr() };
             let len = tgt.len().min(buff.len());
             b[..len].copy_from_slice(&tgt[..len]);
