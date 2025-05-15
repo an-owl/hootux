@@ -209,6 +209,12 @@ struct ConfigRegionFile {
     accessor: alloc::sync::Arc<FunctionAccessor>,
 }
 
+impl ConfigRegionFile {
+    fn ctl_raw(&self) -> alloc::sync::Arc<async_lock::Mutex<super::DeviceControl>> {
+        self.accessor.ctl.clone()
+    }
+}
+
 impl File for ConfigRegionFile {
     fn file_type(&self) -> FileType {
         FileType::NormalFile
@@ -232,6 +238,14 @@ impl File for ConfigRegionFile {
 
     fn len(&self) -> IoResult<u64> {
         async { Ok(4096) }.boxed()
+    }
+
+    fn method_call<'f, 'a: 'f, 'b: 'f>(
+        &'b self,
+        method: &str,
+        arguments: &'a (dyn Any + Send + Sync + 'a),
+    ) -> IoResult<'f, MethodRc> {
+        impl_method_call!(method, arguments => async ctl_raw())
     }
 }
 
