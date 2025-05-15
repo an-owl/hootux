@@ -177,6 +177,12 @@ pub trait File:
     }
 }
 
+impl Clone for alloc::boxed::Box<dyn File> {
+    fn clone(&self) -> Self {
+        self.clone_file()
+    }
+}
+
 self::file_derive_debug!(NormalFile<u8>);
 
 /// Represents a normal file which can be read and written has a cursor which is kept by the file object.
