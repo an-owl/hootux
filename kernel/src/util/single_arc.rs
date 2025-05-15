@@ -132,17 +132,17 @@ impl<T: ?Sized> Weak<T> {
     }
 
     /// Drops any inner references, freeing memory is possible.
-    pub fn clear(&mut self) {
-        core::mem::take(self);
+    pub fn clear(&self) {
+        self.inner.lock().take();
     }
 
     /// Sets self to point to the data contained within `strong`.
     ///
     /// returns whether this was successfully rebound.
-    pub fn set(&mut self, strong: &SingleArc<T>) -> Result<(), ()> {
+    pub fn set(&self, strong: &SingleArc<T>) -> Result<(), ()> {
         if self.inner.lock().is_none() {
             // If self is unbound
-            *self = strong.downgrade();
+            *self.inner.lock() = *strong.downgrade().inner.lock();
             return Ok(());
         }
         let l = self.inner.lock();
@@ -154,7 +154,8 @@ impl<T: ?Sized> Weak<T> {
                 drop(l);
                 // drop data and bind self
                 self.clear();
-                *self = strong.downgrade();
+
+                *self.inner.lock() = *strong.downgrade().inner.lock();
                 return Ok(());
             }
         }
