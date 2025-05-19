@@ -80,6 +80,49 @@ impl DeviceAddress {
     }
 }
 
+/// Parses a bus address string into Self.
+///
+/// Bus segment is optional, when it is not present it will
+impl core::str::FromStr for DeviceAddress {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        // done in reverse order because either one or two ':' may be present.
+        // If a second is not present the bus_seg is ""
+        let (remain, func) = s.split_at(s.rfind('.').ok_or(())?);
+        let (remain, device) = remain.split_at(remain.rfind(':').ok_or(())?);
+        let (bus_seg, bus) = remain.split_at(remain.rfind(':').unwrap_or(0));
+
+        let parsed_bus_seg = if bus_seg.len() == 0 {
+            0
+        } else if bus_seg.len() == 4 {
+            bus_seg.parse::<u16>().map_err(|_| ())?
+        } else {
+            return Err(());
+        };
+
+        if bus.len() != 2 {
+            return Err(());
+        }
+        let parsed_bus = bus.parse().map_err(|_| ())?;
+        if device.len() != 2 {
+            return Err(());
+        }
+        let parsed_dev = device.parse::<u8>().map_err(|_| ())?;
+        if func.len() != 1 {
+            return Err(());
+        }
+        let parsed_func = func.parse::<u8>().map_err(|_| ())?;
+
+        Ok(Self::new(
+            parsed_bus_seg,
+            parsed_bus,
+            parsed_dev,
+            parsed_func,
+        ))
+    }
+}
+
 impl alloc::fmt::Display for DeviceAddress {
     fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
         write!(
