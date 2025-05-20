@@ -89,6 +89,8 @@ impl SysfsDirectory for FuncDir {
 
     fn get_file(&self, name: &str) -> Result<Box<dyn SysfsFile>, IoError> {
         match name {
+            "." => Ok(Box::new(self.clone())),
+            ".." => Ok(Box::new(hootux::fs::sysfs::SysFsRoot::new().bus.clone())),
             "class" => Ok(Box::new(Class {
                 accessor: self.accessor.clone(),
             })),
