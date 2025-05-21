@@ -55,13 +55,15 @@ pub enum IoError {
 
     /// The media was unable to be read.
     ///
-    /// This may be because the device has failed or is no longer attached to the system.
+    /// This may be because the device has failed or is no longer attached to the system or some
+    /// other error which the physical media has occurred.
     MediaError,
 
     /// The device indicated that it encountered an error and could not be accessed.
     ///
     /// This may also be used to indicate that an invalid configuration was used for the device.
-    /// This differs from [Self::MediaError] where this is returned when the device indicates an error.
+    /// This differs from [Self::MediaError] where this is returned by the driver to indicate an
+    /// error at the device file level.
     DeviceError,
 
     /// Returned when a file is requested to do something it does not support.
@@ -92,10 +94,12 @@ pub enum IoError {
     Busy,
 
     /// Indicates that the file was not able to complete the operation because some prior
-    /// requirements have not been met
+    /// requirements have not been met.
     NotReady,
 
-    /// Returned by [file::Write::write] when the input is an invalid variant of the character
+    /// Indicates the arguments passed to the fn were not expected.
+    ///
+    /// When returned by a character device by [file::Write] or [file::Read] this may indicate that invalid geometry was specified
     InvalidData,
 }
 
