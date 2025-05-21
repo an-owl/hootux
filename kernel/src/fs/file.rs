@@ -38,7 +38,7 @@
 
 use crate::fs::{IoError, IoResult};
 use crate::mem::dma::DmaBuff;
-use alloc::string::ToString;
+use alloc::string::{String, ToString};
 use cast_trait_object::DynCast;
 use core::fmt::Formatter;
 use core::future::Future;
@@ -935,4 +935,20 @@ impl MethodRc {
             inner: alloc::boxed::Box::new(t),
         }
     }
+}
+
+/// Returns the filename for `file` as it is stored in `dir`
+pub async fn get_file_name(dir: &dyn Directory, needle: &dyn File) -> Result<String, IoError> {
+    let list = dir.file_list().await?;
+    for i in list.iter() {
+        let Ok(file) = dir.get_file(i).await else {
+            // We are arent going to check the error here. It might occur due to a file being removed or the fucking filesystem might disappear. Just say not present
+            continue;
+        };
+        if file.device() == needle.device() && file.id() == needle.id() {
+            return Ok(i.clone()); // can llvm optimise this alloc out?
+        }
+    }
+
+    Err(IoError::NotPresent)
 }
