@@ -119,7 +119,8 @@ pub trait SysfsFile: File {
     }
 }
 
-fn clone_sysfs_file(origin: &(dyn SysfsFile + 'static)) -> Box<dyn SysfsFile + 'static> {
+// This relies on a bit of fuckery
+pub(crate) fn clone_sysfs_file(origin: &(dyn SysfsFile + 'static)) -> Box<dyn SysfsFile + 'static> {
     let c = origin.clone_file();
     let c = Box::leak(c) as *mut dyn File;
     let origin = origin as *const dyn SysfsFile;
