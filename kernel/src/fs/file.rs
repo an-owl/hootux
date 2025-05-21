@@ -99,7 +99,6 @@ pub trait File:
 
     /// Creates a new file object accessing the same file accessor.
     ///
-    /// If the file has a cursor the returned file object will have its cursor set to `0`.
     /// If `self` holds a file lock the returned file will not be able to perform file operations
     /// until the lock is freed.
     fn clone_file(&self) -> alloc::boxed::Box<dyn File>;
