@@ -355,3 +355,98 @@ impl Future for EventWaitNewType {
 }
 
 struct EventWaitNewType(alloc::sync::Arc<EventWait>);
+
+struct BindingFileAccessor {
+    bound: hootux::util::Weak<dyn NormalFile>,
+    serial: usize,
+}
+
+#[file]
+#[derive(Clone)]
+pub struct BindingFile {
+    acc: alloc::sync::Arc<BindingFileAccessor>,
+}
+
+impl SysfsFile for BindingFile {}
+
+impl BindingFile {
+    pub fn new() -> Self {
+        static SERIAL: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
+        Self {
+            acc: alloc::sync::Arc::new(BindingFileAccessor {
+                bound: Default::default(),
+                serial: SERIAL.fetch_add(1, atomic::Ordering::Relaxed),
+            }),
+        }
+    }
+}
+
+impl File for BindingFile {
+    fn file_type(&self) -> FileType {
+        FileType::NormalFile
+    }
+    fn block_size(&self) -> u64 {
+        1
+    }
+    fn device(&self) -> DevID {
+        DevID::new(hootux::fs::vfs::MajorNum::SYSFS_NUM, 0)
+    }
+    fn clone_file(&self) -> Box<dyn File> {
+        Box::new(self.clone())
+    }
+    fn id(&self) -> u64 {
+        self.acc.serial as u64
+    }
+    fn len(&self) -> IoResult<u64> {
+        async { Ok(0) }.boxed()
+    }
+}
+
+impl Read<u8> for BindingFile {
+    fn read<'f, 'a: 'f, 'b: 'f>(
+        &'a self,
+        _pos: u64,
+        buff: DmaBuff<'b>,
+    ) -> BoxFuture<'f, Result<(DmaBuff<'b>, usize), (IoError, DmaBuff<'b>, usize)>> {
+        async { Ok((buff, 0)) }.boxed()
+    }
+}
+
+impl Write<u8> for BindingFile {
+    fn write<'f, 'a: 'f, 'b: 'f>(
+        &'a self,
+        _pos: u64,
+        buff: DmaBuff<'b>,
+    ) -> BoxFuture<'f, Result<(DmaBuff<'b>, usize), (IoError, DmaBuff<'b>, usize)>> {
+        async { Ok((buff, 0)) }.boxed()
+    }
+}
+
+impl NormalFile for BindingFile {
+    fn len_chars(&self) -> IoResult<u64> {
+        self.len()
+    }
+
+    fn file_lock<'a>(
+        self: Box<Self>,
+    ) -> BoxFuture<'a, Result<LockedFile<u8>, (IoError, Box<dyn NormalFile<u8>>)>> {
+        async {
+            let op_file = self.as_ref().clone();
+            let strong = hootux::util::SingleArc::new(self as _);
+            if let Ok(()) = op_file.acc.bound.set(&strong) {
+                Ok(LockedFile::new_from_lock(strong))
+            } else {
+                Err((IoError::Exclusive, strong.take()))
+            }
+        }
+        .boxed()
+    }
+
+    unsafe fn unlock_unsafe(&self) -> IoResult<()> {
+        async {
+            self.acc.bound.clear();
+            Ok(())
+        }
+        .boxed()
+    }
+}
