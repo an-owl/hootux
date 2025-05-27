@@ -166,7 +166,7 @@ pub trait File:
     /// into their concrete types and call `Self::$method_name` with the downcast arguments.
     ///
     /// Methods must be async, of they arent specifying `async $method_name..` will place the method in an async block.
-    #[warn(unused_variables)]
+    #[allow(unused_variables)]
     fn method_call<'f, 'a: 'f, 'b: 'f>(
         &'b self,
         method: &str,
