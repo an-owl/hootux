@@ -1,4 +1,3 @@
-use crate::CRATE_NAME;
 use crate::PortState;
 use crate::hba::port_control::InterruptStatus;
 use ata::command::constructor::{CommandConstructor, MaybeOpaqueCommand, OpaqueCommand};
@@ -7,17 +6,82 @@ use core::fmt::Formatter;
 use core::pin::Pin;
 use core::task::{Context, Poll};
 use hootux::alloc_interface::MmioAlloc;
+use hootux::fs::sysfs::SysfsDirectory;
+use hootux::task::TaskResult;
 
-pub mod block;
+//pub mod block;
 mod cmd_ctl;
 pub(crate) mod kernel_if;
 
 pub(crate) type HbaInfoRef = alloc::sync::Arc<HbaInfo>;
+mod file;
 
-const NEXT_ID: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
-///
-fn new_instance_id() -> usize {
-    NEXT_ID.fetch_add(1, atomic::Ordering::Relaxed)
+const ACPI_PCI_ID: [u8; 3] = [1, 6, 1];
+
+pub(super) async fn init_async() -> TaskResult {
+    use hootux::fs::file::*;
+    loop {
+        let bus = hootux::fs::sysfs::SysFsRoot::new().bus;
+        match hootux::fs::sysfs::SysfsDirectory::get_file(&bus, "pci") {
+            Ok(pci_dir) => {
+                let pci_dir = pci_dir.into_sysfs_dir().unwrap(); // this is a dir
+                'files: for name in SysfsDirectory::file_list(&*pci_dir) {
+                    // Check class if its ours then bind it.
+                    // I need to port the PCI driver first though.
+                    let Ok(func) = SysfsDirectory::get_file(&*pci_dir, &name) else {
+                        log::debug!("File {name} disappeared?"); // may be caused by hot plug event
+                        continue 'files;
+                    };
+                    let func = func.into_sysfs_dir().unwrap(); // always succeeds
+
+                    let Ok(class) = SysfsDirectory::get_file(&*func, "class") else {
+                        log::debug!("Failed to read sys/bus/pci/{name}/class`");
+                        continue 'files;
+                    };
+                    let class = cast_file!(NormalFile: class as alloc::boxed::Box<dyn File>)
+                        .ok()
+                        .unwrap(); // This may trigger in the future if the class file is changed
+
+                    let mut stack_buff = [0u8; 3];
+                    // SAFETY: The callee will only use synchronous writes
+                    let guard =
+                        unsafe { hootux::mem::dma::StackDmaGuard::new(&mut stack_buff[..]) };
+                    let Ok(_) = class.read(0, alloc::boxed::Box::new(guard)).await else {
+                        log::debug!("Failed to read sys/bus/pci/{name}/class");
+                        continue 'files;
+                    };
+
+                    if stack_buff != ACPI_PCI_ID {
+                        continue 'files;
+                    } // no match try next file
+
+                    let Ok(bind) = SysfsDirectory::get_file(&*func, "bind") else {
+                        // shouldn't happen
+                        continue 'files;
+                    };
+                    let bind = cast_file!(NormalFile: bind as alloc::boxed::Box<dyn File>).unwrap(); // always succeeds
+                    let Ok(lock) = bind.file_lock().await else {
+                        // Function is already bound
+                        continue 'files;
+                    };
+
+                    log::info!("Attempting to start AHCI for {name}");
+                    // Calling parse on the output of Display::fmt() is guaranteed to succeed
+                    if let Err(e) = kernel_if::AhciDriver::start(func, lock).await {
+                        log::error!("Failed to start AHCI driver: {e}");
+                    }
+                }
+            }
+
+            Err(_) => {}
+        }
+        // Wait for event and try again.
+        // Unfortunately this causes the driver to ake on *all* events even the ones that have nothing to do with us.
+        let event = cast_file!(NormalFile: SysfsDirectory::get_file(&bus, "event").unwrap() as alloc::boxed::Box<dyn File>).unwrap(); // we can always open this file and it is always a NormalFile
+        let _ = event
+            .read(0, alloc::boxed::Box::new(hootux::mem::dma::BogusBuffer))
+            .await;
+    }
 }
 
 /// This struct contains HBA specific information that is shared between all components.
@@ -28,7 +92,6 @@ pub struct HbaInfo {
     queue_depth: u8,
     mech_presence_switch: bool,
     pci_addr: hootux::system::pci::DeviceAddress,
-    driver_instance: usize,
 }
 
 impl HbaInfo {
@@ -44,7 +107,6 @@ impl HbaInfo {
                 .0
                 .contains(crate::hba::general_control::HbaCapabilities::PRESENCE_SWITCH),
             pci_addr,
-            driver_instance: new_instance_id(),
         }
     }
 
@@ -493,7 +555,7 @@ impl Port {
     /// This fn will also return whether or not the FIS uses a NQC command.
     ///
     /// None may be returned under various circumstances including when the command isn't supported.
-    /// If the caller fails to handle this it should signal `AtaErr`  
+    /// If the caller fails to handle this it should signal `AtaErr`
     // this is needed because the required command may change e.g if a non nqc command is requested
     // while NQC is active, all ops must change to non NQC.
     fn compile_fis(
@@ -548,26 +610,26 @@ impl Port {
         }
     }
 
-    /// Reads from the device at `lba` for `len` sectors. The buffer is automatically sized to contain
-    /// the read data. The size of the buffer can be calculated using the data returned by [Self::get_identity]
+    /// Reads from the device at `lba` for `buff.len()` bytes. The size of the buffer must be
+    /// aligned to the devices LBA size in bytes.
     ///
     /// This fn will return Err(BadArgs) if `lba >= 0x1000000000000`
     /// or if the given lba + count exceeds the last sector on the device.
-    pub async fn read(
-        &self,
-        lba: SectorAddress,
-        count: SectorCount,
-    ) -> Result<alloc::boxed::Box<[u8]>, CmdErr> {
+    pub async fn read(&self, lba: SectorAddress, buff: &mut [u8]) -> Result<(), CmdErr> {
         use ata::command::constructor;
+        let id = self.get_identity().await;
+        let count = SectorCount::new(
+            (buff.len() as u64 / id.lba_size)
+                .try_into()
+                .ok()
+                .ok_or(CmdErr::BadArgs)?,
+        )
+        .ok_or(CmdErr::BadArgs)?;
 
         let id = self.get_identity().await;
         if id.exceeds_dev(lba, count) {
             return Err(CmdErr::BadArgs);
         }
-
-        let mut b = alloc::vec::Vec::new();
-        b.resize(id.lba_size as usize * count.count_ext() as usize, 0);
-        let mut b = b.into_boxed_slice();
 
         let c = constructor::SpanningCmd::new(
             constructor::SpanningCmdType::Read,
@@ -578,8 +640,8 @@ impl Port {
 
         // SAFETY: This is safe because the command take a buffer and the buffer size is equal to
         // the size of the expected data.
-        unsafe { self.issue_cmd(c.compose(), Some(&mut *b)) }.await?;
-        Ok(b)
+        unsafe { self.issue_cmd(c.compose(), Some(&mut *buff)) }.await?;
+        Ok(())
     }
 
     /// This fn writes the given buffer to the device at starting at `lba`.
@@ -790,26 +852,6 @@ impl Port {
             self.refresh_exec().await
         }
     }
-
-    fn cfg_blkdev(self: &alloc::sync::Arc<Self>) {
-        let state = self.known_state.load(atomic::Ordering::Relaxed);
-        if state == PortState::Hot || state == PortState::Warm {
-            let id = hootux::system::sysfs::block::BlockDeviceId::new(
-                CRATE_NAME,
-                self.info.driver_instance,
-                Some(self.index as usize),
-            );
-            let b = alloc::boxed::Box::new(block::AhciBlockDev::new(self, id));
-
-            assert!(
-                hootux::system::sysfs::get_sysfs()
-                    .get_blk_dev()
-                    .register_dev(b)
-                    .is_none(),
-                "Block device already registered"
-            );
-        }
-    }
 }
 
 impl core::fmt::Debug for Port {
@@ -824,6 +866,7 @@ impl core::fmt::Display for Port {
     }
 }
 
+#[allow(dead_code)] // These are not currently used but they will be eventually (maybe not 48 bit)
 #[derive(Copy, Clone, Debug)]
 /// This struct contains device identification information
 pub struct DevIdentity {

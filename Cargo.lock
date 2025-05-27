@@ -17,9 +17,11 @@ dependencies = [
 name = "ahci"
 version = "0.1.0"
 dependencies = [
+ "async-lock",
  "ata",
  "atomic",
  "bitflags 2.8.0",
+ "cast_trait_object",
  "futures",
  "hootux",
  "log",

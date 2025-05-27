@@ -1,11 +1,10 @@
+use crate::PortState;
 use alloc::boxed::Box;
+use cast_trait_object::DynCastExt;
 use core::alloc::Allocator;
 use core::pin::Pin;
-use hootux::system::driver_if::{MatchState, ResourceId};
 use hootux::task::int_message_queue::MessageCfg;
 
-// note: this is 1,6,1 (mass storage, sata, ahci 1.x)
-const AHCI_CLASS: u32 = 0x01060100; // revision is masked.
 const AHCI_HBA_BAR: u8 = 5;
 
 // todo use better method for this.
@@ -13,60 +12,15 @@ const AHCI_HBA_BAR: u8 = 5;
 const POLL_RATE: u64 = 100; // poll rate in Hz
 const POLL_MSEC: u64 = 1000 / POLL_RATE;
 
-pub struct AhciPciProfile;
-impl hootux::system::driver_if::DriverProfile for AhciPciProfile {
-    fn try_start(
-        &self,
-        resource: Box<dyn ResourceId>,
-    ) -> (MatchState, Option<Box<dyn ResourceId>>) {
-        if hootux::system::driver_if::WhoIsResource::whois(&*resource)
-            == core::any::TypeId::of::<hootux::system::pci::PciResourceContainer>()
-        {
-            let pci_dev: Box<hootux::system::pci::PciResourceContainer> =
-                match resource.as_any().downcast() {
-                    Ok(res) => res,
-                    Err(_) => unreachable!(), // TypeId checked above, this branch is impossible
-                };
-
-            let class = pci_dev.class() & !0xff; // mask revision bits
-
-            return if class != AHCI_CLASS {
-                (MatchState::NoMatch, Some(pci_dev))
-            } else {
-                if pci_dev.get_inner().lock().get_bar(AHCI_HBA_BAR).is_some() {
-                    log::trace!(
-                        "Attempting to start {} for {}",
-                        crate::CRATE_NAME,
-                        pci_dev.addr()
-                    );
-                    AhciDriver::start(pci_dev.get_inner()).unwrap(); // I dont get a whole lot of choice here but to panic
-                    // I can't return the resource as a PciResource
-                    (MatchState::Success, None)
-                } else {
-                    log::error!(
-                        "PCI device with class {AHCI_CLASS:#x} (AHCI) did not implement BAR 5; Poisoning device {}",
-                        pci_dev.addr()
-                    );
-                    (MatchState::MatchRejected, None)
-                }
-            };
-        }
-        (MatchState::WrongBus, Some(resource))
-    }
-
-    fn bus_name(&self) -> &str {
-        "pci"
-    }
-}
-
 #[allow(dead_code)]
 // self.pci_dev required for future implementations
 pub struct AhciDriver {
-    name: &'static str,
-    pci_dev: alloc::sync::Arc<spin::Mutex<hootux::system::pci::DeviceControl>>,
+    pci_dev: alloc::sync::Arc<async_lock::Mutex<hootux::system::pci::DeviceControl>>,
     hba: super::AbstractHba,
     wakeup: MessageDelivery,
     single_int: bool,
+    pci_file: Box<dyn hootux::fs::file::Directory>,
+    binding: hootux::fs::file::LockedFile<u8>,
 }
 
 enum MessageDelivery {
@@ -101,10 +55,35 @@ impl MessageDelivery {
 impl AhciDriver {
     /// Initializes the driver using the PCI device. BAR 5 should be allocated by the caller.
     #[cold]
-    fn start(
-        pci_dev: alloc::sync::Arc<spin::Mutex<hootux::system::pci::DeviceControl>>,
+    pub(super) async fn start(
+        func_root: Box<dyn hootux::fs::file::File>,
+        fn_binding: hootux::fs::file::LockedFile<u8>,
     ) -> Result<(), &'static str> {
-        let mut lock = pci_dev.lock();
+        use hootux::fs::file::*;
+        // method_call always succeeds
+
+        let function_dir = cast_file!(Directory: func_root).unwrap(); // always a directory
+        let Ok(config) = function_dir.get_file("cfg").await else {
+            return Err("Failed to get PCI function class file");
+        };
+        let config = cast_file!(NormalFile: config).unwrap();
+
+        let Ok(pci_dev): Result<
+            Box<alloc::sync::Arc<async_lock::Mutex<hootux::system::pci::DeviceControl>>>,
+            _,
+        > = config
+            .method_call("ctl_raw", &())
+            .await
+            .unwrap()
+            .inner
+            .downcast()
+        else {
+            return Err("Failed to downcast after calling `ctl_raw`");
+        };
+
+        let pci_dev = *pci_dev; // drop the box
+
+        let mut lock = pci_dev.lock().await;
         let b = lock.get_bar(AHCI_HBA_BAR).unwrap(); // In theory this should enver happen but it also checked by try_start just in case.
 
         // SAFETY: The address is given by the PCI bar and will and is marked as reserved
@@ -162,14 +141,29 @@ impl AhciDriver {
         };
 
         let s = Box::new(Self {
-            name: crate::CRATE_NAME,
             pci_dev,
             hba,
             wakeup: md,
             single_int: single,
+            pci_file: function_dir,
+            binding: fn_binding,
         });
 
-        s.init_blockdev();
+        let mut states = [PortState::NotImplemented; 32];
+        for (i, port) in s.hba.ports.iter().enumerate() {
+            states[i] = port
+                .as_ref()
+                .map(|p| p.get_state())
+                .unwrap_or(PortState::NotImplemented)
+        }
+        log::trace!(
+            "AHCI: {} ports enabled\n{states:?}\n",
+            s.hba.ports.iter().flatten().count()
+        );
+
+        let Ok(()) = super::file::ControllerDir::init(&*s).await else {
+            return Err("Failed to install AHCI into sysfs");
+        };
 
         if use_int {
             for i in s.hba.ports.iter().filter_map(|p| p.as_ref()) {
@@ -202,11 +196,13 @@ impl AhciDriver {
         Ok(())
     }
 
-    /// Initializes block devices
-    fn init_blockdev(&self) {
-        for p in self.hba.ports.iter().flat_map(|p| p) {
-            p.cfg_blkdev();
-        }
+    /// Returns an iterator over all active ports.
+    pub(crate) fn get_ports(&self) -> impl Iterator<Item = Option<&alloc::sync::Arc<super::Port>>> {
+        self.hba.ports.iter().map(|e| e.as_ref())
+    }
+
+    pub(crate) fn pci_function(&self) -> Box<dyn hootux::fs::file::Directory> {
+        self.pci_file.clone_file().dyn_cast().unwrap()
     }
 
     /// Actually runs the driver. Receives ints and dispatches self accordingly

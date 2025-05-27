@@ -759,7 +759,7 @@ impl Features83 {
             AtaCommand::FLUSH_CACHE_EXT => return self.contains(Self::FLUSH_CACHE_EXT).into(),
             AtaCommand::FLUSH_CACHE => return self.contains(Self::FLUSH_CACHE).into(),
             AtaCommand::DOWNLOAD_MICROCODE => {
-                return self.contains(Self::DOWNLOAD_MICROCODE).into()
+                return self.contains(Self::DOWNLOAD_MICROCODE).into();
             }
             _ => None,
         }
@@ -907,7 +907,7 @@ impl Debug for LbaSize {
 }
 
 impl LbaSize {
-    fn read(&self) -> u32 {
+    pub fn read(&self) -> u32 {
         let t = self.lba_low as u32;
         t | (self.lba_high as u32) << 16
     }

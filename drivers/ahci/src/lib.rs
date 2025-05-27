@@ -3,7 +3,7 @@
 #![no_std]
 extern crate alloc;
 
-static CRATE_NAME: &str = env!("CARGO_CRATE_NAME"); // TODO add driver profiles
+use alloc::boxed::Box;
 
 pub mod driver;
 pub(crate) mod hba;
@@ -11,9 +11,7 @@ pub(crate) mod register;
 
 #[unsafe(no_mangle)]
 pub extern "C" fn init() {
-    hootux::system::sysfs::get_sysfs()
-        .get_discovery()
-        .register_driver(alloc::boxed::Box::new(driver::kernel_if::AhciPciProfile))
+    hootux::task::run_task(Box::pin(driver::init_async()));
 }
 
 /// This enum is to represent the last known device state.
