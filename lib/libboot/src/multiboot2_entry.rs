@@ -217,7 +217,7 @@ fn check_kernel_is_mapped(
     mapper: &x86_64::structures::paging::OffsetPageTable,
 ) -> Option<bool> {
     use x86_64::structures::paging::mapper::TranslateResult;
-    for i in mbi.elf_sections()? {
+    for i in mbi.elf_sections_tag()?.sections() {
         if let TranslateResult::Mapped { .. } =
             mapper.translate(x86_64::VirtAddr::new(i.start_address()))
         {
@@ -322,6 +322,7 @@ fn own_l4<'s>(
     }
 
     // map lower addresses so everything isn't broken
+    #[allow(unused_variables)] // `e` is used for debug_bits
     for (e, i) in mm.entries().enumerate() {
         match i.ty {
             MemoryType::LOADER_DATA => {
@@ -618,6 +619,7 @@ pub(crate) mod pm {
 
     #[cfg(feature = "debug-bits")]
     struct DebugWrite;
+    #[cfg(feature = "debug-bits")]
     use core::fmt::Write;
     #[cfg(feature = "debug-bits")]
     impl Write for DebugWrite {

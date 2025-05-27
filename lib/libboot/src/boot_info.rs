@@ -38,7 +38,12 @@ impl BootInfo {
     /// for this to return `Some(_)`
     /// If no ".tdata" section is present then the `file` field will be an empty slice
     pub fn get_tls_template(&self) -> Option<TlsTemplate> {
-        let sections = self.optionals.mb2_info.as_ref()?.elf_sections()?;
+        let sections = self
+            .optionals
+            .mb2_info
+            .as_ref()?
+            .elf_sections_tag()?
+            .sections();
         let mut len = 0;
         let mut init = None;
         for s in sections {
