@@ -48,14 +48,14 @@ impl ControllerDir {
             _ => unreachable!(),
         };
 
-        let mut this = Self {
+        let this = Self {
             id: ID_PROVIDER.alloc_id(),
             pci_id: pci_addr,
             pci: cast_file!(Directory: ahci.pci_function().clone_file()).unwrap(),
             ports,
         };
 
-        //this.query_ports().await; // Get identity for all ports.
+        this.query_ports().await; // Get identity for all ports.
 
         hootux::fs::sysfs::SysFsRoot::new()
             .bus
