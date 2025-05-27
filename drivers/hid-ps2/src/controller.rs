@@ -106,14 +106,16 @@ macro_rules! init_port {
         log::info!("Initializing {port}", port = $port_lit);
 
         for r in 0..RETRIES {
-            match $this.$port_command(Command::IdentifyDevice).await {
-                Ok([const { Response::Resend as u8 }, ..]) if r == RETRIES - 1 => {
+            let ret_raw = $this.$port_command(Command::IdentifyDevice).await;
+            let response = ret_raw.ok().map(|r| r[0].try_into().ok()).flatten();
+            match (response, ret_raw) {
+                (Some(Response::Resend),_) if r == RETRIES - 1 => {
                     log::warn!("Unable to identify device: exceeded retries");
                     $this.$port_name.set_state(PortState::Nuisance);
                     return;
                 }
-                Ok([const { Response::Resend as u8 }, ..]) => continue,
-                Ok([const { Response::Ack as u8 }, content @ .., _]) => {
+                (Some(Response::Resend),_) => continue,
+                (Some(Response::Ack), Ok([_, content @ .., _])) => {
                     match hid_8042::DeviceType::try_from(content) {
                         Ok(device_type) => {
                             $this.$port_name.set_state(PortState::Device(device_type));
@@ -127,23 +129,24 @@ macro_rules! init_port {
                         Err(_) => {} // just retry
                     }
                 }
-                Ok(_) => {
+                (None,_) => {
                     log::error!("Unknown bad response");
                     $this.$port_name.set_state(PortState::Nuisance);
                 }
-                Err(CommandError::PortTimeout) => {
+                (_,Err(CommandError::PortTimeout)) => {
                     log::error!("Timeout fetching device type");
                     $this.$port_name.set_state(PortState::Down);
                     return;
                 }
 
-                Err(CommandError::ControllerTimeout) => {
+                (_,Err(CommandError::ControllerTimeout)) => {
                     controller_timeout_handler()
                 }
-                Err(CommandError::SinglePortDevice) => {
+                (_,Err(CommandError::SinglePortDevice)) => {
                     // SAFETY: We cannot hit this because it will be returned above when reset and BIST is sent.
                     log::error!("Attempted to operate on port-2 when its not present.");
                 }
+                _ => unreachable!(), // at least im pretty sure it is
             }
         }
 
@@ -156,9 +159,10 @@ macro_rules! init_port {
 
 
         for r in 0..RETRIES {
-            let m = $this.$port_command(Command::ResetAndBIST).await;
+            let m = $this.$port_command(Command::ResetAndBIST).await.map(|r| (r[0].try_into().ok(),r[1].try_into().ok()));
+
             match m {
-                Ok([const { Response::Resend as u8 }, ..]) if r == RETRIES - 1 => {
+                Ok((Some(Response::Resend),_)) if r == RETRIES - 1 => {
                     log::warn!(
                         "Unable to initialize {port}: exceeded retries",
                         port = $port_lit
@@ -166,20 +170,14 @@ macro_rules! init_port {
                     $this.$port_name.set_state(PortState::Nuisance);
                     return;
                 }
-                Ok([const { Response::Resend as u8 }, ..]) => continue,
+                Ok((Some(Response::Resend), _)) => continue,
                 Ok(
-                    [
-                        const { Response::Ack as u8 },
-                        const { Response::BISTSuccess as u8 },
-                        ..,
-                    ],
+                   ( Some(Response::Ack),
+                    Some(Response::BISTSuccess))
                 ) => break,
                 Ok(
-                    [
-                        const { Response::Ack as u8 },
-                        const { Response::BISTFailure as u8 },
-                        ..,
-                    ],
+                    (Some(Response::Ack),
+                    Some(Response::BISTFailure))
                 ) => {
                     log::error!("Device: BIST failed");
                     return;
@@ -209,25 +207,25 @@ macro_rules! init_port {
 
         log::trace!("test success");
 
+        let rc = $this
+        .$port_command(Command::ScanCodeSet(
+            ScanCodeSetSubcommand::SetScancodeSetTwo,
+        )).await.map(|r| (r[0].try_into().ok()));
         // set scancode set
-        match $this
-            .$port_command(Command::ScanCodeSet(
-                ScanCodeSetSubcommand::SetScancodeSetTwo,
-            ))
-            .await
+        match rc
         {
-            Ok([const { Response::Ack as u8 }, ..]) => {
+            Ok(Some(Response::Ack)) => {
                 $this.$port_name.set_meta(DevMeta::ScanCodeSetTwo);
             }
 
-            Ok([const { Response::Resend as u8 }, ..]) => {
-                match $this
+            Ok(Some(Response::Resend)) => {
+                let rc = $this
                     .$port_command(Command::ScanCodeSet(
                         ScanCodeSetSubcommand::SetScancodeSetOne,
                     ))
-                    .await
-                {
-                    Ok([const { Response::Ack as u8 }, ..]) => {
+                    .await.map(|r| (r[0].try_into().ok()));
+                match rc {
+                    Ok(Some(Response::Ack)) => {
                         $this.$port_name.set_meta(DevMeta::ScanCodeSetOne);
                     }
 
@@ -253,13 +251,14 @@ macro_rules! init_port {
         }
 
         for i in 0..RETRIES {
-            match $this.$port_command(Command::EnableScan).await {
-                Ok([const { Response::Ack as u8 }, ..]) => break,
-                Ok([const { Response::Resend as u8 }, ..]) if i == RETRIES - 1 => {
+            let rc = $this.$port_command(Command::EnableScan).await.map(|r| (r[0].try_into().ok()));
+            match rc {
+                Ok(Some(Response::Ack)) => break,
+                Ok(Some(Response::Resend)) if i == RETRIES - 1 => {
                     $this.$port_name.set_state(PortState::Nuisance);
                     return;
                 }
-                Ok([const { Response::Resend as u8 }, ..]) => continue,
+                Ok(Some(Response::Resend)) => continue,
                 Ok(_) => {
                     log::error!("Unknown response");
                     $this.$port_name.set_state(PortState::Nuisance);

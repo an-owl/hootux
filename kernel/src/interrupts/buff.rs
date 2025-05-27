@@ -92,7 +92,7 @@ impl<T: Copy> ChonkyBuff<T> {
                 buff: alloc::sync::Arc::new(BufferChonk {
                     waker: Default::default(),
                     completed: atomic::Atomic::new(true),
-                    chonk: unsafe { core::slice::from_raw_parts(core::ptr::null(), 0) },
+                    chonk: &[],
                 }),
             };
         }

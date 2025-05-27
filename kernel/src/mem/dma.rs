@@ -338,7 +338,7 @@ pub struct BogusBuffer;
 unsafe impl DmaTarget for BogusBuffer {
     fn data_ptr(&mut self) -> *mut [u8] {
         // SAFETY: Always empty
-        unsafe { core::slice::from_raw_parts_mut(core::ptr::null_mut(), 0) }
+        &mut [] as *mut [u8]
     }
 }
 

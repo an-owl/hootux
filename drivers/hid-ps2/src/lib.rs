@@ -1,5 +1,5 @@
 #![no_std]
-#![feature(inline_const_pat)]
+//#![feature(inline_const_pat)]
 
 extern crate alloc;
 
