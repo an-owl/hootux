@@ -48,6 +48,7 @@ impl KernelShell {
             if self.buffered.is_empty() {
                 crate::print!("\nKSHELL# ")
             }
+            //buffer[..].fill(0);
             // indicates if we should run the command or wait for more data
             let mut exec = false;
             let dma = DmaGuard::new(buffer);
@@ -94,6 +95,7 @@ impl KernelShell {
                                 {
                                     return TaskResult::ExitedNormally;
                                 }
+                                self.buffered.clear();
                             } else {
                                 if self.parse_input(&use_buffer).await {
                                     return TaskResult::ExitedNormally;
