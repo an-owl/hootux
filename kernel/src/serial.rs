@@ -11,15 +11,12 @@
 
 use crate::serial::dispatcher::SerialDispatcher;
 use alloc::boxed::Box;
-use alloc::string::ToString;
 use core::pin::Pin;
 use core::task::{Context, Poll};
 use lazy_static::lazy_static;
 use modular_bitfield::{BitfieldSpecifier, bitfield};
 use spin::Mutex;
 use uart_16550::SerialPort;
-
-const FS_LOCATION: &str = "/";
 
 mod dispatcher;
 
@@ -530,7 +527,7 @@ pub fn init_rt_serial() {
     let mut com = alloc::vec::Vec::new();
     let mut dispatchers: alloc::vec::Vec<SerialDispatcher> = alloc::vec::Vec::new();
 
-    for (i, a) in SERIAL_ADDR.iter().enumerate() {
+    for a in SERIAL_ADDR.iter() {
         match Serial::new(*a) {
             Ok(p) => {
                 log::info!("Found UART device on {a:#x}");

@@ -13,7 +13,6 @@ use alloc::boxed::Box;
 use alloc::collections::BTreeMap;
 use alloc::string::{String, ToString};
 use cast_trait_object::DynCastExt;
-use core::cmp::max;
 use core::fmt::{Display, Formatter};
 use futures_util::FutureExt as _;
 

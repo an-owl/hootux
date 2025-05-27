@@ -502,7 +502,7 @@ impl NormalFile<u8> for TmpFsNormalFile {
     ) -> BoxFuture<'a, Result<LockedFile<u8>, (IoError, Box<dyn NormalFile<u8>>)>> {
         async {
             let b = self.accessor.clone();
-            let mut l = b.lock.lock();
+            let l = b.lock.lock();
             let s = crate::util::SingleArc::new(self as Box<dyn NormalFile<u8>>);
             if let Ok(()) = l.set(&s) {
                 Ok(LockedFile::new_from_lock(s))
