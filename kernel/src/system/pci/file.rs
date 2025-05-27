@@ -1,4 +1,4 @@
-use crate::fs::sysfs::{SysfsDirectory, SysfsFile};
+use crate::fs::sysfs::{SysfsDirectory, SysfsFile, clone_sysfs_file};
 use crate::fs::vfs::MajorNum;
 use crate::fs::{IoError, IoResult};
 use crate::mem::dma::DmaBuff;
@@ -27,6 +27,7 @@ fn get_major() -> MajorNum {
 struct FunctionAccessor {
     addr: super::DeviceAddress,
     ctl: alloc::sync::Arc<async_lock::Mutex<super::DeviceControl>>,
+    bound: hootux::fs::sysfs::BindingFile,
 }
 
 impl FunctionAccessor {
@@ -47,6 +48,7 @@ impl FuncDir {
             accessor: alloc::sync::Arc::new(FunctionAccessor {
                 addr: ctl.address(),
                 ctl: alloc::sync::Arc::new(async_lock::Mutex::new(ctl)),
+                bound: hootux::fs::sysfs::BindingFile::new(),
             }),
         }
     }
@@ -84,19 +86,25 @@ impl SysfsDirectory for FuncDir {
     }
 
     fn file_list(&self) -> Vec<String> {
-        vec!["class".to_string(), "cfg".to_string()]
+        vec!["class".to_string(), "cfg".to_string(), "bind".to_string()]
     }
 
     fn get_file(&self, name: &str) -> Result<Box<dyn SysfsFile>, IoError> {
         match name {
             "." => Ok(Box::new(self.clone())),
-            ".." => Ok(Box::new(hootux::fs::sysfs::SysFsRoot::new().bus.clone())),
+            ".." => Ok(
+                SysfsDirectory::get_file(&hootux::fs::sysfs::SysFsRoot::new().bus, "pci")
+                    .ok()
+                    .unwrap(),
+            ), // "pci" must exist if we've got here
+
             "class" => Ok(Box::new(Class {
                 accessor: self.accessor.clone(),
             })),
             "cfg" => Ok(Box::new(ConfigRegionFile {
                 accessor: self.accessor.clone(),
             })),
+            "bind" => Ok(clone_sysfs_file(&self.accessor.bound)),
             _ => Err(IoError::NotPresent),
         }
     }
