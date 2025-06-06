@@ -17,8 +17,8 @@ mod cap_regs {
         companion_port_route: CompanionPortRoute,
     }
     impl CapabilityRegisters {
-        fn get_operational_registers(&self) -> *mut _ {
-            unsafe { (self as *const Self).byte_add(self.len as usize).cast_mut() }
+        fn get_operational_registers(&self) -> *mut crate::operational_regs::OperationalRegisters {
+            (self as *const Self).cast_mut().cast()
         }
     }
 
@@ -143,7 +143,6 @@ mod operational_regs {
         async_list_addr: u32,
         _reserved: [u32; 9],
         cfg_flags: ConfigureFlag,
-        port_status_ctl: [PortStatusCtl],
     }
 
     bitfield! {
