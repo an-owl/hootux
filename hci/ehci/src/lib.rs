@@ -378,12 +378,12 @@ mod operational_regs {
         ///
         /// This will remain cleared while [port_power] is also cleared.
         connected,_: 0;
-
+        
         /// Indicates that the port status has changed.
         /// The controller sets this bit for all changes to the ports current connection status.
         ///
         /// This should be acknowledged immediately by writing back [Self::Ack_Status_change].
-        mask ACK_STATUS_CHANGE(Self), connect_status_change,_: 1;
+        mask ACK_STATUS_CHANGE(u32), connect_status_change,_: 1;
 
         /// Ports can only be enabled as a part of the reset-and-enable.
         /// Software cannot set this bit.
@@ -396,7 +396,7 @@ mod operational_regs {
         /// Reflects whether [Self::enabled] has changed state.
         ///
         /// This is cleared by writing `1` to it.
-        port_enable_change, clear_port_nable_change: 3;
+        mask ACK_PORT_ENABLE(u32), port_enable_change, clear_port_enable_change: 3;
 
         /// This port currently has an over-current condition.
         over_current,_: 4;
@@ -404,7 +404,7 @@ mod operational_regs {
         /// Reflects whether [Self::over_current] has changed state
         ///
         /// This is cleared by writing `1` to it
-        over_current_change, clear_over_current_change: 5;
+        mask ACK_OVER_CURRENT(u32), over_current_change, clear_over_current_change: 5;
 
         /// When [Self::is_suspended] is `true` this will signal a resume to the port.
         ///
