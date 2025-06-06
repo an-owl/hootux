@@ -145,6 +145,18 @@ mod operational_regs {
         cfg_flags: ConfigureFlag,
     }
 
+    impl OperationalRegisters {
+
+        /// Returns a [PortStatusCtl] for the port `portnum`
+        ///
+        /// # Safety
+        ///
+        /// The caller must ensure that the port isn't aliased and that `portnum` [crate::cap_regs::HcStructParams::port_count].
+        pub(crate) fn get_port(&self, portnum: usize) -> *mut PortStatusCtl {
+            unsafe { (self as *const Self).offset(1).cast::<PortStatusCtl>().add(portnum).cast_mut() }
+        }
+    }
+
     bitfield! {
         struct UsbCommand(u32);
         impl Debug;
@@ -367,7 +379,7 @@ mod operational_regs {
         /// This will remain cleared while [port_power] is also cleared.
         connected,_: 0;
 
-        /// Indicates that the port status has changed. 
+        /// Indicates that the port status has changed.
         /// The controller sets this bit for all changes to the ports current connection status.
         ///
         /// This should be acknowledged immediately by writing back [Self::Ack_Status_change].
