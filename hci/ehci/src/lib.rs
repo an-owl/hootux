@@ -2,10 +2,11 @@
 
 
 pub struct Echi {
-    cap: &'static cap_regs::CapabilityRegisters
+    cap: &'static cap_regs::CapabilityRegisters,
+    operational: &'static operational_regs::OperationalRegisters,
 }
 
-mod cap_regs {
+pub mod cap_regs {
     use bitfield::bitfield;
 
     #[repr(C)]
@@ -17,7 +18,7 @@ mod cap_regs {
         companion_port_route: CompanionPortRoute,
     }
     impl CapabilityRegisters {
-        fn get_operational_registers(&self) -> *mut crate::operational_regs::OperationalRegisters {
+        pub(crate) fn get_operational_registers(&self) -> *mut crate::operational_regs::OperationalRegisters {
             (self as *const Self).cast_mut().cast()
         }
     }
@@ -365,20 +366,20 @@ mod operational_regs {
 
     #[repr(u32)]
     #[derive(Debug, Copy, Clone, PartialEq, Eq)]
-    enum ConfigureFlag {
+    pub enum ConfigureFlag {
         RoutePortsToCompanions = 0,
         RoutePortsToSelf = 1,
     }
 
     bitfield! {
-        struct PortStatusCtl(u32);
+        pub struct PortStatusCtl(u32);
         impl Debug;
 
         /// Indicates whether the port is currently connected to a device.
         ///
         /// This will remain cleared while [port_power] is also cleared.
         connected,_: 0;
-        
+
         /// Indicates that the port status has changed.
         /// The controller sets this bit for all changes to the ports current connection status.
         ///
