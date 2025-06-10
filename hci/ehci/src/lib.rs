@@ -1,5 +1,6 @@
 #![no_std]
 
+mod frame_lists;
 
 pub struct Echi {
     cap: &'static cap_regs::CapabilityRegisters,
@@ -531,3 +532,4 @@ mod operational_regs {
         }
     }
 }
+
