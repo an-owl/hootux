@@ -1,3 +1,5 @@
+use num_enum::TryFromPrimitive;
+
 pub mod periodic_list;
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
@@ -77,5 +79,50 @@ impl Address {
 impl From<Address> for u8 {
     fn from(address: Address) -> Self {
         address.0
+    }
+}
+
+bitfield::bitfield! {
+    struct FrameListLinkPointer(u32);
+    impl Debug;
+
+    /// When set this bit indicates that indicates that [Self::ptr] is invalid
+    end,set_end: 0;
+    from into FrameListLinkType, get_link_type, set_link_type: 2,1;
+    ptr,set_ptr: 31,5;
+}
+
+impl FrameListLinkPointer {
+    fn new(next_addr: Option<(u32,FrameListLinkType)>) -> Self {
+        let mut this = Self(0);
+        if let Some((ptr,ty)) = next_addr {
+            this.set_ptr(ptr);
+            this.set_link_type(ty);
+            this.set_end(false);
+        } else {
+            this.set_end(true);
+        }
+
+        this
+    }
+}
+#[repr(u8)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, TryFromPrimitive)]
+pub enum FrameListLinkType {
+    IsochronousTransferDescriptor = 0,
+    QueueHead,
+    SplitTransactionIsochronousTransferDescriptor,
+    FrameSpanTraversalNode,
+}
+
+impl Into<u32> for FrameListLinkType {
+    fn into(self) -> u32 {
+        self as u8 as u32
+    }
+}
+
+impl From<u32> for FrameListLinkType {
+    fn from(value: u32) -> Self {
+        value.try_into().unwrap()
     }
 }

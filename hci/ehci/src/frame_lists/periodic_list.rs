@@ -1,57 +1,6 @@
-use bitfield::bitfield;
-use num_enum::TryFromPrimitive;
-
-
 #[repr(C)]
 struct PeriodicFrameList {
-    list: [FrameListLinkPointer;1024]
-}
-
-
-bitfield! {
-    struct FrameListLinkPointer(u32);
-    impl Debug;
-
-    /// When set this bit indicates that indicates that [Self::ptr] is invalid
-    end,set_end: 0;
-    from into FrameListLinkType, get_link_type, set_link_type: 2,1;
-    ptr,set_ptr: 31,5;
-}
-
-impl FrameListLinkPointer {
-    fn new(next_addr: Option<(u32,FrameListLinkType)>) -> Self {
-        let mut this = Self(0);
-        if let Some((ptr,ty)) = next_addr {
-            this.set_ptr(ptr);
-            this.set_link_type(ty);
-            this.set_end(false);
-        } else {
-            this.set_end(true);
-        }
-
-        this
-    }
-}
-
-#[repr(u8)]
-#[derive(Copy, Clone, Debug, PartialEq, Eq, TryFromPrimitive)]
-pub enum FrameListLinkType {
-    IsochronousTransferDescriptor = 0,
-    QueueHead,
-    SplitTransactionIsochronousTransferDescriptor,
-    FrameSpanTraversalNode,
-}
-
-impl Into<u32> for FrameListLinkType {
-    fn into(self) -> u32 {
-        self as u8 as u32
-    }
-}
-
-impl From<u32> for FrameListLinkType {
-    fn from(value: u32) -> Self {
-        value.try_into().unwrap()
-    }
+    list: [super::FrameListLinkPointer;1024]
 }
 
 enum FrameListNode {
@@ -67,8 +16,7 @@ pub mod isochronous_transfer {
     use bitfield::bitfield;
     use num_enum::{IntoPrimitive, TryFromPrimitive};
     use crate::frame_lists::Target;
-    use super::{FrameListLinkPointer,FrameListLinkType};
-
+    use super::super::{FrameListLinkPointer,FrameListLinkType};
     #[repr(C, align(32))]
     pub struct IsochronousTransferDescriptor {
         next_node: FrameListLinkPointer,
@@ -100,23 +48,23 @@ pub mod isochronous_transfer {
         ///
         /// `transfers` is an iterator which describes each transfer operation.
         /// Note that when `direction` is [super::super::TransactionDirection::Out] then the length
-        /// of all transactions must be specified. Specified buffers must be described by `buffers` 
+        /// of all transactions must be specified. Specified buffers must be described by `buffers`
         /// and the length+offest must not exceed the specified length of the buffer.
         ///
         /// `buffers` is similar to `direction` where it describes the transfer buffers as a range of 64bit addresses.
-        /// 
+        ///
         /// # Panics
-        /// 
-        /// This fn will panic if any of the following conditions are met. 
-        /// 
+        ///
+        /// This fn will panic if any of the following conditions are met.
+        ///
         /// * `transfers` yields more than 8 descriptors
         /// * `buffers` yields more than 7 buffers.
         /// * Any of the buffers specified by `transfers` wasn't defined
-        /// * A transaction descriptor attempts to overflow its target buffer. 
-        /// 
+        /// * A transaction descriptor attempts to overflow its target buffer.
+        ///
         /// # Safety
-        /// 
-        /// The caller must ensure that all buffers yielded by `buffers` must not specify memory 
+        ///
+        /// The caller must ensure that all buffers yielded by `buffers` must not specify memory
         /// which is in use and that the buffer is safe to use for DMA.
         /// See [Embedonomicon](https://docs.rust-embedded.org/embedonomicon/dma.html) for info about DMA safety.
         // note that this uses u64 as an address because these are physical pointers.
@@ -140,11 +88,11 @@ pub mod isochronous_transfer {
 
             let mut present_buffers: [Option<core::ops::Range<u64>>;7] = [const { None }; 7];
             for (i,buff) in buffers.enumerate() {
-                
+
                 *present_buffers.get_mut(i).expect("Excessive buffer descriptors given") = Some(buff.clone());
                 unsafe { this.set_buffer(i as u8, buff.start) };
             }
-            
+
             for (i,transaction) in transfers.enumerate() {
                 if i >= 8 {
                     panic!("Excessive transaction descriptors given");
@@ -155,10 +103,10 @@ pub mod isochronous_transfer {
                     length,
                     int,
                 } = transaction;
-                
+
                 let t = present_buffers[buffer as usize].as_ref().unwrap_or_else(|| panic!("Transaction descriptor {i} specified buffer {buffer} which was not defined")); //.expect but with lazy format-str
                 let t_len = t.end - t.start;
-                let tgt_len = (length.unwrap_or(0) as u64) + (offset as u64); 
+                let tgt_len = (length.unwrap_or(0) as u64) + (offset as u64);
                 if tgt_len > t_len {
                     panic!("Transaction descriptor {i} specified len {tgt_len:#x} which exceeds buffer {buffer}: {t:?}-{t_len:#x}");
                 }
@@ -198,7 +146,7 @@ pub mod isochronous_transfer {
         ///
         /// # Safety
         ///
-        /// When `pending == true` the caller must ensure that the offset + length of the transaction does not overflow the target buffer. 
+        /// When `pending == true` the caller must ensure that the offset + length of the transaction does not overflow the target buffer.
         // todo improve this or wrap it
         unsafe fn set_transaction(&mut self, transaction: u8, desc: ItdTransactionInfo, pending: bool) {
             assert!(transaction < 8);
@@ -208,7 +156,7 @@ pub mod isochronous_transfer {
                 length,
                 int,
             } = desc;
-            
+
             let td = &mut self.descriptors[transaction as usize];
             td.set_page(buffer as u32);
             td.set_transaction_offset(offset as u32);
@@ -362,7 +310,7 @@ pub mod isochronous_transfer {
 
         /// Sets the target function and endpoint.
         fn set_tgt(&mut self,target: Target) {
-            
+
 
             let addr = (target.endpoint.0 as u32) << 8;
             let endpoint = (target.endpoint.0 as u32) << 8;
