@@ -57,7 +57,8 @@ pub mod registers {
         }
 
         fn get_mask(&self) -> bool {
-            if *self.get_reg() & (1 << 16) > 0 {
+            // SAFETY: This is safe, it was originally a copy, which is changed to prevent rustc optimising this into a read-byte
+            if unsafe { core::ptr::read_volatile(self.get_reg()) } & (1 << 16) > 0 {
                 true
             } else {
                 false
