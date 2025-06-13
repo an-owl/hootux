@@ -351,7 +351,7 @@ mod operational_regs {
         /// See [UsbStatus] for corresponding interrupt meanings.
         ///
         /// Bits in this struct allow the controller to raise the corresponding interrupt.
-        struct IntEnable: u32 {
+        pub struct IntEnable: u32 {
             const USB_INT = 1;
             const USB_ERROR_INT = 1 << 1;
             const PORT_CHANGE_DETECT = 1 << 2;
@@ -363,7 +363,7 @@ mod operational_regs {
     // fixme I didnt really understand the description of this register
     // Only bits 13:0 are readable.
     // This is only writable when the controller is halted and the least 3 significant bits must never be set to `111` or `000`
-    struct FrameIndex(u32);
+    pub struct FrameIndex(u32);
 
     #[repr(u32)]
     #[derive(Debug, Copy, Clone, PartialEq, Eq)]
