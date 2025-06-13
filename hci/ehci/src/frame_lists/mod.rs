@@ -1,6 +1,7 @@
-use num_enum::TryFromPrimitive;
+use num_enum::{IntoPrimitive, TryFromPrimitive};
 
 pub mod periodic_list;
+pub mod queue_element;
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum TransactionDirection {
