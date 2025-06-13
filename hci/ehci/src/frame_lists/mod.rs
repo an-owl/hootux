@@ -126,3 +126,23 @@ impl From<u32> for FrameListLinkType {
         value.try_into().unwrap()
     }
 }
+
+#[repr(u8)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, TryFromPrimitive, IntoPrimitive)]
+enum TransactionCount {
+    One = 1,
+    Two,
+    Three,
+}
+
+impl From<u32> for TransactionCount {
+    fn from(value: u32) -> Self {
+        value.try_into().unwrap()
+    }
+}
+
+impl From<TransactionCount> for u32 {
+    fn from(value: TransactionCount) -> Self {
+        value as u32
+    }
+}

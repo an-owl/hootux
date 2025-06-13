@@ -14,7 +14,6 @@ pub mod isochronous_transfer {
     use core::marker::PhantomData;
     use core::mem::{offset_of, MaybeUninit};
     use bitfield::bitfield;
-    use num_enum::{IntoPrimitive, TryFromPrimitive};
     use crate::frame_lists::Target;
     use super::super::{FrameListLinkPointer,FrameListLinkType};
     #[repr(C, align(32))]
@@ -363,16 +362,8 @@ pub mod isochronous_transfer {
     impl BufferPointerLower for MultiTransactionField {}
 
     impl BufferPointerField<MultiTransactionField> {
-        fn get_multi_transaction(&self) -> TransactionCount {
+        fn get_multi_transaction(&self) -> super::super::TransactionCount {
             ((self.inner & 3) as u8).try_into().unwrap() // `0` is an illegal invariant
         }
-    }
-
-    #[repr(u8)]
-    #[derive(Debug, Copy, Clone, PartialEq, Eq, TryFromPrimitive, IntoPrimitive)]
-    enum TransactionCount {
-        One = 1,
-        Two,
-        Three,
     }
 }
