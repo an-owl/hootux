@@ -61,68 +61,20 @@ pub mod isochronous_transfer {
         /// and the length+offest must not exceed the specified length of the buffer.
         ///
         /// `buffers` is similar to `direction` where it describes the transfer buffers as a range of 64bit addresses.
-        ///
-        /// # Panics
-        ///
-        /// This fn will panic if any of the following conditions are met.
-        ///
-        /// * `transfers` yields more than 8 descriptors
-        /// * `buffers` yields more than 7 buffers.
-        /// * Any of the buffers specified by `transfers` wasn't defined
-        /// * A transaction descriptor attempts to overflow its target buffer.
-        ///
-        /// # Safety
-        ///
-        /// The caller must ensure that all buffers yielded by `buffers` must not specify memory
-        /// which is in use and that the buffer is safe to use for DMA.
-        /// See [Embedonomicon](https://docs.rust-embedded.org/embedonomicon/dma.html) for info about DMA safety.
-        // note that this uses u64 as an address because these are physical pointers.
         pub unsafe fn new(next: Option<(u32, FrameListLinkType)>,
                target: Target ,
                transfers: impl Iterator<Item=ItdTransactionInfo>,
                buffers: impl Iterator<Item=core::ops::Range<u64>>,
                direction: super::super::TransactionDirection
-        ) -> Self {
-            let mut this = Self {
+        ) -> Self { 
+            Self {
                 next_node: FrameListLinkPointer::new(next),
                 descriptors: [IsochronousTransactionDescriptor::empty(); 8],
                 buff_addr: BufferPointerField::empty(),
                 buff_packet_desc: BufferPointerField::empty(),
                 buff_multi: BufferPointerField::empty(),
                 buffers_3_6: [BufferPointerField::empty();3]
-            };
-
-            this.buff_packet_desc.set_direction(direction);
-            this.buff_addr.set_tgt(target);
-
-            let mut present_buffers: [Option<core::ops::Range<u64>>;7] = [const { None }; 7];
-            for (i,buff) in buffers.enumerate() {
-
-                *present_buffers.get_mut(i).expect("Excessive buffer descriptors given") = Some(buff.clone());
-                unsafe { this.set_buffer(i as u8, buff.start) };
             }
-
-            for (i,transaction) in transfers.enumerate() {
-                if i >= 8 {
-                    panic!("Excessive transaction descriptors given");
-                }
-                let ItdTransactionInfo {
-                    buffer,
-                    offset,
-                    length,
-                    int,
-                } = transaction;
-
-                let t = present_buffers[buffer as usize].as_ref().unwrap_or_else(|| panic!("Transaction descriptor {i} specified buffer {buffer} which was not defined")); //.expect but with lazy format-str
-                let t_len = t.end - t.start;
-                let tgt_len = (length.unwrap_or(0) as u64) + (offset as u64);
-                if tgt_len > t_len {
-                    panic!("Transaction descriptor {i} specified len {tgt_len:#x} which exceeds buffer {buffer}: {t:?}-{t_len:#x}");
-                }
-                unsafe { this.set_transaction(i as u8, transaction, true) };
-                this.descriptors[i].interrupt_on_complete(int)
-            };
-            this
         }
 
         /// Sets the given buffer to `addr`
