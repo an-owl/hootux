@@ -12,6 +12,7 @@ struct QueueHead {
     current_transaction: super::FrameListLinkPointer,
     next_pointer: super::FrameListLinkPointer,
     alternate_pointer: FrameListLinkPointerWithNakCount,
+    overlay: [u64;6],
 }
 
 bitfield! {
