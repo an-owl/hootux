@@ -16,6 +16,16 @@ pub mod isochronous_transfer {
     use bitfield::bitfield;
     use crate::frame_lists::Target;
     use super::super::{FrameListLinkPointer,FrameListLinkType};
+
+    /// When the controller executes a `IsochronousTransferDescriptor` bits 2:0 are used to select
+    /// the targeted transaction. During the transaction if the buffer targeted by the transaction
+    /// overflows the controller will use the following buffer.
+    ///
+    /// The maximum payload for an isochronous transaction is `1024` bytes however multiple
+    /// transactions may be executed [MultiTransactionField] times, potentially returning 3072 bytes
+    /// in a single μframe.
+    /// 
+    /// Allowing buffer `6` to overflow is UB.
     #[repr(C, align(32))]
     pub struct IsochronousTransferDescriptor {
         next_node: FrameListLinkPointer,
