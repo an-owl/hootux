@@ -43,36 +43,35 @@ pub mod mem {
     }
     
     /// `Mapper` provides an interface to allow fetching a pointer to a specified physical address.
-    pub trait Mapper {
-        /// Returns a region which can fi
-        /// 
-        /// The implementation must ensure that the entire region described by `layout` is mapped in its entirety.
-        /// If `addr` is not aligned to `layout.align()` then the implementation must use the 
-        /// `pointer_offset + layout.size` as the total size of the mapped region. 
-        /// The returned pointer **must** point to `addr`, the caller is responsible for alignment.
-        /// 
-        /// ```
-        ///  # fn map(mapper: &impl common::mem::Mapper, translator: &impl common::mem::Translator) {
-        ///         let layout = core::alloc::Layout::from_size_align(8,8).unwrap();
-        ///         let tgt_addr = 7;
-        ///         let ptr = mapper.map(tgt_addr,layout).unwrap();
-        /// 
-        ///         assert_eq!(translator.translate(&ptr.as_ptr()).unwrap(),tgt_addr); // Physical address is guaranteed to be the requested address
-        ///         // pointer is aligned to `8`, the remaining size 8 bytes must still be mapped.
-        ///         // The region here points to the physical address range 7..16
-        ///         assert_eq!(ptr.as_ptr().len(),9); 
-        ///  # } 
-        /// ```
-        fn map(&self, addr: u64, layout: core::alloc::Layout) -> Result<core::ptr::NonNull<[u8]>,core::alloc::AllocError>;
+    /// 
+    /// This trait defines an implementation of [Allocator] which can allocate certain physical addresses.
+    /// `Allocator` methods *must* return aliased memory when requested. The caller must ensure that aliasing rules are obeyed.
+    /// 
+    /// The implementation must ensure that the entire region described by `layout` is mapped in its entirety.
+    /// If `addr` is not aligned to `layout.align()` then the implementation must use the 
+    /// `pointer_offset + layout.size` as the total size of the mapped region. 
+    /// The returned pointer **must** point to `addr`, the caller is responsible for alignment.
+    ///
+    /// ```
+    ///  # #![feature(allocator_api)]
+    ///  # use std::alloc::Allocator; 
+    ///  # fn map(mapper: &mut impl common::mem::Mapper, translator: &impl common::mem::Translator) {
+    ///         let layout = core::alloc::Layout::from_size_align(8,8).unwrap();
+    ///         let tgt_addr = 7;
+    ///         let mapper = mapper.set_addr(tgt_addr);
+    ///         let ptr = Allocator::allocate(&mapper,layout).unwrap();
+    ///
+    ///         assert_eq!(translator.translate(&ptr.as_ptr()).unwrap(),tgt_addr); // Physical address is guaranteed to be the requested address
+    ///         // pointer is aligned to `8`, the remaining size 8 bytes must still be mapped.
+    ///         // The region here points to the physical address range 7..16
+    ///         assert_eq!(ptr.as_ptr().len(),9); 
+    ///  # } 
+    /// ```
+    pub trait Mapper: Allocator + Copy + Clone {
         
-        /// This fn will unmap a region mapped by [Self::map].
-        /// 
-        /// # Safety
-        /// 
-        /// The caller must ensure that the `addr` is not aliased.
-        unsafe fn unmap(&self, addr: core::ptr::NonNull<[u8]>, layout: core::alloc::Layout);
+        fn set_addr(self, addr: u64) -> Self;
     }
-    
+
     /// The DMA region describes memory ranges.
     /// 
     /// A 16bit DMA region is not defined here as it is irrelevant to USB.
