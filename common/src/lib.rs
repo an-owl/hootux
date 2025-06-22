@@ -71,6 +71,7 @@ pub mod mem {
     /// ```
     pub trait Mapper: Allocator + Copy + Clone {
         
+        /// Returns `Self` targeted at the physical address `addr`
         fn set_addr(self, addr: u64) -> Self;
     }
 
