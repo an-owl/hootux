@@ -56,6 +56,7 @@ pub mod mem {
         ///         let layout = core::alloc::Layout::from_size_align(8,8).unwrap();
         ///         let tgt_addr = 7;
         ///         let ptr = mapper.map(tgt_addr,layout).unwrap();
+        /// 
         ///         assert_eq!(translator.translate(&ptr.as_ptr()).unwrap(),tgt_addr); // Physical address is guaranteed to be the requested address
         ///         // pointer is aligned to `8`, the remaining size 8 bytes must still be mapped.
         ///         // The region here points to the physical address range 7..16
@@ -63,6 +64,13 @@ pub mod mem {
         ///  # } 
         /// ```
         fn map(&self, addr: u64, layout: core::alloc::Layout) -> Result<core::ptr::NonNull<[u8]>,core::alloc::AllocError>;
+        
+        /// This fn will unmap a region mapped by [Self::map].
+        /// 
+        /// # Safety
+        /// 
+        /// The caller must ensure that the `addr` is not aliased.
+        unsafe fn unmap(&self, addr: core::ptr::NonNull<[u8]>, layout: core::alloc::Layout);
     }
     
     /// The DMA region describes memory ranges.
