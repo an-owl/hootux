@@ -8,7 +8,7 @@ use core::num::NonZeroU8;
 pub mod mem {
     use core::alloc::Allocator;
 
-    /// This is a marker trait to indicate that all methods of [Allocator]
+    /// This is a trait that indicate that all methods of [Allocator] and are 
     /// will return physically contiguous memory where the physical and virtual addresses are both
     /// aligned to [core::alloc::Layout::align].
     /// 
@@ -16,7 +16,9 @@ pub mod mem {
     /// (e.g via methods like [Allocator::shrink])
     /// 
     /// A physical memory allocator must allow the caller to specify what [DmaRegion] it requires.
-    pub unsafe trait PhysicalMemoryAllocator: Allocator + Translator {}
+    pub unsafe trait PhysicalMemoryAllocator: Allocator + Translator + Clone + Copy {
+        fn set_region(self, region: DmaRegion) -> Self;
+    }
     
     /// Helper trait for smart pointer types.
     pub trait Translate {
@@ -79,7 +81,7 @@ pub mod mem {
     /// Variants may be decremented into smaller regions where necessary, but may not incremented 
     /// into larger regions.
     #[derive(Debug, Clone, Copy, Eq, PartialEq, Ord, PartialOrd, Default)]
-    enum DmaRegion {
+    pub enum DmaRegion {
         /// Describes the range 0..4GiB
         #[cfg_attr(target_pointer_width = "32",default)]
         Dma32,
@@ -163,3 +165,4 @@ impl From<Endpoint> for u8 {
         ep.0
     }
 }
+ 
