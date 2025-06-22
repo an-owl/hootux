@@ -14,6 +14,8 @@ pub mod mem {
     /// 
     /// The allocated regions may not be relocated in physical memory unless explicitly stated 
     /// (e.g via methods like [Allocator::shrink])
+    /// 
+    /// A physical memory allocator must allow the caller to specify what [DmaRegion] it requires.
     pub unsafe trait PhysicalMemoryAllocator: Allocator + Translator {}
     
     /// Helper trait for smart pointer types.
@@ -39,6 +41,45 @@ pub mod mem {
             alloc::sync::Arc::allocator(self).translate(&**self)
         }
     }
+    
+    /// `Mapper` provides an interface to allow fetching a pointer to a specified physical address.
+    pub trait Mapper {
+        /// Returns a region which can fi
+        /// 
+        /// The implementation must ensure that the entire region described by `layout` is mapped in its entirety.
+        /// If `addr` is not aligned to `layout.align()` then the implementation must use the 
+        /// `pointer_offset + layout.size` as the total size of the mapped region. 
+        /// The returned pointer **must** point to `addr`, the caller is responsible for alignment.
+        /// 
+        /// ```
+        ///  # fn map(mapper: &impl common::mem::Mapper, translator: &impl common::mem::Translator) {
+        ///         let layout = core::alloc::Layout::from_size_align(8,8).unwrap();
+        ///         let tgt_addr = 7;
+        ///         let ptr = mapper.map(tgt_addr,layout).unwrap();
+        ///         assert_eq!(translator.translate(&ptr.as_ptr()).unwrap(),tgt_addr); // Physical address is guaranteed to be the requested address
+        ///         // pointer is aligned to `8`, the remaining size 8 bytes must still be mapped.
+        ///         // The region here points to the physical address range 7..16
+        ///         assert_eq!(ptr.as_ptr().len(),9); 
+        ///  # } 
+        /// ```
+        fn map(&self, addr: u64, layout: core::alloc::Layout) -> Result<core::ptr::NonNull<[u8]>,core::alloc::AllocError>;
+    }
+    
+    /// The DMA region describes memory ranges.
+    /// 
+    /// A 16bit DMA region is not defined here as it is irrelevant to USB.
+    /// 
+    /// Variants may be decremented into smaller regions where necessary, but may not incremented 
+    /// into larger regions.
+    #[derive(Debug, Clone, Copy, Eq, PartialEq, Ord, PartialOrd, Default)]
+    enum DmaRegion {
+        /// Describes the range 0..4GiB
+        #[cfg_attr(target_pointer_width = "32",default)]
+        Dma32,
+        /// Describes the region 4GiB..16EiB
+        #[cfg_attr(target_pointer_width = "64",default)]
+        Dma64,
+    }
 }
 
 pub enum TargetSpeed {
@@ -58,7 +99,7 @@ impl Address {
     pub const fn from_int(num: u8) -> Option<Self> {
         match num {
             0 => Some(Address::Broadcast),
-            // SAFETY: This takes a 
+            // SAFETY: This takes a
             n @ 1..127 => Some(Address::AddrNum(AddrNum( unsafe { NonZeroU8::new_unchecked(n) }))),
             _ => None,
         }
@@ -87,15 +128,15 @@ impl Target {
     pub const fn new(address: Address, endpoint: Endpoint) -> Self {
         Target { address, endpoint }
     }
-    
+
     pub const fn address(&self) -> Address {
         self.address
     }
-    
+
     pub const fn endpoint(&self) -> Endpoint {
         self.endpoint
     }
-    
+
 }
 
 #[derive(Debug, Ord, PartialOrd, Eq, PartialEq, Copy, Clone)]
