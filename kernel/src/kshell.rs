@@ -209,6 +209,55 @@ impl Command for BuiltinCommands {
                     println!("{i}");
                 }
             }
+            // Note: This had some wierd issues initially that I didnt fix but now cant reproduce.
+            if args.starts_with("cat") {
+                let Some(p) = args.find("/") else {
+                    log::error!("invalid arguments");
+                    return CommandResult::Err;
+                };
+                let path = args.split_at(p).1;
+                let f = match get_vfs().open(path).await {
+                    Ok(f) => f,
+                    Err(e) => {
+                        log::error!("cat: failed to open {path}: {e:?}");
+                        return CommandResult::Err;
+                    }
+                };
+                let f_ty = f.file_type();
+                let Ok(f) = cast_file!(NormalFile: f) else {
+                    log::error!("cat: {path} is {:?}", f_ty);
+                    return CommandResult::Err;
+                };
+
+                let mut full_buff = Vec::new();
+                let mut count = 0;
+                loop {
+                    let mut partial = Vec::new();
+                    const PARTIAL_SIZE: usize = 4096;
+                    partial.resize(PARTIAL_SIZE, 0u8);
+                    let guard = DmaGuard::new(partial);
+                    let (guard, borrow) = guard.claim().unwrap();
+                    match f.read(count, borrow).await {
+                        Ok((buff, len)) => {
+                            drop(buff);
+                            let t = guard.unwrap().ok().unwrap().unwrap();
+                            full_buff.extend_from_slice(&t[..len]);
+                            if len != PARTIAL_SIZE {
+                                break;
+                            }
+                        }
+                        Err((IoError::EndOfFile, ..)) => break,
+                        Err((e, ..)) => {
+                            log::error!("cat: Got {e:?} when reading {path}")
+                        }
+                    }
+                }
+
+                match core::str::from_utf8(&full_buff) {
+                    Ok(s) => println!("{}\nformat: utf8\n{}", path, s),
+                    Err(_) => println!("{}\nformat: byte hex\n{:?}", path, &*full_buff),
+                }
+            }
             CommandResult::BadMatch
         }
         .boxed()
