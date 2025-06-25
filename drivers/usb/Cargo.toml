@@ -4,3 +4,6 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+common = { path = "common" }
+ehci = { path = "hci/ehci" }
+volatile = "0.6.1"
