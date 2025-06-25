@@ -1,0 +1,12 @@
+[package]
+name = "ehci"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+bitfield = "0.19.1"
+bitflags = "2.9.1"
+num_enum = { version = "0.7.3", default-features = false }
+volatile = { version = "0.6.1", features = ["derive"] }
+common = {path = "../../common"}
+log = "0.4.27"
