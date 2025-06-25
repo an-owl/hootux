@@ -26,7 +26,7 @@ dependencies = [
  "hootux",
  "log",
  "spin 0.9.8",
- "volatile",
+ "volatile 0.4.6",
 ]
 
 [[package]]
@@ -89,6 +89,26 @@ name = "bit_field"
 version = "0.10.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dc827186963e592360843fb5ba4b973e145841266c1357f7180c43526f2e5b61"
+
+[[package]]
+name = "bitfield"
+version = "0.19.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "db1bcd90f88eabbf0cadbfb87a45bceeaebcd3b4bc9e43da379cd2ef0162590d"
+dependencies = [
+ "bitfield-macros",
+]
+
+[[package]]
+name = "bitfield-macros"
+version = "0.19.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3787a07661997bfc05dd3431e379c0188573f78857080cf682e1393ab8e4d64c"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.100",
+]
 
 [[package]]
 name = "bitflags"
@@ -174,6 +194,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "baf1de4339761588bc0619e3cbc0120ee582ebb74b53b4efbf79117bd2da40fd"
 
 [[package]]
+name = "common"
+version = "0.1.0"
+
+[[package]]
 name = "concurrent-queue"
 version = "2.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -251,6 +275,18 @@ dependencies = [
  "quote",
  "syn 2.0.100",
  "unicode-xid",
+]
+
+[[package]]
+name = "ehci"
+version = "0.1.0"
+dependencies = [
+ "bitfield",
+ "bitflags 2.9.1",
+ "common",
+ "log",
+ "num_enum 0.7.4",
+ "volatile 0.6.1",
 ]
 
 [[package]]
@@ -435,7 +471,7 @@ dependencies = [
  "spin 0.9.8",
  "suffix",
  "uart_16550",
- "volatile",
+ "volatile 0.4.6",
  "x86_64",
  "x86_msr",
 ]
@@ -1105,10 +1141,34 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ebc1c04c71510c7f702b52b7c350734c9ff1295c464a03335b00bb84fc54f853"
 
 [[package]]
+name = "usb"
+version = "0.1.0"
+
+[[package]]
 name = "volatile"
 version = "0.4.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "442887c63f2c839b346c192d047a7c87e73d0689c9157b00b53dcc27dd5ea793"
+
+[[package]]
+name = "volatile"
+version = "0.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "af8ca9a5d4debca0633e697c88269395493cebf2e10db21ca2dbde37c1356452"
+dependencies = [
+ "volatile-macro",
+]
+
+[[package]]
+name = "volatile-macro"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "65c67ce935f3b4329e473ecaff7bab444fcdc3d1d19f8bae61fabfa90b84f93e"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.100",
+]
 
 [[package]]
 name = "winnow"
@@ -1148,7 +1208,7 @@ dependencies = [
  "bit_field",
  "bitflags 2.9.1",
  "rustversion",
- "volatile",
+ "volatile 0.4.6",
 ]
 
 [[package]]
