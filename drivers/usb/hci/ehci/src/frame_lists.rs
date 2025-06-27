@@ -1,5 +1,5 @@
-use num_enum::{IntoPrimitive, TryFromPrimitive};
 use bitfield::bitfield;
+use num_enum::{IntoPrimitive, TryFromPrimitive};
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum TransactionDirection {
@@ -31,17 +31,17 @@ pub struct Target {
 }
 
 /// Each USB function contains 16 possible endpoints.
-/// Endpoint 0 is reserved as the control endpoint, the remaining 15 can be configured depending 
+/// Endpoint 0 is reserved as the control endpoint, the remaining 15 can be configured depending
 /// on the function of the device.
 pub struct Endpoint(u8);
 
 impl Endpoint {
     pub const CONTROL: Self = Self(0);
-    
+
     /// Constructs a new `self`.
-    /// 
+    ///
     /// # Panics
-    /// 
+    ///
     /// This fn will panic if `endpoint >= 16`
     const fn new(endpoint: u8) -> Self {
         assert!(endpoint < 16);
@@ -55,19 +55,19 @@ impl From<Endpoint> for u8 {
     }
 }
 
-/// Each USB function must be configured by the host with an address ranging from 1 to 63. 
+/// Each USB function must be configured by the host with an address ranging from 1 to 63.
 /// This struct represents possible addresses.
 /// Address `0` is reserved for broadcasts where all functions are required to respond and cannot
-/// be assigned to a function. 
+/// be assigned to a function.
 pub struct Address(u8);
 
 impl Address {
     pub const BROADCAST: Self = Self(0);
-    
+
     /// Constructs a new Address.
-    /// 
+    ///
     /// # Panics
-    /// 
+    ///
     /// This fn will panic if `address >= 64`
     const fn new(address: u8) -> Self {
         assert!(address < 64);
@@ -88,13 +88,14 @@ bitfield::bitfield! {
     /// When set this bit indicates that indicates that [Self::ptr] is invalid
     end,set_end: 0;
     from into FrameListLinkType, get_link_type, set_link_type: 2,1;
+    // fixme i think this has a bug where the data << 5 when it should not be
     ptr,set_ptr: 31,5;
 }
 
 impl FrameListLinkPointer {
-    fn new(next_addr: Option<(u32,FrameListLinkType)>) -> Self {
+    fn new(next_addr: Option<(u32, FrameListLinkType)>) -> Self {
         let mut this = Self(0);
-        if let Some((ptr,ty)) = next_addr {
+        if let Some((ptr, ty)) = next_addr {
             this.set_ptr(ptr);
             this.set_link_type(ty);
             this.set_end(false);
@@ -128,7 +129,7 @@ impl From<u32> for FrameListLinkType {
 
 #[repr(u8)]
 #[derive(Debug, Copy, Clone, PartialEq, Eq, TryFromPrimitive, IntoPrimitive)]
-enum TransactionCount {
+pub enum TransactionCount {
     One = 1,
     Two,
     Three,
@@ -146,10 +147,8 @@ impl From<TransactionCount> for u32 {
     }
 }
 
-
-
 #[repr(C)]
-struct QueueHead {
+pub struct QueueHead {
     next_link_ptr: FrameListLinkPointer,
     ctl0: Ctl0,
     ctl1: Ctl1,
@@ -158,7 +157,41 @@ struct QueueHead {
     current_transaction: FrameListLinkPointer,
     next_pointer: FrameListLinkPointer,
     alternate_pointer: FrameListLinkPointerWithNakCount,
-    overlay: [u64;6],
+    overlay: [u32; 6],
+}
+
+impl QueueHead {
+    pub const fn new() -> Self {
+        Self {
+            next_link_ptr: FrameListLinkPointer::new(None),
+            ctl0: Ctl0(0),
+            ctl1: Ctl1(0),
+            current_transaction: FrameListLinkPointer::new(None),
+            next_pointer: FrameListLinkPointer::new(None),
+            alternate_pointer: FrameListLinkPointerWithNakCount(0),
+            overlay: [0; 6],
+        }
+    }
+
+    /// Sets the current transaction pointer to `addr`
+    ///
+    /// # Panics
+    ///
+    /// This fn will panic if `addr` is not aligned to `32`
+    ///
+    /// # Safety
+    ///
+    /// The caller must ensure that `addr` contains the address of a properly terminated [QueueElementTransferDescriptor]
+    pub unsafe fn set_current_transaction(&mut self, addr: u32) {
+        assert_eq!(addr & (0x32 - 1), 0);
+        self.current_transaction.set_ptr(addr);
+    }
+
+    /// Sets the "H bit" indicating this is the head of the reclamation list.
+    /// Only one queue head in the asynchronous schedule should have the "H bit" set.
+    pub fn set_head_of_list(&mut self) {
+        self.ctl0.set_head_reclimation_list(true)
+    }
 }
 
 bitfield! {
@@ -209,7 +242,7 @@ bitfield! {
 
 #[repr(u8)]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, TryFromPrimitive, IntoPrimitive)]
-enum EndpointSpeed {
+pub enum EndpointSpeed {
     FullSpeed = 0,
     LowSpeed = 1,
     HighSpeed = 2,
@@ -217,7 +250,9 @@ enum EndpointSpeed {
 
 impl From<u32> for EndpointSpeed {
     fn from(value: u32) -> Self {
-        (value as u8).try_into().expect("invalid value or endpoint speed")
+        (value as u8)
+            .try_into()
+            .expect("invalid value or endpoint speed")
     }
 }
 
@@ -284,18 +319,64 @@ bitfield::bitfield! {
     ptr,set_ptr: 31,5;
 }
 
+impl FrameListLinkPointerWithNakCount {
+    fn new() -> Self {
+        let mut this = Self(0);
+        this.set_end(true);
+        this
+    }
+}
 
-#[repr(C,align(32))]
-struct QueueElementTransferDescriptor {
+#[repr(C, align(32))]
+pub struct QueueElementTransferDescriptor {
     next_qtd: FrameListLinkPointer,
     /// This field points to the qTD that is used when in the event that the current qTD execution
     /// encounters a short packet for an [TransactionDirection::In] transaction.
     alt_qtd: FrameListLinkPointer,
     config: QtdConfig,
     buffer_offset: BufferOffset,
-    buffers: [BufferField;4]
+    buffers: [BufferField; 4],
 }
 
+impl QueueElementTransferDescriptor {
+    pub const fn new() -> Self {
+        Self {
+            next_qtd: FrameListLinkPointer::new(None),
+            alt_qtd: FrameListLinkPointer::new(None),
+            config: QtdConfig(0),
+            buffer_offset: BufferOffset(0),
+            buffers: [BufferField(0); 4],
+        }
+    }
+
+    /// Sets the next and alternate QTD fields in `self`.
+    ///
+    /// When either `next` is `None` the terminate bit will be set disabling traversal
+    /// to the address in that field.
+    ///
+    /// # Safety
+    ///
+    /// The caller must ensure that when `next` and `alternate` are `Some(_)` that they contain
+    /// valid pointers to another `QTD`
+    pub unsafe fn set_next(&mut self, next: Option<u32>) {
+        if let Some(next) = next {
+            self.next_qtd.set_ptr(next);
+            self.next_qtd.set_end(false); // Clear T-bit after setting address to prevent wild pointer dereferencing.
+        } else {
+            self.next_qtd.set_end(true);
+        }
+    }
+
+    /// Performs the same operation as [Self::set_next] on the alternate pointer.
+    pub unsafe fn set_alternate(&mut self, alternate: Option<u32>) {
+        if let Some(next) = alternate {
+            self.alt_qtd.set_ptr(next);
+            self.alt_qtd.set_end(false);
+        } else {
+            self.alt_qtd.set_end(true);
+        }
+    }
+}
 
 bitfield! {
     struct QtdConfig(u32);
@@ -399,7 +480,7 @@ bitfield! {
 
 #[repr(u8)]
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
-enum PidCode {
+pub enum PidCode {
     Out = 0,
     In,
     Setup,
@@ -437,7 +518,7 @@ trait BufferPointerRegister {
 
     /// Returns the pointer of the buffer field.
     fn get_buffer(&self) -> u32 {
-        self.bits() & !((4096)-1)
+        self.bits() & !((4096) - 1)
     }
 
     /// Sets the buffer pointer to `buffer`
@@ -446,13 +527,11 @@ trait BufferPointerRegister {
     ///
     /// `buffer` must have an alignment of `0x1000`
     fn set_buffer(&mut self, buffer: u32) {
-        assert_eq!(buffer & (4096-1), 0, "Buffer misaligned");
-        let buzz_cut = self.get_buffer() & (4096-1);
+        assert_eq!(buffer & (4096 - 1), 0, "Buffer misaligned");
+        let buzz_cut = self.get_buffer() & (4096 - 1);
         self.set_buffer(buzz_cut | buffer);
     }
-
 }
-
 
 /// This field contains the offset in bytes into the current register.
 ///
@@ -470,13 +549,13 @@ impl BufferOffset {
     /// This fn will panic if `offset > 0x1000`.
     fn set_offset(&mut self, offset: u32) {
         assert!(offset > 0x1000);
-        let trimmed = self.0 & !(4096-1);
+        let trimmed = self.0 & !(4096 - 1);
         self.0 = trimmed | offset;
     }
 
     /// Returns the offset into the buffer.
     fn get_offset(&self) -> u32 {
-        self.0 & (4096-1)
+        self.0 & (4096 - 1)
     }
 }
 
@@ -503,329 +582,335 @@ impl BufferPointerRegister for BufferField {
 }
 
 #[repr(C)]
-struct PeriodicFrameList {
-    list: [FrameListLinkPointer;1024]
+pub struct PeriodicFrameList {
+    list: [FrameListLinkPointer; 1024],
 }
 
-enum FrameListNode {
+pub enum FrameListNode {
     IsochronousTransferDescriptor(IsochronousTransferDescriptor),
     QueueHead(),
     SplitTransactionIsochronousTransferDescriptor(),
     FrameSpanTraversalNode(),
 }
 
+use core::marker::PhantomData;
+use core::mem::{MaybeUninit, offset_of};
 
-    use core::marker::PhantomData;
-    use core::mem::{offset_of, MaybeUninit};
+/// When the controller executes a `IsochronousTransferDescriptor` bits 2:0 are used to select
+/// the targeted transaction. During the transaction if the buffer targeted by the transaction
+/// overflows the controller will use the following buffer.
+///
+/// The maximum payload for an isochronous transaction is `1024` bytes however multiple
+/// transactions may be executed [MultiTransactionField] times, potentially returning 3072 bytes
+/// in a single μframe.
+///
+/// Allowing buffer `6` to overflow is UB.
+#[repr(C, align(32))]
+pub struct IsochronousTransferDescriptor {
+    next_node: FrameListLinkPointer,
+    descriptors: [IsochronousTransactionDescriptor; 8],
+    buff_addr: BufferPointerField<AddressLower>,
+    buff_packet_desc: BufferPointerField<TransactionDescription>,
+    buff_multi: BufferPointerField<MultiTransactionField>,
+    buffers_3_6: [BufferPointerField; 3],
+}
 
-    /// When the controller executes a `IsochronousTransferDescriptor` bits 2:0 are used to select
-    /// the targeted transaction. During the transaction if the buffer targeted by the transaction
-    /// overflows the controller will use the following buffer.
+pub struct ItdTransactionInfo {
+    buffer: u8,
+    offset: u16,
+    length: Option<u16>,
+    int: bool,
+}
+
+impl ItdTransactionInfo {
+    const fn new(buffer: u8, offset: u16, len: Option<u16>, interrupt: bool) -> Self {
+        assert!(buffer < 8);
+        assert!(offset < 1024);
+        Self {
+            buffer,
+            offset,
+            length: len,
+            int: interrupt,
+        }
+    }
+}
+
+impl IsochronousTransferDescriptor {
+    /// Constructs a new IsochronousTransferDescriptor.
     ///
-    /// The maximum payload for an isochronous transaction is `1024` bytes however multiple
-    /// transactions may be executed [MultiTransactionField] times, potentially returning 3072 bytes
-    /// in a single μframe.
+    /// `transfers` is an iterator which describes each transfer operation.
+    /// Note that when `direction` is [TransactionDirection::Out] then the length
+    /// of all transactions must be specified. Specified buffers must be described by `buffers`
+    /// and the length+offest must not exceed the specified length of the buffer.
     ///
-    /// Allowing buffer `6` to overflow is UB.
-    #[repr(C, align(32))]
-    pub struct IsochronousTransferDescriptor {
-        next_node: FrameListLinkPointer,
-        descriptors: [IsochronousTransactionDescriptor; 8],
-        buff_addr: BufferPointerField<AddressLower>,
-        buff_packet_desc: BufferPointerField<TransactionDescription>,
-        buff_multi: BufferPointerField<MultiTransactionField>,
-        buffers_3_6: [BufferPointerField; 3],
-    }
-
-    pub struct ItdTransactionInfo {
-        buffer: u8,
-        offset: u16,
-        length: Option<u16>,
-        int: bool
-    }
-
-    impl ItdTransactionInfo {
-        const fn new(buffer: u8, offset: u16, len: Option<u16>,interrupt: bool) -> Self {
-            assert!(buffer < 8);
-            assert!(offset < 1024);
-            Self { buffer, offset, length: len, int: interrupt }
+    /// `buffers` is similar to `direction` where it describes the transfer buffers as a range of 64bit addresses.
+    pub unsafe fn new(
+        next: Option<(u32, FrameListLinkType)>,
+        target: Target,
+        transfers: impl Iterator<Item = ItdTransactionInfo>,
+        buffers: impl Iterator<Item = core::ops::Range<u64>>,
+        direction: TransactionDirection,
+    ) -> Self {
+        Self {
+            next_node: FrameListLinkPointer::new(next),
+            descriptors: [IsochronousTransactionDescriptor::empty(); 8],
+            buff_addr: BufferPointerField::empty(),
+            buff_packet_desc: BufferPointerField::empty(),
+            buff_multi: BufferPointerField::empty(),
+            buffers_3_6: [BufferPointerField::empty(); 3],
         }
     }
 
-    impl IsochronousTransferDescriptor {
-
-        /// Constructs a new IsochronousTransferDescriptor.
-        ///
-        /// `transfers` is an iterator which describes each transfer operation.
-        /// Note that when `direction` is [TransactionDirection::Out] then the length
-        /// of all transactions must be specified. Specified buffers must be described by `buffers`
-        /// and the length+offest must not exceed the specified length of the buffer.
-        ///
-        /// `buffers` is similar to `direction` where it describes the transfer buffers as a range of 64bit addresses.
-        pub unsafe fn new(next: Option<(u32, FrameListLinkType)>,
-                          target: Target ,
-                          transfers: impl Iterator<Item=ItdTransactionInfo>,
-                          buffers: impl Iterator<Item=core::ops::Range<u64>>,
-                          direction: TransactionDirection
-        ) -> Self {
-            Self {
-                next_node: FrameListLinkPointer::new(next),
-                descriptors: [IsochronousTransactionDescriptor::empty(); 8],
-                buff_addr: BufferPointerField::empty(),
-                buff_packet_desc: BufferPointerField::empty(),
-                buff_multi: BufferPointerField::empty(),
-                buffers_3_6: [BufferPointerField::empty();3]
-            }
-        }
-
-        /// Sets the given buffer to `addr`
-        ///
-        /// # Panics
-        ///
-        /// `buffer` must be lower than 8 and `addr` must be a valid size for `self` and aligned to `4096`
-        ///
-        /// # Safety
-        ///
-        /// The caller must ensure that the allocated buffer is large enough to accommodate the maximum
-        /// packet size and will not be overrun.
-        unsafe fn set_buffer(&mut self, buffer: u8, addr: u64) {
-            assert!(buffer < 8);
-            assert!(addr <= u32::MAX as u64);
-            match buffer {
-                0 => self.buff_addr.set_pointer(addr as u32),
-                1 => self.buff_packet_desc.set_pointer(addr as u32),
-                2 => self.buff_multi.set_pointer(addr as u32),
-                3 | 4 | 5 => self.buffers_3_6[(buffer - 3) as usize].set_pointer(addr as u32),
-                _ => unreachable!()
-            }
-        }
-
-        /// Configures the transaction indicated by `transaction`.
-        ///
-        /// # Panics
-        ///
-        /// This fn will panic if `transaction >= 8`.
-        ///
-        /// # Safety
-        ///
-        /// When `pending == true` the caller must ensure that the offset + length of the transaction does not overflow the target buffer.
-        // todo improve this or wrap it
-        unsafe fn set_transaction(&mut self, transaction: u8, desc: ItdTransactionInfo, pending: bool) {
-            assert!(transaction < 8);
-            let ItdTransactionInfo {
-                buffer,
-                offset,
-                length,
-                int,
-            } = desc;
-
-            let td = &mut self.descriptors[transaction as usize];
-            td.set_page(buffer as u32);
-            td.set_transaction_offset(offset as u32);
-            td.set_transaction_length(length.unwrap_or(0) as u32);
-            td.interrupt_on_complete(int);
-            td.set_pending(pending);
+    /// Sets the given buffer to `addr`
+    ///
+    /// # Panics
+    ///
+    /// `buffer` must be lower than 8 and `addr` must be a valid size for `self` and aligned to `4096`
+    ///
+    /// # Safety
+    ///
+    /// The caller must ensure that the allocated buffer is large enough to accommodate the maximum
+    /// packet size and will not be overrun.
+    unsafe fn set_buffer(&mut self, buffer: u8, addr: u64) {
+        assert!(buffer < 8);
+        assert!(addr <= u32::MAX as u64);
+        match buffer {
+            0 => self.buff_addr.set_pointer(addr as u32),
+            1 => self.buff_packet_desc.set_pointer(addr as u32),
+            2 => self.buff_multi.set_pointer(addr as u32),
+            3 | 4 | 5 => self.buffers_3_6[(buffer - 3) as usize].set_pointer(addr as u32),
+            _ => unreachable!(),
         }
     }
 
-    trait ItdExt {
-        fn get_transfer_descriptor(&self, descriptor: u8) -> IsochronousTransactionDescriptor;
+    /// Configures the transaction indicated by `transaction`.
+    ///
+    /// # Panics
+    ///
+    /// This fn will panic if `transaction >= 8`.
+    ///
+    /// # Safety
+    ///
+    /// When `pending == true` the caller must ensure that the offset + length of the transaction does not overflow the target buffer.
+    // todo improve this or wrap it
+    unsafe fn set_transaction(&mut self, transaction: u8, desc: ItdTransactionInfo, pending: bool) {
+        assert!(transaction < 8);
+        let ItdTransactionInfo {
+            buffer,
+            offset,
+            length,
+            int,
+        } = desc;
 
-        // u64 to allow 64bit extension
-        fn get_buffer_ptr(&self, buffer: u8) -> u64;
+        let td = &mut self.descriptors[transaction as usize];
+        td.set_page(buffer as u32);
+        td.set_transaction_offset(offset as u32);
+        td.set_transaction_length(length.unwrap_or(0) as u32);
+        td.interrupt_on_complete(int);
+        td.set_pending(pending);
+    }
+}
+
+trait ItdExt {
+    fn get_transfer_descriptor(&self, descriptor: u8) -> IsochronousTransactionDescriptor;
+
+    // u64 to allow 64bit extension
+    fn get_buffer_ptr(&self, buffer: u8) -> u64;
+}
+
+impl ItdExt for MaybeUninit<IsochronousTransferDescriptor> {
+    fn get_transfer_descriptor(&self, descriptor: u8) -> IsochronousTransactionDescriptor {
+        assert!(descriptor < 8);
+        // SAFETY: Offset is fetched from core::mem::offset_of which guarantees we get the correct offset.
+        // ptr points to the first IsochronousTransactionDescriptor
+        let arr_ptr = unsafe {
+            self.as_ptr()
+                .byte_add(offset_of!(IsochronousTransferDescriptor, descriptors))
+                .cast::<IsochronousTransactionDescriptor>()
+        };
+        // SAFETY: Wee assert that descriptor is a valid value above
+        let tgt_ptr = unsafe { arr_ptr.offset(descriptor as usize as isize) }; // extra step to explicitly disallow sign extension
+
+        unsafe { tgt_ptr.read_volatile() }
     }
 
-    impl ItdExt for MaybeUninit<IsochronousTransferDescriptor> {
-        fn get_transfer_descriptor(&self, descriptor: u8) -> IsochronousTransactionDescriptor {
-            assert!(descriptor < 8);
-            // SAFETY: Offset is fetched from core::mem::offset_of which guarantees we get the correct offset.
-            // ptr points to the first IsochronousTransactionDescriptor
-            let arr_ptr = unsafe { self.as_ptr().byte_add(offset_of!(IsochronousTransferDescriptor,descriptors)).cast::<IsochronousTransactionDescriptor>() };
-            // SAFETY: Wee assert that descriptor is a valid value above
-            let tgt_ptr = unsafe { arr_ptr.offset(descriptor as usize as isize) }; // extra step to explicitly disallow sign extension
+    fn get_buffer_ptr(&self, buffer: u8) -> u64 {
+        assert!(buffer < 6);
 
-            unsafe { tgt_ptr.read_volatile() }
-        }
+        // SAFETY: Offset is fetched from core::mem::offset_of which guarantees we get the correct offset.
+        // This may technically read an illegal invariant, but all BufferPointerField<T>'s buffer address can be safely accessed via BufferPointerField
+        let arr_ptr = unsafe {
+            self.as_ptr()
+                .byte_add(offset_of!(IsochronousTransferDescriptor, buff_addr))
+                .cast::<BufferPointerField>()
+        };
 
-        fn get_buffer_ptr(&self, buffer: u8) -> u64 {
-            assert!(buffer < 6);
-
-            // SAFETY: Offset is fetched from core::mem::offset_of which guarantees we get the correct offset.
-            // This may technically read an illegal invariant, but all BufferPointerField<T>'s buffer address can be safely accessed via BufferPointerField
-            let arr_ptr = unsafe { self.as_ptr().byte_add(offset_of!(IsochronousTransferDescriptor,buff_addr)).cast::<BufferPointerField>() };
-
-            // SAFETY: arr_ptr is guaranteed to be aligned
-            unsafe { arr_ptr.offset(buffer as usize as isize).read_volatile() }.get_pointer() as u64
-        }
+        // SAFETY: arr_ptr is guaranteed to be aligned
+        unsafe { arr_ptr.offset(buffer as usize as isize).read_volatile() }.get_pointer() as u64
     }
+}
 
-    bitfield! {
-        #[repr(transparent)]
-        #[derive(Copy, Clone)]
-        struct IsochronousTransactionDescriptor(u32);
-
-        /// Indicates the offset into the selected page this transaction should use.
-        // So we can use a single page multiple times.
-        transaction_offset, set_transaction_offset: 11,0;
-
-        /// Indicates which page in [IsochronousTransferDescriptor] will be used by this transaction.
-        ///
-        /// Only values between `0..=6` are valid.
-        selected_page, set_page: 14,12;
-
-        /// When set the controller will raise an interrupt at the next interrupt threshold.
-        _ , interrupt_on_complete: 15;
-
-        /// For an OUT transaction this indicates the number of bytes that will be send by the controller.
-        /// The controller is not required to update this field to indicate the number of bytes transmitted.
-        // So it might
-        ///
-        /// For an IN transaction this indicates the number of bytes software expects to be sent.
-        /// During the status update the controller writes back the number of bytes successfully delivered.
-        transaction_length, set_transaction_length : 27,16;
-
-        /// Set by the controller when an invalid response is received during an IN transaction
-        transaction_err, _ : 28;
-
-        /// Set by the controller when babble is detected.
-        /// Babble is when more data was send by the device than was expected.
-        babble, _: 29;
-
-        /// Indicates that the controller uis unable to keep up with reception of data or
-        /// or is unable to send data fast enough.
-        buffer_error, _ : 30;
-
-        /// Software must set this to `true` to enable the execution of this
-        /// transaction.
-        /// This is set to `false` by the controller when its transaction is completed.
-        is_pending, set_pending: 31;
-    }
-
-    impl IsochronousTransactionDescriptor {
-
-        /// Returns an empty Self. This contains no data and will not be executed.
-        const fn empty() -> Self {
-            Self(0)
-        }
-    }
-
-
-    /// Marker trait for [BufferPointerField]s to indicate what is stored in the lower 12 bits.
-    trait BufferPointerLower: Copy + Clone {}
-
-    /// For fields 2:6
-    #[derive(Copy, Clone)]
-    struct ReservedLower;
-    impl BufferPointerLower for ReservedLower {}
-
+bitfield! {
     #[repr(transparent)]
     #[derive(Copy, Clone)]
-    struct BufferPointerField<L: BufferPointerLower = ReservedLower> {
-        inner: u32,
-        phantom_data: PhantomData<L>,
+    struct IsochronousTransactionDescriptor(u32);
+
+    /// Indicates the offset into the selected page this transaction should use.
+    // So we can use a single page multiple times.
+    transaction_offset, set_transaction_offset: 11,0;
+
+    /// Indicates which page in [IsochronousTransferDescriptor] will be used by this transaction.
+    ///
+    /// Only values between `0..=6` are valid.
+    selected_page, set_page: 14,12;
+
+    /// When set the controller will raise an interrupt at the next interrupt threshold.
+    _ , interrupt_on_complete: 15;
+
+    /// For an OUT transaction this indicates the number of bytes that will be send by the controller.
+    /// The controller is not required to update this field to indicate the number of bytes transmitted.
+    // So it might
+    ///
+    /// For an IN transaction this indicates the number of bytes software expects to be sent.
+    /// During the status update the controller writes back the number of bytes successfully delivered.
+    transaction_length, set_transaction_length : 27,16;
+
+    /// Set by the controller when an invalid response is received during an IN transaction
+    transaction_err, _ : 28;
+
+    /// Set by the controller when babble is detected.
+    /// Babble is when more data was send by the device than was expected.
+    babble, _: 29;
+
+    /// Indicates that the controller uis unable to keep up with reception of data or
+    /// or is unable to send data fast enough.
+    buffer_error, _ : 30;
+
+    /// Software must set this to `true` to enable the execution of this
+    /// transaction.
+    /// This is set to `false` by the controller when its transaction is completed.
+    is_pending, set_pending: 31;
+}
+
+impl IsochronousTransactionDescriptor {
+    /// Returns an empty Self. This contains no data and will not be executed.
+    const fn empty() -> Self {
+        Self(0)
     }
+}
 
-    impl<L: BufferPointerLower> BufferPointerField<L> {
+/// Marker trait for [BufferPointerField]s to indicate what is stored in the lower 12 bits.
+trait BufferPointerLower: Copy + Clone {}
 
-        const fn empty() -> Self {
-            Self {
-                inner: 0,
-                phantom_data: PhantomData,
-            }
-        }
+/// For fields 2:6
+#[derive(Copy, Clone)]
+struct ReservedLower;
+impl BufferPointerLower for ReservedLower {}
 
-        // Note: using the bitfield macro wont work here because it will left shift the value to lsb=0
-        fn get_pointer(&self) -> u32 {
-            self.inner & !(4096 - 1) // mask lower bits
-        }
+#[repr(transparent)]
+#[derive(Copy, Clone)]
+struct BufferPointerField<L: BufferPointerLower = ReservedLower> {
+    inner: u32,
+    phantom_data: PhantomData<L>,
+}
 
-        /// Sets the pointer to `ptr`.
-        ///
-        /// # Panics
-        ///
-        /// This fn wil panic if `ptr` isn't aligned to 4K
-        #[inline]
-        fn set_pointer(&mut self, ptr: u32) {
-            let mut data = self.inner;
-            data &= 4096 - 1; // clear higher bits
-            assert_eq!(ptr & !(4096 - 1), 0); // assert alignment of `ptr`
-            data |= ptr;
-            self.inner = data;
-        }
-    }
-
-    /// For field 0
-    #[derive(Copy, Clone)]
-    struct AddressLower;
-    impl BufferPointerLower for AddressLower {}
-
-    impl BufferPointerField<AddressLower> {
-        /// Returns the device address and the endpoint that this field describes
-        fn get_tgt(&self) -> Target {
-            let addr = self.inner & !((1 << 6) - 1);
-            let endpoint = (self.inner >> 8) & !((1 << 4) - 1);
-            Target {
-                address: Address::new(addr as u8),
-                endpoint: Endpoint::new(endpoint as u8),
-            }
-        }
-
-        /// Sets the target function and endpoint.
-        fn set_tgt(&mut self,target: Target) {
-
-
-            let addr = (target.endpoint.0 as u32) << 8;
-            let endpoint = (target.endpoint.0 as u32) << 8;
-            let mut semi = self.inner;
-
-            const MASK: u32 = !((!(1 << 6) - 1) << 8) | (!(1 << 4) - 1); // i may have added extra steps in this but idc
-
-            // clear fields
-            semi &= MASK;
-            // set fields
-            semi |= addr;
-            semi |= endpoint;
-
-            self.inner = semi;
-        }
-    }
-
-    #[derive(Copy, Clone)]
-    struct TransactionDescription;
-    impl BufferPointerLower for TransactionDescription {}
-    impl BufferPointerField<TransactionDescription> {
-        const DIRECTION_BIT: u32 = 1 << 11;
-
-        /// Returns the maximum packet size allowed for this
-        // todo make non-primitive
-        fn get_packet_size(&self) -> u16 {
-            (self.inner & ((1 << 10) - 1)) as u16
-        }
-
-        fn set_packet_size(&mut self, size: u16) {
-            self.inner = size as u32;
-        }
-
-        fn set_direction(&mut self, direction: TransactionDirection) {
-
-            if direction.into() {
-                self.inner |= Self::DIRECTION_BIT;
-            } else {
-                self.inner &= !Self::DIRECTION_BIT;
-            }
-        }
-
-        fn get_direction(&self) -> TransactionDirection {
-            (self.inner & Self::DIRECTION_BIT != 0).into()
+impl<L: BufferPointerLower> BufferPointerField<L> {
+    const fn empty() -> Self {
+        Self {
+            inner: 0,
+            phantom_data: PhantomData,
         }
     }
 
-    #[derive(Copy, Clone)]
-    struct MultiTransactionField;
-    impl BufferPointerLower for MultiTransactionField {}
+    // Note: using the bitfield macro wont work here because it will left shift the value to lsb=0
+    fn get_pointer(&self) -> u32 {
+        self.inner & !(4096 - 1) // mask lower bits
+    }
 
-    impl BufferPointerField<MultiTransactionField> {
-        fn get_multi_transaction(&self) -> TransactionCount {
-            ((self.inner & 3) as u8).try_into().unwrap() // `0` is an illegal invariant
+    /// Sets the pointer to `ptr`.
+    ///
+    /// # Panics
+    ///
+    /// This fn wil panic if `ptr` isn't aligned to 4K
+    #[inline]
+    fn set_pointer(&mut self, ptr: u32) {
+        let mut data = self.inner;
+        data &= 4096 - 1; // clear higher bits
+        assert_eq!(ptr & !(4096 - 1), 0); // assert alignment of `ptr`
+        data |= ptr;
+        self.inner = data;
+    }
+}
+
+/// For field 0
+#[derive(Copy, Clone)]
+struct AddressLower;
+impl BufferPointerLower for AddressLower {}
+
+impl BufferPointerField<AddressLower> {
+    /// Returns the device address and the endpoint that this field describes
+    fn get_tgt(&self) -> Target {
+        let addr = self.inner & !((1 << 6) - 1);
+        let endpoint = (self.inner >> 8) & !((1 << 4) - 1);
+        Target {
+            address: Address::new(addr as u8),
+            endpoint: Endpoint::new(endpoint as u8),
         }
     }
+
+    /// Sets the target function and endpoint.
+    fn set_tgt(&mut self, target: Target) {
+        let addr = (target.endpoint.0 as u32) << 8;
+        let endpoint = (target.endpoint.0 as u32) << 8;
+        let mut semi = self.inner;
+
+        const MASK: u32 = !((!(1 << 6) - 1) << 8) | (!(1 << 4) - 1); // i may have added extra steps in this but idc
+
+        // clear fields
+        semi &= MASK;
+        // set fields
+        semi |= addr;
+        semi |= endpoint;
+
+        self.inner = semi;
+    }
+}
+
+#[derive(Copy, Clone)]
+struct TransactionDescription;
+impl BufferPointerLower for TransactionDescription {}
+impl BufferPointerField<TransactionDescription> {
+    const DIRECTION_BIT: u32 = 1 << 11;
+
+    /// Returns the maximum packet size allowed for this
+    // todo make non-primitive
+    fn get_packet_size(&self) -> u16 {
+        (self.inner & ((1 << 10) - 1)) as u16
+    }
+
+    fn set_packet_size(&mut self, size: u16) {
+        self.inner = size as u32;
+    }
+
+    fn set_direction(&mut self, direction: TransactionDirection) {
+        if direction.into() {
+            self.inner |= Self::DIRECTION_BIT;
+        } else {
+            self.inner &= !Self::DIRECTION_BIT;
+        }
+    }
+
+    fn get_direction(&self) -> TransactionDirection {
+        (self.inner & Self::DIRECTION_BIT != 0).into()
+    }
+}
+
+#[derive(Copy, Clone)]
+struct MultiTransactionField;
+impl BufferPointerLower for MultiTransactionField {}
+
+impl BufferPointerField<MultiTransactionField> {
+    fn get_multi_transaction(&self) -> TransactionCount {
+        ((self.inner & 3) as u8).try_into().unwrap() // `0` is an illegal invariant
+    }
+}

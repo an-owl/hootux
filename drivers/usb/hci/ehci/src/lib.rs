@@ -6,7 +6,7 @@ extern crate alloc;
 use crate::operational_regs::OperationalRegistersVolatileFieldAccess;
 use bitfield::{Bit, BitMut};
 
-mod frame_lists;
+pub mod frame_lists;
 
 pub mod cap_regs {
     use bitfield::bitfield;
@@ -402,7 +402,10 @@ pub mod operational_regs {
     }
 
     bitfield! {
+        #[derive(Copy, Clone, Debug, PartialEq)]
         pub struct PortStatusCtl(u32);
+        impl BitAnd;
+        impl BitOr;
         impl Debug;
 
         /// Indicates whether the port is currently connected to a device.
@@ -466,7 +469,7 @@ pub mod operational_regs {
         /// When the reset process is complete if this port is in high-speed mode the the controller
         /// will enable this port. When this bit is cleared the controller must complete the reset
         /// process within 2milliseconds.
-        reset_in_progress,reset: 8;
+        pub mask RESET(u32), reset_in_progress, reset: 8;
 
         /// Represents the D+ (high bit) and D- (low bit) lines of the port.
         /// These are used for the detection of a low speed device prior to reset and enable.
