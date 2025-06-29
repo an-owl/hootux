@@ -15,14 +15,6 @@ pub mod ehci {
     use ehci::frame_lists::{Endpoint, QueueElementTransferDescriptor, QueueHead};
     use hootux::alloc_interface::{DmaAlloc, MmioAlloc};
 
-pub struct Controller<M: common::mem::Mapper, P: common::mem::PhysicalMemoryAllocator> {
-    capability_registers: &'static CapabilityRegisters,
-    operational_registers: VolatilePtr<'static, OperationalRegisters>,
-    address_bmp: u128,
-    ports: Box<[VolatileRef<'static, PortStatusCtl>]>,
-    mapper: M,
-    alloc: P,
-}
     pub struct Ehci {
         capability_registers: &'static CapabilityRegisters,
         operational_registers: VolatilePtr<'static, OperationalRegisters>,
