@@ -176,4 +176,31 @@ pub struct Controller<M: common::mem::Mapper, P: common::mem::PhysicalMemoryAllo
                 }
             }
         }
+struct Endpoint {
+    num: u8
+}
 
+impl Endpoint {
+    /// Constructs a new Endpoint.
+    ///
+    /// `num` must be less than 16.
+    const fn new(num: u8) -> Option<Self> {
+        match num {
+            0..16 => Some(Endpoint {num}),
+            _ => None,
+        }
+    }
+}
+
+struct Target {
+    pub dev: Device,
+    pub endpoint: Endpoint,
+}
+
+
+
+enum PidCode {
+    Control,
+    In,
+    Out,
+}

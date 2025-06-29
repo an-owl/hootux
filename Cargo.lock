@@ -1146,6 +1146,7 @@ version = "0.1.0"
 dependencies = [
  "common",
  "ehci",
+ "hootux",
  "volatile 0.6.1",
 ]
 

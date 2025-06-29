@@ -7,3 +7,4 @@ edition = "2024"
 common = { path = "common" }
 ehci = { path = "hci/ehci" }
 volatile = "0.6.1"
+hootux = { path = "../../kernel" }
