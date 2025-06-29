@@ -402,7 +402,7 @@ pub mod operational_regs {
     }
 
     bitfield! {
-        #[derive(Copy, Clone, Debug, PartialEq)]
+        #[derive(Copy, Clone, PartialEq)]
         pub struct PortStatusCtl(u32);
         impl BitAnd;
         impl BitOr;

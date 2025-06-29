@@ -8,3 +8,4 @@ common = { path = "common" }
 ehci = { path = "hci/ehci" }
 volatile = "0.6.1"
 hootux = { path = "../../kernel" }
+bitfield = "0.19.1"

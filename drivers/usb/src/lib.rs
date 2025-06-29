@@ -1,26 +1,26 @@
-#![feature(allocator_api)]
 #![no_std]
+#![feature(allocator_api)]
 extern crate alloc;
 
 pub mod ehci {
     use alloc::boxed::Box;
     use alloc::vec::Vec;
+    use bitfield::{Bit, BitMut};
     use core::ptr::NonNull;
-    use ehci::operational_regs::{OperationalRegistersVolatileFieldAccess, UsbStatus};
+    use ehci::frame_lists::{QueueElementTransferDescriptor, QueueHead};
+    use ehci::operational_regs::OperationalRegistersVolatileFieldAccess;
     use ehci::{
         cap_regs::CapabilityRegisters,
         operational_regs::{OperationalRegisters, PortStatusCtl},
     };
+    use hootux::alloc_interface::DmaAlloc;
     use volatile::{VolatilePtr, VolatileRef};
-    use ehci::frame_lists::{Endpoint, QueueElementTransferDescriptor, QueueHead};
-    use hootux::alloc_interface::{DmaAlloc, MmioAlloc};
 
     pub struct Ehci {
         capability_registers: &'static CapabilityRegisters,
         operational_registers: VolatilePtr<'static, OperationalRegisters>,
         address_bmp: u128,
         ports: Box<[VolatileRef<'static, PortStatusCtl>]>,
-
     }
 
     impl Ehci {
@@ -107,37 +107,6 @@ pub mod ehci {
             let sts_reg = self.operational_registers.usb_status();
             let int_status = sts_reg.read();
 
-        for i in int_status.int_only().iter() {
-            match i {
-                UsbStatus::USB_INT => {
-                    sts_reg.write(UsbStatus::USB_INT);
-                    todo!()
-                }
-                UsbStatus::USB_ERROR_INT => {
-                    sts_reg.write(UsbStatus::USB_ERROR_INT);
-                    todo!()
-                }
-                UsbStatus::PORT_CHANGE_DETECT => {
-                    sts_reg.write(UsbStatus::PORT_CHANGE_DETECT);
-                    todo!()
-                }
-                UsbStatus::FRAME_LIST_ROLLOVER => {
-                    sts_reg.write(UsbStatus::FRAME_LIST_ROLLOVER);
-                    todo!()
-                }
-                UsbStatus::HOST_SYSTEM_ERROR => {
-                    sts_reg.write(UsbStatus::HOST_SYSTEM_ERROR);
-                    todo!()
-                }
-                UsbStatus::INTERRUPT_ON_ASYNC_ADVANCE => {
-                    sts_reg.write(UsbStatus::INTERRUPT_ON_ASYNC_ADVANCE);
-                    todo!()
-                }
-                _ => unreachable!(), // All remaining bits are masked out
-            }
-        }
-    }
-}
             for i in int_status.int_only().iter() {
                 match i {
                     UsbStatus::USB_INT => {
@@ -168,8 +137,151 @@ pub mod ehci {
                 }
             }
         }
+
+        async fn init_port(&mut self, port: usize) -> Option<crate::Device> {
+            let port = &mut self.ports[port];
+            let mut current = port.as_mut_ptr().read();
+
+            // Assert reset for 50ms
+            current.reset(true);
+            port.as_mut_ptr().write(current);
+            hootux::task::util::sleep(50).await;
+            current.reset(false);
+            port.as_mut_ptr().write(current);
+
+            todo!()
+        }
+
+        fn initialise_async_loop(&mut self) {
+            let leading_queue_head = Box::new_in(
+                QueueHead::new(),
+                DmaAlloc::new(hootux::mem::MemRegion::Mem32, 32),
+            );
+        }
+    }
+
+    /// The EndpointQueue maintains the state of queued operations for asynchronous jobs.
+    ///
+    /// The EndpointQueue operates using [TransactionString]'s, which each describes a queued operation.
+    struct EndpointQueue {
+        head: Box<QueueHead, DmaAlloc>,
+        work: Vec<TransactionString>,
+        // Option because this isn't required when transactions are running.
+        // This can be used as a cached descriptor
+        terminator: Option<Box<QueueElementTransferDescriptor, DmaAlloc>>,
+    }
+
+    impl EndpointQueue {
+        fn new(target: super::Target, pid: super::PidCode) -> Self {
+            let mut this = Self {
+                head: Box::new_in(
+                    QueueHead::new(),
+                    DmaAlloc::new(hootux::mem::MemRegion::Mem32, 32),
+                ),
+                work: Vec::new(),
+                terminator: Some(Box::new_in(
+                    QueueElementTransferDescriptor::new(),
+                    DmaAlloc::new(hootux::mem::MemRegion::Mem32, 32),
+                )),
+            };
+
+            // SAFETY: The address is a valid terminated table.
+            unsafe {
+                this.head.set_current_transaction(
+                    hootux::mem::mem_map::translate(
+                        this.terminator.as_ref().unwrap() as *const _ as usize
+                    )
+                    .expect("What? Static isnt mapped?") as u32,
+                )
+            };
+
+            this
+        }
+
+        fn head_of_list() -> Self {
+            let mut this = Self::new(
+                crate::Target {
+                    dev: crate::Device::Broadcast,
+                    endpoint: crate::Endpoint::new(0).unwrap(),
+                },
+                crate::PidCode::Control,
+            );
+            this.head.set_head_of_list();
+            this
+        }
+    }
+
+    /// A `TransactionString` describes a series of expected transactions.
+    /// Due to the limited buffer size of a single [QueueElementTransferDescriptor] a large number
+    /// of them may be required for a single expected operation.
+    struct TransactionString {
+        // This can be changed into `Box<[QTD],DmaAlloc>` which may be more optimal
+        // current form is more flexible
+        // May never have 0 elements
+        str: Box<[Box<QueueElementTransferDescriptor, DmaAlloc>]>,
+    }
+
+    impl TransactionString {
+        fn new() -> Self {
+            todo!()
+        }
+
+        /// When this string has completed `other` will be run.
+        ///
+        /// When this is called `other` will be loaded into the final `QTD.next` field and all
+        /// `QTD.alternate` fields
+        ///
+        /// # Safety
+        ///
+        /// The caller must guarantee that when `self` may be executed that `other` will not be
+        /// dropped until it's completed execution or the controller is stopped.
+        unsafe fn append_string(&mut self, other: &Self) {
+            // unwrap: other.str[0] was not mapped into memory?
+            let next_addr: u32 = hootux::mem::mem_map::translate_ptr(&*other.str[0])
+                .unwrap()
+                .try_into()
+                .expect("QueueTransportDescriptor mapped into Mem64 memory");
+            let tail = self.str.last_mut().unwrap();
+            // SAFETY: Next addr is guaranteed to point to point to a valid QTD
+            // The caller must guarantee that `other` remains valid
+            unsafe {
+                tail.set_next(Some(next_addr));
+                tail.set_alternate(Some(next_addr));
+            };
+
+            for i in &mut self.str {
+                // SAFETY: Next addr is guaranteed to point to point to a valid QTD
+                // The caller must guarantee that `other` remains valid
+                unsafe { i.set_alternate(Some(next_addr)) };
+            }
+        }
+    }
+}
+
+/// Represents a target device address. USB address are `0..128`
+///
+/// The address `0` is the default address which must be responded to.
+enum Device {
+    Broadcast,
+    Address(core::num::NonZeroU8),
+}
+
+impl Device {
+    /// Attempts to construct a new device from a `u8`.
+    ///
+    /// * Addresses bust be `<128`
+    /// * `0` is the broadcast address
+    const fn new(address: u8) -> Option<Self> {
+        match address {
+            0 => Some(Device::Broadcast),
+            n @ 1..128 => Some(Self::Address(core::num::NonZeroU8::new(n).unwrap())), // `n` is not one
+            _ => None,
+        }
+    }
+}
+
 struct Endpoint {
-    num: u8
+    num: u8,
 }
 
 impl Endpoint {
@@ -178,7 +290,7 @@ impl Endpoint {
     /// `num` must be less than 16.
     const fn new(num: u8) -> Option<Self> {
         match num {
-            0..16 => Some(Endpoint {num}),
+            0..16 => Some(Endpoint { num }),
             _ => None,
         }
     }
@@ -188,8 +300,6 @@ struct Target {
     pub dev: Device,
     pub endpoint: Endpoint,
 }
-
-
 
 enum PidCode {
     Control,

@@ -161,7 +161,7 @@ pub struct QueueHead {
 }
 
 impl QueueHead {
-    pub const fn new() -> Self {
+    pub fn new() -> Self {
         Self {
             next_link_ptr: FrameListLinkPointer::new(None),
             ctl0: Ctl0(0),
@@ -339,13 +339,13 @@ pub struct QueueElementTransferDescriptor {
 }
 
 impl QueueElementTransferDescriptor {
-    pub const fn new() -> Self {
+    pub fn new() -> Self {
         Self {
             next_qtd: FrameListLinkPointer::new(None),
             alt_qtd: FrameListLinkPointer::new(None),
             config: QtdConfig(0),
             buffer_offset: BufferOffset(0),
-            buffers: [BufferField(0); 4],
+            buffers: [const { BufferField(0) }; 4],
         }
     }
 
