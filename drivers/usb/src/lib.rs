@@ -7,6 +7,7 @@ pub mod ehci {
     use alloc::vec::Vec;
     use bitfield::{Bit, BitMut};
     use core::ptr::NonNull;
+    use derivative::Derivative;
     use ehci::frame_lists::{QueueElementTransferDescriptor, QueueHead};
     use ehci::operational_regs::OperationalRegistersVolatileFieldAccess;
     use ehci::{
@@ -21,6 +22,7 @@ pub mod ehci {
         operational_registers: VolatilePtr<'static, OperationalRegisters>,
         address_bmp: u128,
         ports: Box<[VolatileRef<'static, PortStatusCtl>]>,
+        async_list: Vec<alloc::sync::Arc<spin::Mutex<EndpointQueue>>>,
     }
 
     impl Ehci {
@@ -75,6 +77,7 @@ pub mod ehci {
                 operational_registers: op_regs,
                 address_bmp: 1,
                 ports: port_vec.into_boxed_slice(),
+                async_list: alloc::collections::BTreeSet::new(),
             })
         }
 
@@ -152,28 +155,67 @@ pub mod ehci {
             todo!()
         }
 
-        fn initialise_async_loop(&mut self) {
-            let leading_queue_head = Box::new_in(
-                QueueHead::new(),
-                DmaAlloc::new(hootux::mem::MemRegion::Mem32, 32),
-            );
+        fn insert_into_async(&mut self, queue: alloc::sync::Arc<spin::Mutex<EndpointQueue>>) {
+            let l = queue.lock();
+            let addr: u32 = hootux::mem::mem_map::translate_ptr(self.async_list.first().unwrap())
+                .unwrap()
+                .try_into()
+                .unwrap();
+            l.head.set_next_queue_head(addr);
+
+            let addr: u32 = hootux::mem::mem_map::translate_ptr(&*l.head)
+                .unwrap()
+                .try_into()
+                .unwrap();
+
+            self.async_list
+                .last()
+                .unwrap()
+                .lock()
+                .head
+                .set_next_queue_head(addr);
+
+            drop(l);
+            self.async_list.push(queue)
         }
+
+        fn init_ports(&mut self) {}
     }
 
     /// The EndpointQueue maintains the state of queued operations for asynchronous jobs.
     ///
     /// The EndpointQueue operates using [TransactionString]'s, which each describes a queued operation.
+    #[derive(Derivative)]
+    #[derivative(Ord, PartialEq, PartialOrd, Eq)]
     struct EndpointQueue {
+        // For some reason the PID is in the QTD, not the QueueHead so we need to keep the PID
+        // I'm sure I'll figure out why soon enough
+        #[derivative(PartialEq = "ignore")]
+        #[derivative(Ord = "ignore")]
+        #[derivative(PartialOrd = "ignore")]
+        pid: crate::PidCode,
+        target: crate::Target,
+        #[derivative(PartialEq = "ignore")]
+        #[derivative(Ord = "ignore")]
+        #[derivative(PartialOrd = "ignore")]
         head: Box<QueueHead, DmaAlloc>,
+        #[derivative(PartialEq = "ignore")]
+        #[derivative(Ord = "ignore")]
+        #[derivative(PartialOrd = "ignore")]
         work: Vec<TransactionString>,
         // Option because this isn't required when transactions are running.
         // This can be used as a cached descriptor
+        #[derivative(PartialEq = "ignore")]
+        #[derivative(Ord = "ignore")]
+        #[derivative(PartialOrd = "ignore")]
         terminator: Option<Box<QueueElementTransferDescriptor, DmaAlloc>>,
     }
 
     impl EndpointQueue {
         fn new(target: super::Target, pid: super::PidCode) -> Self {
             let mut this = Self {
+                pid,
+                target,
                 head: Box::new_in(
                     QueueHead::new(),
                     DmaAlloc::new(hootux::mem::MemRegion::Mem32, 32),
@@ -191,10 +233,12 @@ pub mod ehci {
                     hootux::mem::mem_map::translate(
                         this.terminator.as_ref().unwrap() as *const _ as usize
                     )
-                    .expect("What? Static isnt mapped?") as u32,
+                    .expect("What? Static isn't mapped?") as u32,
                 )
             };
 
+            this.head
+                .set_target(target.try_into().expect("Invalid target"));
             this
         }
 
@@ -261,6 +305,7 @@ pub mod ehci {
 /// Represents a target device address. USB address are `0..128`
 ///
 /// The address `0` is the default address which must be responded to.
+#[derive(Debug, Copy, Clone, Ord, PartialOrd, Eq, PartialEq)]
 enum Device {
     Broadcast,
     Address(core::num::NonZeroU8),
@@ -274,12 +319,13 @@ impl Device {
     const fn new(address: u8) -> Option<Self> {
         match address {
             0 => Some(Device::Broadcast),
-            n @ 1..128 => Some(Self::Address(core::num::NonZeroU8::new(n).unwrap())), // `n` is not one
+            n @ 1..64 => Some(Self::Address(core::num::NonZeroU8::new(n).unwrap())), // `n` is not one
             _ => None,
         }
     }
 }
 
+#[derive(Debug, Copy, Clone, Ord, PartialOrd, Eq, PartialEq)]
 struct Endpoint {
     num: u8,
 }
@@ -296,11 +342,31 @@ impl Endpoint {
     }
 }
 
+#[derive(Debug, Copy, Clone, Ord, PartialOrd, Eq, PartialEq)]
 struct Target {
     pub dev: Device,
     pub endpoint: Endpoint,
 }
 
+impl TryFrom<Target> for ::ehci::frame_lists::Target {
+    type Error = ();
+    fn try_from(value: Target) -> Result<Self, Self::Error> {
+        // UEB 2.0 only allows addresses < 64
+        // IDK about other revisions, they may allow more
+        let addr_raw = match value.dev {
+            Device::Address(addr) if addr.get() >= 64 => return Err(()),
+            Device::Address(addr) => addr.get(),
+            Device::Broadcast => 0,
+        };
+
+        Ok(Self {
+            address: ::ehci::frame_lists::Address::new(addr_raw),
+            endpoint: ::ehci::frame_lists::Endpoint::new(value.endpoint.num),
+        })
+    }
+}
+
+#[derive(Debug, Copy, Clone)]
 enum PidCode {
     Control,
     In,

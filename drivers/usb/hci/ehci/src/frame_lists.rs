@@ -43,7 +43,7 @@ impl Endpoint {
     /// # Panics
     ///
     /// This fn will panic if `endpoint >= 16`
-    const fn new(endpoint: u8) -> Self {
+    pub const fn new(endpoint: u8) -> Self {
         assert!(endpoint < 16);
         Self(endpoint)
     }
@@ -69,7 +69,7 @@ impl Address {
     /// # Panics
     ///
     /// This fn will panic if `address >= 64`
-    const fn new(address: u8) -> Self {
+    pub const fn new(address: u8) -> Self {
         assert!(address < 64);
         Self(address)
     }
@@ -192,6 +192,15 @@ impl QueueHead {
     pub fn set_head_of_list(&mut self) {
         self.ctl0.set_head_reclimation_list(true)
     }
+
+    pub fn set_target(&mut self, target: Target) {
+        self.ctl0.set_addr(target.address.0 as u32);
+        self.ctl0.set_enpoint(target.endpoint.0 as u32);
+    }
+
+    pub fn set_next_queue_head(&mut self, addr: u32) {
+        self.next_link_ptr.set_ptr(addr);
+    }
 }
 
 bitfield! {
@@ -210,6 +219,8 @@ bitfield! {
     /// the [Self::endpoint_speed] indicates this is a high speed device.
     // todo what the hell is EPS? + Which interrupt +
     _,set_inactive_on_next_transaction: 7;
+
+    endpoint,set_enpoint: 11,8;
 
     /// Indicates the endpoint speed
     from into EndpointSpeed, endpoint_speed,set_endpoint_speed: 13,12;
