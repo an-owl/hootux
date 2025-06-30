@@ -261,7 +261,9 @@ pub unsafe trait DmaTarget: Send {
     /// Except exclusive access, implementations must ensure that the returned pointer can be safely cast to a reference.
     fn data_ptr(&mut self) -> *mut [u8];
 
-    /// Returns a Physical region describer.
+    /// Returns a Physical region describer, which is an iterator over contiguous regions of
+    /// physical memory describing the layout of `self.data_ptr`. All intermediate region boundaries
+    /// (not the start or end boundary) must be aligned to [hootux::mem::PAGE_SIZE].
     ///
     /// This takes `self` as `&mut` but does not actually mutate `self` this is to prevent all
     /// accesses to `self` while the PRD is alive.
