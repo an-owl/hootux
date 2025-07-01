@@ -2,7 +2,10 @@
 #![feature(allocator_api)]
 extern crate alloc;
 
+const PAGE_SIZE: usize = 4096;
+
 pub mod ehci {
+    use crate::{Device, PAGE_SIZE};
     use alloc::boxed::Box;
     use alloc::vec::Vec;
     use bitfield::{Bit, BitMut};
@@ -77,7 +80,7 @@ pub mod ehci {
                 operational_registers: op_regs,
                 address_bmp: 1,
                 ports: port_vec.into_boxed_slice(),
-                async_list: alloc::collections::BTreeSet::new(),
+                async_list: Vec::new(),
             })
         }
 
@@ -156,7 +159,7 @@ pub mod ehci {
         }
 
         fn insert_into_async(&mut self, queue: alloc::sync::Arc<spin::Mutex<EndpointQueue>>) {
-            let l = queue.lock();
+            let mut l = queue.lock();
             let addr: u32 = hootux::mem::mem_map::translate_ptr(self.async_list.first().unwrap())
                 .unwrap()
                 .try_into()
@@ -198,6 +201,10 @@ pub mod ehci {
         #[derivative(PartialEq = "ignore")]
         #[derivative(Ord = "ignore")]
         #[derivative(PartialOrd = "ignore")]
+        packet_size: u32,
+        #[derivative(PartialEq = "ignore")]
+        #[derivative(Ord = "ignore")]
+        #[derivative(PartialOrd = "ignore")]
         head: Box<QueueHead, DmaAlloc>,
         #[derivative(PartialEq = "ignore")]
         #[derivative(Ord = "ignore")]
@@ -212,10 +219,11 @@ pub mod ehci {
     }
 
     impl EndpointQueue {
-        fn new(target: super::Target, pid: super::PidCode) -> Self {
+        fn new(target: super::Target, pid: super::PidCode, packet_size: u32) -> Self {
             let mut this = Self {
                 pid,
                 target,
+                packet_size: 0,
                 head: Box::new_in(
                     QueueHead::new(),
                     DmaAlloc::new(hootux::mem::MemRegion::Mem32, 32),
@@ -249,6 +257,7 @@ pub mod ehci {
                     endpoint: crate::Endpoint::new(0).unwrap(),
                 },
                 crate::PidCode::Control,
+                8,
             );
             this.head.set_head_of_list();
             this
@@ -266,8 +275,87 @@ pub mod ehci {
     }
 
     impl TransactionString {
-        fn new() -> Self {
-            todo!()
+        fn new(
+            mut payload: Box<dyn hootux::mem::dma::DmaTarget>,
+            transaction_len: u32,
+            interrupt: StringInterruptConfiguration,
+        ) -> Self {
+            let len = payload.len();
+            let offset_into_initial = payload.data_ptr().cast::<u8>() as usize & PAGE_SIZE - 1;
+
+            let mut prd = payload
+                .prd()
+                .flat_map(|r| {
+                    let start_frame = r.addr & !(PAGE_SIZE - 1) as u64;
+                    (start_frame..r.addr + r.size as u64).step_by(PAGE_SIZE)
+                })
+                .peekable();
+
+            let mut string: Vec<Box<QueueElementTransferDescriptor, DmaAlloc>> = Vec::new();
+
+            const BOUNDS_ERR: &str = "Bounds checking error in TransactionString::new()";
+
+            // cursor indicates how far into the buffer we are.
+            // This method is used because it indicates the offset into the current page, when qtd's have overlapping pages.
+            let tgt_len = len + offset_into_initial;
+            let mut cursor = offset_into_initial;
+            while cursor < tgt_len {
+                // number of transactions in this qtd
+                let packets = suffix::bin!(20Ki).min(tgt_len - cursor) / transaction_len as usize;
+                let qtd_len_bytes = packets * transaction_len as usize;
+                let qtd_pages = qtd_len_bytes.div_ceil(PAGE_SIZE);
+                let peek_last = qtd_pages == 5 && qtd_len_bytes / PAGE_SIZE == 4; // if qtd_pages is rounded up
+
+                let mut qtd = QueueElementTransferDescriptor::new();
+
+                for i in 0..qtd_pages {
+                    if i == 5 && peek_last {
+                        let addr = *prd.peek().expect(BOUNDS_ERR);
+                        qtd.set_buffer(i, addr);
+
+                        break;
+                    }
+                    qtd.set_buffer(i, prd.next().expect(BOUNDS_ERR))
+                }
+                cursor += qtd_len_bytes;
+
+                let mut b = Box::<QueueElementTransferDescriptor, DmaAlloc>::new_uninit_in(
+                    DmaAlloc::new(hootux::mem::MemRegion::Mem32, 32),
+                );
+                // SAFETY: write is safe, pointer is coerced from a reference.
+                unsafe { b.as_mut_ptr().write_volatile(qtd) };
+                // SAFETY: `b` is initialised above.
+                let b = unsafe { b.assume_init() };
+                if let Some(last) = string.last_mut() {
+                    // SAFETY: This fetches the current address of the table. We guarantee the qtd is never moved from here.
+                    unsafe {
+                        last.set_next(Some(
+                            hootux::mem::mem_map::translate_ptr(&*b)
+                                .unwrap()
+                                .try_into()
+                                .unwrap(),
+                        ))
+                    };
+                }
+                string.push(b);
+            }
+
+            match interrupt {
+                StringInterruptConfiguration::Never => {}
+                StringInterruptConfiguration::End => {
+                    let last = string.last_mut().unwrap();
+                    last.set_int_on_complete();
+                }
+                StringInterruptConfiguration::Always => {
+                    for i in &mut string {
+                        i.set_int_on_complete();
+                    }
+                }
+            };
+
+            Self {
+                str: string.into_boxed_slice(),
+            }
         }
 
         /// When this string has completed `other` will be run.

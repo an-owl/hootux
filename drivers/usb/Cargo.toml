@@ -11,3 +11,4 @@ hootux = { path = "../../kernel" }
 bitfield = "0.19.1"
 derivative = { version = "2.2.0", features = ["use_core"] }
 spin = "0.10.0"
+suffix = { git = "https://github.com/an-owl/suffix.git" }
