@@ -82,6 +82,7 @@ impl From<Address> for u8 {
 }
 
 bitfield::bitfield! {
+    #[derive(Copy, Clone)]
     struct FrameListLinkPointer(u32);
     impl Debug;
 
@@ -351,13 +352,16 @@ pub struct QueueElementTransferDescriptor {
 
 impl QueueElementTransferDescriptor {
     pub fn new() -> Self {
-        Self {
+        let mut this = Self {
             next_qtd: FrameListLinkPointer::new(None),
             alt_qtd: FrameListLinkPointer::new(None),
             config: QtdConfig(0),
             buffer_offset: BufferOffset(0),
             buffers: [const { BufferField(0) }; 4],
-        }
+        };
+
+        this.config.set_active(true);
+        this
     }
 
     /// Sets the next and alternate QTD fields in `self`.
@@ -387,9 +391,30 @@ impl QueueElementTransferDescriptor {
             self.alt_qtd.set_end(true);
         }
     }
+
+    pub fn set_buffer(&mut self, buffer: usize, adr: u64) {
+        todo!() // add 64bit buffers
+    }
+
+    pub fn set_int_on_complete(&mut self) {
+        let mut t = self.config;
+        t.interrupt_on_complete(true);
+        // SAFETY: This is safe, pointer is coerced from a reference.
+        // We do not require volatile wrapping, reads do not have side effects.
+        unsafe { core::ptr::write_volatile(&mut self.config, t) };
+    }
+
+    pub fn set_active(&mut self, active: bool) {
+        let mut c = self.config;
+        c.set_active(active);
+        // SAFETY: This is safe, pointer is coerced from a reference.
+        // We do not require volatile wrapping, reads do not have side effects.
+        unsafe { core::ptr::write_volatile(&mut self.config, c) };
+    }
 }
 
 bitfield! {
+    #[derive(Copy, Clone)]
     struct QtdConfig(u32);
     impl Debug;
 
@@ -447,10 +472,10 @@ bitfield! {
     from into PidCode, get_pid_code,set_pid_code: 9,8;
 
     /// This field is copied from the qTD during the overlay and written back during the queue advancement.
-    /// This field tracks the numebr of consecutive errors detected wile executing this
+    /// This field tracks the number of consecutive errors detected wile executing this
     /// [QueueElementTransferDescriptor]. When this is set to a non-zero value the controller will
     /// decrement the count and write it back. If the count is decremented to zero then the controller
-    /// will mark this QETD as inactive and the transaction fails with the halted bit set, and the
+    /// will mark this QTD as inactive and the transaction fails with the halted bit set, and the
     /// error-bit that caused the failure will be set. An interrupt will be raised if the
     /// [crate::operational_regs::IntEnable::USB_ERROR_INT] is set.
     ///
