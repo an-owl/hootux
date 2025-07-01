@@ -262,6 +262,10 @@ pub mod ehci {
             this.head.set_head_of_list();
             this
         }
+
+        fn new_string(&mut self, payload: Box<dyn hootux::mem::dma::DmaTarget>) {
+            TransactionString::new(payload, self.packet_size);
+        }
     }
 
     /// A `TransactionString` describes a series of expected transactions.
@@ -387,6 +391,45 @@ pub mod ehci {
                 unsafe { i.set_alternate(Some(next_addr)) };
             }
         }
+
+        /// Aborts execution of this transaction string by clearing all active bits in the QTDs.
+        /// This causes the controller to iterate over them until either the last QTD is reached or
+        /// a QTD in another `TransactionString` is reached.  
+        pub fn abort(&mut self) {
+            // Do it in reverse order, to prevent race conditions.
+            for i in self.str.iter_mut().rev() {
+                i.set_active(false);
+            }
+        }
+
+        /// Determines if `addr` points to one of the QTDs owned by `self`.
+        fn addr_is_self(&self, addr: u32) -> bool {
+            for i in self.str {
+                // unwrap: All QTDs must be in Dma32 memory
+                if hootux::mem::mem_map::translate_ptr(&*i)
+                    .unwrap()
+                    .try_into()
+                    .unwrap()
+                    == addr
+                {
+                    return true;
+                }
+            }
+            false
+        }
+    }
+
+    #[derive(Debug, Eq, PartialEq, Copy, Clone)]
+    pub enum StringInterruptConfiguration {
+        /// Indicates the controller should not raise an interrupt when executing a [TransactionString]
+        Never,
+        /// Indicates the controller should raise an interrupt when the transaction descriptor has been completed.
+        /// This should be use when the data length is definitively known.
+        /// If less data is returned than expected the future may not be woken.
+        End,
+        /// Indicates the controller should raise an interrupt when any transaction descriptor is completed.
+        /// When only one transaction descriptor is present this acts the same as [Self::End]
+        Always,
     }
 }
 
