@@ -2,7 +2,7 @@ use crate::DescriptorType;
 use crate::descriptor::sealed::Sealed;
 use bitfield::bitfield;
 use bitflags::bitflags;
-use num_enum::{IntoPrimitive, TryFromPrimitive};
+use core::marker::PhantomData;
 
 /// Contains information about the device capabilities.
 ///
@@ -108,6 +108,7 @@ pub struct ConfigurationDescriptor<T: ConfigurationMarker = Normal> {
     pub configuration_index: u8,
     pub attributes: ConfigurationAttruibutes,
     pub max_power: u8,
+    _phantom: PhantomData<T>,
 }
 
 macro_rules! protected_trait {
@@ -115,10 +116,11 @@ macro_rules! protected_trait {
         impl ConfigurationMarker for $ty {}
         impl Sealed for $ty {}
     };
-    (@resolv: $ty:ty -> $out:expr) => {
+    (@resolv: $ty:ty, $out:expr) => {
         impl RequestableDescriptor for $ty {
             const DESCRIPTOR_TYPE: DescriptorType = $out;
         }
+        impl Sealed for $ty {}
     };
 }
 
@@ -145,10 +147,10 @@ pub trait RequestableDescriptor: Sealed {
     const DESCRIPTOR_TYPE: super::DescriptorType;
 }
 
-protected_trait!(@resolv: DeviceDescriptor -> DescriptorType::Device);
-protected_trait!(@resolv: DeviceQualifier -> DescriptorType::DeviceQualifier);
-protected_trait!(@resolv: ConfigurationDescriptor -> DescriptorType::Configuration);
-protected_trait!(@resolv: ConfigurationDescriptor<AlternateSpeed> -> DescriptorType::OtherSpeedConfiguration);
+protected_trait!(@resolv: DeviceDescriptor, DescriptorType::Device);
+protected_trait!(@resolv: DeviceQualifier,DescriptorType::DeviceQualifier);
+protected_trait!(@resolv: ConfigurationDescriptor, DescriptorType::Configuration);
+protected_trait!(@resolv: ConfigurationDescriptor<AlternateSpeed>, DescriptorType::OtherSpeedConfiguration);
 
 #[repr(C, packed)]
 pub struct InterfaceDescriptor {
@@ -219,7 +221,7 @@ bitfield! {
     from EndpointUsageType, endpoint_usage, _: 5,4
 }
 
-#[derive(TryFromPrimitive, Copy, Clone)]
+#[derive(Copy, Clone)]
 enum EndpointTransferType {
     Control = 0,
     Isochronous,

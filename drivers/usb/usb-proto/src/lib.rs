@@ -66,7 +66,7 @@ impl CtlTransfer {
     ///
     /// Note: [FeatureDescriptor::TestMode] cannot be cleared
     // todo separate into endpoint & non-endpoint forms
-    pub const fn clear_feature(recipient: Recipient, feature_selector: u16) -> Self {
+    pub fn clear_feature(recipient: Recipient, feature_selector: u16) -> Self {
         let mut header = RequestHeader(0);
         header.recipent(recipient);
         Self {
@@ -122,7 +122,7 @@ impl CtlTransfer {
     /// descriptor will contain the total length of the configuration.
     ///
     /// If `len` is `None` it will be set to `core::mem::size_of::<D>()`.
-    pub fn get_descriptor<D: descriptor::RequestableDescriptor>(
+    pub fn get_descriptor<D: descriptor::RequestableDescriptor + 'static>(
         mut index: u8,
         len: Option<u16>,
     ) -> Self {
