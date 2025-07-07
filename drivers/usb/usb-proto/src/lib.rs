@@ -1,7 +1,7 @@
 #![no_std]
 //! This crate defines commands and return values used by the usb protocol.
 
-mod descriptor;
+pub mod descriptor;
 
 use bitfield::bitfield;
 
@@ -27,7 +27,7 @@ pub struct CtlTransfer {
 }
 
 impl CtlTransfer {
-    fn new(
+    pub fn new(
         recipient: Recipient,
         request_type: RequestType,
         will_receive_data: bool,
@@ -49,7 +49,7 @@ impl CtlTransfer {
         }
     }
 
-    fn data_len(&self) -> usize {
+    pub fn data_len(&self) -> usize {
         self.length as usize
     }
 }
@@ -90,24 +90,6 @@ impl CtlTransfer {
             value: 0,
             index: 0,
             length: 1, // Why is this one? It returns 2 bytes. Is it one transaction?
-        }
-    }
-
-    /// Returns the specified descriptor if it exists.
-    fn get_descriptor_private(
-        descriptor_type: DescriptorType,
-        descriptor_index: u8,
-        lang: u16,
-        len: u16,
-    ) -> Self {
-        let mut header = RequestHeader(0);
-        header.data_direction(true);
-        Self {
-            request_type: header,
-            request: RequestCode::GetDescriptor as u8,
-            value: u16::from_le_bytes([descriptor_index, descriptor_type as u8]),
-            index: lang,
-            length: len,
         }
     }
 
@@ -288,6 +270,7 @@ bitfield! {
 
 }
 
+/*
 #[derive(Copy, Clone, Debug)]
 enum DataDirection {
     HostToDevice = 0,
@@ -299,6 +282,8 @@ impl From<DataDirection> for bool {
         value as u8 != 0
     }
 }
+
+ */
 
 #[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
 pub enum RequestType {
@@ -315,7 +300,7 @@ impl From<RequestType> for u8 {
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
-enum Recipient {
+pub enum Recipient {
     Device = 0,
     Interface = 1,
     Endpoint = 2,

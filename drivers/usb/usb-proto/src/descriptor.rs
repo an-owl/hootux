@@ -31,7 +31,7 @@ pub struct DeviceDescriptor {
 }
 
 impl DeviceDescriptor {
-    const fn class(&self) -> [u8; 3] {
+    pub const fn class(&self) -> [u8; 3] {
         [
             self.device_class,
             self.device_sub_class,
@@ -133,7 +133,7 @@ protected_trait!(@config: AlternateSpeed);
 bitflags! {
     #[repr(transparent)]
     #[derive(Copy, Clone, Debug)]
-    struct ConfigurationAttruibutes: u8 {
+    pub struct ConfigurationAttruibutes: u8 {
         const SELF_POWERED = 1 << 6;
         const REMOTE_WAKEUP = 1 << 5;
     }
@@ -166,7 +166,7 @@ pub struct InterfaceDescriptor {
 }
 
 impl InterfaceDescriptor {
-    fn class(&self) -> [u8; 3] {
+    pub fn class(&self) -> [u8; 3] {
         [
             self.interface_class,
             self.interface_sub_class,
@@ -202,7 +202,7 @@ pub struct EndpointDescriptor {
 bitfield! {
     #[repr(transparent)]
     #[derive(Copy, Clone)]
-    struct EndpointAddress(u8);
+    pub struct EndpointAddress(u8);
     impl Debug;
     endpoint, _: 6,0;
     in_endpoint, _: 7, 4;
@@ -211,7 +211,7 @@ bitfield! {
 bitfield! {
     #[repr(transparent)]
     #[derive(Copy, Clone)]
-    struct EndpointAttributes(u8);
+    pub struct EndpointAttributes(u8);
     impl Debug;
 
     /// Indicates the endpoint type, [Self::endpoint_synchronisation] and [Self::endpoint_usage]
@@ -291,7 +291,7 @@ impl From<u8> for EndpointUsageType {
 }
 
 bitfield! {
-    struct MaxPacketSize(u8);
+    pub struct MaxPacketSize(u8);
     impl Debug;
     max_packet_size, _: 10,0;
     /// Indicates the number of extra transaction opportunities per microframe.
