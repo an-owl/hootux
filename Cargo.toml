@@ -14,7 +14,7 @@ members = [
     "lib/libboot",
     "lib/hid-8042",
     "drivers/hid-ps2",
-    "drivers/usb", "drivers/usb/common", "drivers/usb/hci/ehci"
+    "drivers/usb", "drivers/usb/common", "drivers/usb/hci/ehci", "drivers/usb/usb-proto"
 ]
 
 [profile.dev]

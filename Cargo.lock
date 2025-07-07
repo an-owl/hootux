@@ -689,6 +689,7 @@ version = "0.7.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "77e878c846a8abae00dd069496dbe8751b16ac1c3d6bd2a7283a938e8228f90d"
 dependencies = [
+ "proc-macro-crate",
  "proc-macro2",
  "quote",
  "syn 2.0.100",
@@ -1172,6 +1173,15 @@ dependencies = [
  "spin 0.10.0",
  "suffix",
  "volatile 0.6.1",
+]
+
+[[package]]
+name = "usb-cfg"
+version = "0.1.0"
+dependencies = [
+ "bitfield",
+ "bitflags 2.9.1",
+ "num_enum 0.7.4",
 ]
 
 [[package]]
