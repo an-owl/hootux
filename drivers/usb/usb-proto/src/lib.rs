@@ -270,21 +270,6 @@ bitfield! {
 
 }
 
-/*
-#[derive(Copy, Clone, Debug)]
-enum DataDirection {
-    HostToDevice = 0,
-    DeviceToHost = 1,
-}
-
-impl From<DataDirection> for bool {
-    fn from(value: DataDirection) -> Self {
-        value as u8 != 0
-    }
-}
-
- */
-
 #[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
 pub enum RequestType {
     #[default]
