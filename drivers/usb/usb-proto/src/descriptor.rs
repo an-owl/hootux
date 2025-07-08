@@ -72,7 +72,7 @@ impl core::fmt::UpperHex for BcdUsb {
 }
 
 /// Contains information about configurations when the configured speed is not the current speed.
-/// This can ba fetched from the device using [super::CtlTransfer::get_descriptor] where using [super::DescriptorType::DeviceQualifier]
+/// This can ba fetched from the device using [super::CtlTransfer::get_descriptor] where using [DescriptorType::DeviceQualifier]
 #[repr(C, packed)]
 pub struct DeviceQualifier {
     pub length: u8,
@@ -89,7 +89,7 @@ pub struct DeviceQualifier {
 /// Contains information about a specific device configuration.
 /// The number of possible configurations is returned by [DeviceDescriptor::num_configurations]
 ///
-/// This can be fetched using [super::CtlTransfer::get_descriptor] using [super::DescriptorType::Configuration],
+/// This can be fetched using [super::CtlTransfer::get_descriptor] using [DescriptorType::Configuration],
 ///
 /// When `DescriptorType::OtherSpeedConfiguration` is used this describes a configuration when the
 /// device is using a speed which it is not currently using.
@@ -109,6 +109,62 @@ pub struct ConfigurationDescriptor<T: ConfigurationMarker = Normal> {
     pub attributes: ConfigurationAttruibutes,
     pub max_power: u8,
     _phantom: PhantomData<T>,
+}
+
+impl<T: ConfigurationMarker> ConfigurationDescriptor<T> {
+    /// Returns an iterator over interfaces defined by this configuration.
+    ///
+    /// # Safety
+    ///
+    /// The caller must ensure that `self` is fully available from `&self..self.length`, and is in
+    /// the format as returned by the device. The required format can be described as
+    ///
+    /// ```ignore
+    /// struct FullConfiguration {
+    ///     cfg: ConfigurationDescriptor,
+    ///     interfaces: [InterfaceDescriptorWithEndpoints]
+    /// }
+    /// struct InterfaceDescriptorWithEndpoints {
+    ///     id: InterfaceDescriptor
+    ///     endpoints: [EndpointDescriptor]
+    /// }
+    /// ```
+    ///
+    /// In order to guarantee that this is safe to call the base `ConfigurationDescriptor` can be
+    /// fetched using [super::CtlTransfer::get_descriptor] where `D` is `Self` first when `len` is
+    /// `None` and again where `len` is `ConfigurationDescriptor.length` of the returned configuration descriptor.
+    // todo make an example
+    pub unsafe fn iter(&self) -> impl Iterator<Item = &InterfaceDescriptor> {
+        ConfigurationIterator {
+            parent: self,
+            // SAFETY: The caller must guarantee this is safe.
+            next: Some(unsafe { (self as *const Self).offset(1) }.cast()),
+            count: 1,
+        }
+    }
+}
+
+pub struct ConfigurationIterator<'a, T: ConfigurationMarker> {
+    parent: &'a ConfigurationDescriptor<T>,
+    next: Option<*const InterfaceDescriptor>,
+    count: u8,
+}
+
+impl<'a, T: ConfigurationMarker> Iterator for ConfigurationIterator<'a, T> {
+    type Item = &'a InterfaceDescriptor;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        // SAFETY: USB guarantees alignment caller guarantees everything else
+        let raw = self.next.take()?;
+        let ret = unsafe { &*raw };
+        // SAFETY: USB spec guarantees this points to valid data
+
+        if self.count < self.parent.num_interfaces {
+            self.next = unsafe { Some(raw.byte_add(ret.length as usize)) };
+            self.count += 1;
+        }
+        Some(ret)
+    }
 }
 
 macro_rules! protected_trait {
@@ -144,7 +200,7 @@ mod sealed {
 }
 
 pub trait RequestableDescriptor: Sealed {
-    const DESCRIPTOR_TYPE: super::DescriptorType;
+    const DESCRIPTOR_TYPE: DescriptorType;
 }
 
 protected_trait!(@resolv: DeviceDescriptor, DescriptorType::Device);
@@ -163,6 +219,51 @@ pub struct InterfaceDescriptor {
     pub interface_sub_class: u8,
     pub interface_protocol: u8,
     pub interface_index: u8,
+}
+
+impl InterfaceDescriptor {
+    /// Returns an iterator over [EndpointDescriptor]'s defined by this interface.
+    ///
+    /// # Safety
+    ///
+    /// The caller must guarantee that `self` is in the format returned by the device as specified
+    /// by the USB specification. see [ConfigurationDescriptor::iter] for more information.
+    pub unsafe fn iter(&self) -> impl Iterator<Item = &EndpointDescriptor> {
+        if self.num_endpoints == 0 {
+            InterfaceIter {
+                parent: self,
+                next: None,
+                count: 0,
+            }
+        } else {
+            InterfaceIter {
+                parent: self,
+                // Caller must guarantee that this is safe.
+                next: unsafe { Some((self as *const Self).add(1).cast()) },
+                count: 0,
+            }
+        }
+    }
+}
+
+pub struct InterfaceIter<'a> {
+    parent: &'a InterfaceDescriptor,
+    next: Option<*const EndpointDescriptor>,
+    count: u8,
+}
+
+impl<'a> Iterator for InterfaceIter<'a> {
+    type Item = &'a EndpointDescriptor;
+    fn next(&mut self) -> Option<Self::Item> {
+        let raw = self.next.take()?;
+        let ret = unsafe { &*raw };
+        if self.count < self.parent.num_endpoints {
+            // SAFETY: We perform a bounds check to ensure this pointer is valid
+            self.next = unsafe { Some(raw.add(1)) };
+            self.count += 1;
+        }
+        Some(ret)
+    }
 }
 
 impl InterfaceDescriptor {
