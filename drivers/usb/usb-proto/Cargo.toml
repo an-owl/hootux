@@ -6,4 +6,3 @@ edition = "2024"
 [dependencies]
 bitfield = "0.19.1"
 bitflags = "2.9.1"
-num_enum = "0.7.4"
