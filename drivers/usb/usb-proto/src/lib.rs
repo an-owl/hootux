@@ -52,6 +52,12 @@ impl CtlTransfer {
     pub fn data_len(&self) -> usize {
         self.length as usize
     }
+
+    /// Casts self into bytes which can be sent to the device.
+    pub fn to_bytes(self) -> [u8; size_of::<Self>()] {
+        // SAFETY: This is safe, all invariants of u8 are valid
+        unsafe { core::mem::transmute(self) }
+    }
 }
 
 impl CtlTransfer {
