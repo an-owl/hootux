@@ -64,15 +64,16 @@ impl CtlTransfer {
     /// Clears the feature specified by `feature_selector`.
     /// `feature_selector` should be cast from [FeatureDescriptor] where possible.
     ///
-    /// `recipient` may not be [Recipient::Other]
-    // fixme double check that
-    ///
     /// Attempting to clear a feature which cannot be cleared, does not exist or references an
     /// endpoint that does not exist will return an error
     ///
     /// Note: [FeatureDescriptor::TestMode] cannot be cleared
-    // todo separate into endpoint & non-endpoint forms
+    ///
+    /// # Panics
+    ///
+    /// This fn will panic if `recipient` is set to [Recipient::Other]
     pub fn clear_feature(recipient: Recipient, feature_selector: u16) -> Self {
+        assert_ne!(recipient, Recipient::Other);
         let mut header = RequestHeader(0);
         header.recipent(recipient);
         Self {
