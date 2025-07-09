@@ -3,7 +3,6 @@
 
 extern crate alloc;
 
-use crate::operational_regs::OperationalRegistersVolatileFieldAccess;
 use bitfield::{Bit, BitMut};
 
 pub mod frame_lists;
@@ -52,7 +51,7 @@ pub mod cap_regs {
     // TODO: What do these mean?
     #[repr(u8)]
     #[derive(Copy, Clone, Debug, PartialEq, Eq, num_enum::TryFromPrimitive)]
-    enum PortRoutingRules {
+    pub enum PortRoutingRules {
         /// The first NPcc ports are routed to the lowest numbered function
         /// companion host controller, the next NPcc port are routed to the next
         /// lowest function companion controller, and so on.
@@ -120,7 +119,7 @@ pub mod cap_regs {
     }
 
     // properly define this
-    struct CompanionPortRoute(u64);
+    pub struct CompanionPortRoute(u64);
 }
 
 pub mod operational_regs {
@@ -236,7 +235,7 @@ pub mod operational_regs {
 
     #[repr(u8)]
     #[derive(Copy, Clone, Debug, PartialEq, Eq, num_enum::TryFromPrimitive)]
-    enum FrameListSize {
+    pub enum FrameListSize {
         Elements1024 = 0,
         Elements512 = 1,
         Elements256 = 2,
@@ -258,7 +257,7 @@ pub mod operational_regs {
 
     #[repr(u8)]
     #[derive(Copy, Clone, Debug, Eq, PartialEq, IntoPrimitive)]
-    enum InterruptThreshold {
+    pub enum InterruptThreshold {
         OneFrame = 1,
         TwoFrame = 2,
         FourFrame = 4,
@@ -411,13 +410,13 @@ pub mod operational_regs {
         /// Indicates whether the port is currently connected to a device.
         ///
         /// This will remain cleared while [port_power] is also cleared.
-        connected,_: 0;
+        pub connected,_: 0;
 
         /// Indicates that the port status has changed.
         /// The controller sets this bit for all changes to the ports current connection status.
         ///
         /// This should be acknowledged immediately by writing back [Self::Ack_Status_change].
-        mask ACK_STATUS_CHANGE(u32), connect_status_change,_: 1;
+        pub mask ACK_STATUS_CHANGE(u32), connect_status_change,_: 1;
 
         /// Ports can only be enabled as a part of the reset-and-enable.
         /// Software cannot set this bit.
@@ -425,20 +424,20 @@ pub mod operational_regs {
         ///
         /// Ports can be disabled by a a fault condition or by software. The value of this bit does
         /// not change until the port state changes.
-        enabled,set_enabeld: 2;
+        pub enabled,set_enabeld: 2;
 
         /// Reflects whether [Self::enabled] has changed state.
         ///
         /// This is cleared by writing `1` to it.
-        mask ACK_PORT_ENABLE(u32), port_enable_change, clear_port_enable_change: 3;
+        pub mask ACK_PORT_ENABLE(u32), port_enable_change, clear_port_enable_change: 3;
 
         /// This port currently has an over-current condition.
-        over_current,_: 4;
+        pub over_current,_: 4;
 
         /// Reflects whether [Self::over_current] has changed state
         ///
         /// This is cleared by writing `1` to it
-        mask ACK_OVER_CURRENT(u32), over_current_change, clear_over_current_change: 5;
+        pub mask ACK_OVER_CURRENT(u32), over_current_change, clear_over_current_change: 5;
 
         /// When [Self::is_suspended] is `true` this will signal a resume to the port.
         ///
@@ -449,7 +448,7 @@ pub mod operational_regs {
         /// # Safety
         ///
         /// Setting this to `true` when [Self::is_suspended] is `false` will cause UB.
-        force_resume,set_force_resume: 6;
+        pub force_resume,set_force_resume: 6;
 
         /// When this is set propagation of data down the port is blocked except for port reset.
         /// The suspend occurs at the end of the current transaction.
@@ -459,7 +458,7 @@ pub mod operational_regs {
         /// This bit will be cleared when `self.set_force_resume(true)` is called or this port is reset.
         ///
         /// Note that `set_suspend(false)` has no effect
-        is_suspended,suspend: 7;
+        pub is_suspended,suspend: 7;
 
         /// When this is set the bus reset sequence is run, this can be be terminated by writing
         /// clearing this bit. Software must keep this bit set long enough to ensure the reset sequence.
@@ -474,7 +473,7 @@ pub mod operational_regs {
         /// Represents the D+ (high bit) and D- (low bit) lines of the port.
         /// These are used for the detection of a low speed device prior to reset and enable.
         /// This field is only valid when [Self::enable] is `0` and [Self::connect] is `1`.
-        into LineStatus, line_state,_: 11,10;
+        pub into LineStatus, line_state,_: 11,10;
 
         /// When [crate::cap_regs::CapabilityRegisters::port_power_control_enabled] is set this bit
         /// controls the internal power switch for the port. When `port_power_control_enabled` is
@@ -482,33 +481,33 @@ pub mod operational_regs {
         ///
         /// When an over-current state is detected this bit my be cleared, disabling power to the device.
         // pp lol
-        port_power, set_port_power: 11;
+        pub port_power, set_port_power: 11;
 
         /// When this is bit is cleared *this* controller has ownership of this port.
         /// When this bit is cleared the controller hands off the port to a companion controller.
         ///
         /// This bit is set to `1` when [ConfigureFlag::RoutePortsToCompanions] is set.
-        port_owner, set_port_owner: 12;
+        pub port_owner, set_port_owner: 12;
 
         /// When [crate::cap_regs::HcStructParams::port_indicator] is set this sets the port indictor state.
-        from into PortLed, port_led_state, set_port_led: 15,14;
+        pub from into PortLed, port_led_state, set_port_led: 15,14;
 
         /// This sets a test mode for the port.
-        from into TestCtl, get_port_test_ctl, set_port_test: 19,16;
+        pub from into TestCtl, get_port_test_ctl, set_port_test: 19,16;
 
         /// This bit determines whether this port is sensitive to wakeup events.
-        get_wake_on_connect, wake_on_connect: 20;
+        pub get_wake_on_connect, wake_on_connect: 20;
 
         /// This bit indicates whether this port is sensitive to disconnects as wakeup events.
-        get_wake_on_disconnect, wake_on_disconnect: 21;
+        pub get_wake_on_disconnect, wake_on_disconnect: 21;
 
         /// This bit indicates whether this port is sensitive to overcurrents as wakeup events.
-        get_wake_on_overcurrent, wake_on_overcurrent: 22;
+        pub get_wake_on_overcurrent, wake_on_overcurrent: 22;
     }
 
     #[repr(u8)]
     #[derive(Debug, Copy, Clone, PartialEq, Eq, TryFromPrimitive)]
-    enum LineStatus {
+    pub enum LineStatus {
         SE0 = 0b00,
         KState = 0b01,
         JState = 0b10,
@@ -523,7 +522,7 @@ pub mod operational_regs {
 
     #[repr(u8)]
     #[derive(Debug, Copy, Clone, PartialEq, Eq, TryFromPrimitive)]
-    enum PortLed {
+    pub enum PortLed {
         Disabled,
         Amber,
         Green,
@@ -542,7 +541,7 @@ pub mod operational_regs {
 
     #[repr(u8)]
     #[derive(Debug, Copy, Clone, PartialEq, Eq, TryFromPrimitive)]
-    enum TestCtl {
+    pub enum TestCtl {
         Disabled = 0,
         TestJState,
         TestKState,
