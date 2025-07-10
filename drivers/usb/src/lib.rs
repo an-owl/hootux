@@ -4,7 +4,6 @@ extern crate alloc;
 
 const PAGE_SIZE: usize = 4096;
 
-pub(crate) mod util;
 
 pub mod ehci {
     use crate::{Device, PAGE_SIZE};
