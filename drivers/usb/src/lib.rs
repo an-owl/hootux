@@ -516,8 +516,30 @@ impl TryFrom<Target> for ::ehci::frame_lists::Target {
 }
 
 #[derive(Debug, Copy, Clone)]
-enum PidCode {
+pub enum PidCode {
     Control,
     In,
     Out,
+}
+
+impl From<::ehci::frame_lists::PidCode> for PidCode {
+    fn from(code: ::ehci::frame_lists::PidCode) -> Self {
+        use ::ehci::frame_lists::PidCode as Pid;
+        match code {
+            Pid::Out => PidCode::Out,
+            Pid::In => PidCode::In,
+            Pid::Setup => PidCode::Control,
+        }
+    }
+}
+
+impl From<PidCode> for ::ehci::frame_lists::PidCode {
+    fn from(code: PidCode) -> Self {
+        use ::ehci::frame_lists::PidCode as Pid;
+        match code {
+            PidCode::In => Pid::In,
+            PidCode::Out => Pid::Out,
+            PidCode::Control => Pid::Setup,
+        }
+    }
 }
