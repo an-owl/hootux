@@ -255,7 +255,7 @@ pub mod ehci {
         fn head_of_list() -> Self {
             let mut this = Self::new(
                 crate::Target {
-                    dev: crate::Device::Default,
+                    dev: crate::DeviceAddress::Default,
                     endpoint: crate::Endpoint::new(0).unwrap(),
                 },
                 crate::PidCode::Control,
@@ -439,19 +439,19 @@ pub mod ehci {
 ///
 /// The address `0` is the default address which must be responded to.
 #[derive(Debug, Copy, Clone, Ord, PartialOrd, Eq, PartialEq)]
-enum Device {
+enum DeviceAddress {
     Default,
     Address(core::num::NonZeroU8),
 }
 
-impl Device {
+impl DeviceAddress {
     /// Attempts to construct a new device from a `u8`.
     ///
     /// * Addresses bust be `<128`
     /// * `0` is the broadcast address
     const fn new(address: u8) -> Option<Self> {
         match address {
-            0 => Some(Device::Default),
+            0 => Some(DeviceAddress::Default),
             n @ 1..64 => Some(Self::Address(core::num::NonZeroU8::new(n).unwrap())), // `n` is not one
             _ => None,
         }
@@ -477,7 +477,7 @@ impl Endpoint {
 
 #[derive(Debug, Copy, Clone, Ord, PartialOrd, Eq, PartialEq)]
 struct Target {
-    pub dev: Device,
+    pub dev: DeviceAddress,
     pub endpoint: Endpoint,
 }
 
@@ -487,9 +487,9 @@ impl TryFrom<Target> for ::ehci::frame_lists::Target {
         // UEB 2.0 only allows addresses < 64
         // IDK about other revisions, they may allow more
         let addr_raw = match value.dev {
-            Device::Address(addr) if addr.get() >= 64 => return Err(()),
-            Device::Address(addr) => addr.get(),
-            Device::Default => 0,
+            DeviceAddress::Address(addr) if addr.get() >= 64 => return Err(()),
+            DeviceAddress::Address(addr) => addr.get(),
+            DeviceAddress::Default => 0,
         };
 
         Ok(Self {
