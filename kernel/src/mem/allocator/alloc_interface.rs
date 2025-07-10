@@ -177,6 +177,7 @@ unsafe impl Allocator for MmioAlloc {
 /// allocation is given in `layout` the alignment of the physical allocation is given in the constructor.
 ///
 /// To access regions which are already allocated use [MmioAlloc]
+#[derive(Copy, Clone)]
 pub struct DmaAlloc {
     region: mem::MemRegion,
     phys_align: usize,
