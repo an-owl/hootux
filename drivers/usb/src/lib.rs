@@ -4,7 +4,6 @@ extern crate alloc;
 
 const PAGE_SIZE: usize = 4096;
 
-
 pub mod ehci {
     use crate::{DeviceAddress, Endpoint, PAGE_SIZE, Target};
     use alloc::boxed::Box;
@@ -172,6 +171,8 @@ pub mod ehci {
             self.async_list.push(queue)
         }
 
+        /// Fetches the default table, which is configured for the control-pipe of the default address.
+        /// This should only be used to allocate a non-default address to the device.
         fn get_default_table(&self) -> alloc::sync::Arc<spin::Mutex<EndpointQueue>> {
             self.async_list[0].clone()
         }
