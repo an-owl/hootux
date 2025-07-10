@@ -27,6 +27,9 @@ pub mod ehci {
         address_bmp: u128,
         ports: Box<[VolatileRef<'static, PortStatusCtl>]>,
         async_list: Vec<alloc::sync::Arc<spin::Mutex<EndpointQueue>>>,
+
+        // workers
+        pnp_watchdog: alloc::sync::Weak<hootux::task::util::WorkerWaiter>,
     }
 
     impl Ehci {
@@ -262,8 +265,23 @@ pub mod ehci {
             this
         }
 
-        fn new_string(&mut self, payload: Box<dyn hootux::mem::dma::DmaTarget>) {
-            TransactionString::new(payload, self.packet_size);
+        fn new_string(
+            &mut self,
+            payload: Box<dyn hootux::mem::dma::DmaTarget>,
+            int_mode: StringInterruptConfiguration,
+        ) {
+            let st = TransactionString::new(payload, self.packet_size, int_mode);
+            let Some(last) = self.work.last_mut() else {
+                return;
+            };
+            // SAFETY: Self ensures that the string is either run to completion or safely removed.
+            unsafe { last.append_string(&st) }
+        }
+
+        const fn get_target(&self) -> super::Target {
+            self.target
+        }
+    }
         }
     }
 
