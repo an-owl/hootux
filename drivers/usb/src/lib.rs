@@ -6,7 +6,7 @@ const PAGE_SIZE: usize = 4096;
 
 
 pub mod ehci {
-    use crate::{Device, PAGE_SIZE};
+    use crate::{DeviceAddress, Endpoint, PAGE_SIZE, Target};
     use alloc::boxed::Box;
     use alloc::vec::Vec;
     use bitfield::{Bit, BitMut};
@@ -145,20 +145,6 @@ pub mod ehci {
             }
         }
 
-        async fn init_port(&mut self, port: usize) -> Option<crate::Device> {
-            let port = &mut self.ports[port];
-            let mut current = port.as_mut_ptr().read();
-
-            // Assert reset for 50ms
-            current.reset(true);
-            port.as_mut_ptr().write(current);
-            hootux::task::util::sleep(50).await;
-            current.reset(false);
-            port.as_mut_ptr().write(current);
-
-            todo!()
-        }
-
         fn insert_into_async(&mut self, queue: alloc::sync::Arc<spin::Mutex<EndpointQueue>>) {
             let mut l = queue.lock();
             let addr: u32 = hootux::mem::mem_map::translate_ptr(self.async_list.first().unwrap())
@@ -183,7 +169,19 @@ pub mod ehci {
             self.async_list.push(queue)
         }
 
-        fn init_ports(&mut self) {}
+        fn get_default_table(&self) -> alloc::sync::Arc<spin::Mutex<EndpointQueue>> {
+            self.async_list[0].clone()
+        }
+    }
+
+    fn init_default_device(queue_head: &mut EndpointQueue) {
+        const DEFAULT_CONFIG_TARGET: Target = Target {
+            dev: DeviceAddress::Default,
+            endpoint: Endpoint::new(0).unwrap(),
+        };
+        if queue_head.get_target() != DEFAULT_CONFIG_TARGET {
+            panic!("Attempted to assign address to {:?}", queue_head.target)
+        }
     }
 
     /// The EndpointQueue maintains the state of queued operations for asynchronous jobs.
