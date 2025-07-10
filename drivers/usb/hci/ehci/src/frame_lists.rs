@@ -411,6 +411,11 @@ impl QueueElementTransferDescriptor {
         // We do not require volatile wrapping, reads do not have side effects.
         unsafe { core::ptr::write_volatile(&mut self.config, c) };
     }
+
+    pub fn set_pid<P: Into<PidCode>>(&mut self, pid: P) {
+        let pid = pid.into();
+        self.config.set_pid_code(pid)
+    }
 }
 
 bitfield! {
