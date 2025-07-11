@@ -476,6 +476,7 @@ pub mod ehci {
             }
 
             qtd.set_pid(pid);
+            qtd.set_active(true);
             let mut b = Box::new_uninit_in(DmaAlloc::new(hootux::mem::MemRegion::Mem32, 32));
             // SAFETY: MaybeUninit ensures this is aligned.
             // assume_init: Is safe because we initialise `b`
