@@ -437,6 +437,55 @@ pub mod ehci {
         }
     }
 
+    /// Methods for constructing `TransactionString`s for the default command pipe.
+    impl TransactionString {
+        const fn empty() -> Self {
+            Self { str: Box::new([]) }
+        }
+
+        /// Constructs and appends a single qtd to `self`.
+        ///
+        /// # Panics
+        ///
+        /// `payload.len()` must not exceed the QTD buffer size (20KiB).
+        ///
+        /// # Safety
+        ///
+        /// The caller must ensure that `payload` is not dropped before or while the controller
+        /// performs DMA to `payload`.
+        unsafe fn append_qtd<'a, 'b>(
+            &'a mut self,
+            payload: &'b mut dyn hootux::mem::dma::DmaTarget,
+            pid: super::PidCode,
+        ) -> &'a mut Self {
+            let str = core::mem::take(&mut self.str);
+            let mut c = str.into_vec();
+            let mut qtd = QueueElementTransferDescriptor::new();
+            assert!(payload.len() <= 5 * PAGE_SIZE);
+
+            let mut page = 0;
+            for i in payload.prd() {
+                let aligned = i.addr & !(PAGE_SIZE - 1) as u64;
+                let len = i.size + (i.addr as usize) & (PAGE_SIZE - 1);
+                assert!(len <= 5 * PAGE_SIZE);
+                qtd.set_buffer(i.addr as usize, aligned);
+                for _ in 0..len / PAGE_SIZE {
+                    qtd.set_buffer(page, aligned + (page * PAGE_SIZE) as u64);
+                    page += 1;
+                }
+            }
+
+            qtd.set_pid(pid);
+            let mut b = Box::new_uninit_in(DmaAlloc::new(hootux::mem::MemRegion::Mem32, 32));
+            // SAFETY: MaybeUninit ensures this is aligned.
+            // assume_init: Is safe because we initialise `b`
+            b.as_mut_ptr().write_volatile(qtd);
+            c.push(b.assume_init());
+            self.str = c.into_boxed_slice();
+            self
+        }
+    }
+
     #[derive(Debug, Eq, PartialEq, Copy, Clone)]
     pub enum StringInterruptConfiguration {
         /// Indicates the controller should not raise an interrupt when executing a [TransactionString]
