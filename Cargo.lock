@@ -1191,6 +1191,7 @@ dependencies = [
  "log",
  "spin 0.10.0",
  "suffix",
+ "usb-cfg",
  "volatile 0.6.1",
 ]
 

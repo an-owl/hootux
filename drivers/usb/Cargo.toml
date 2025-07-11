@@ -15,3 +15,4 @@ suffix = { git = "https://github.com/an-owl/suffix.git" }
 async-lock = "3.4.0"
 futures-util = "0.3.31"
 log = "0.4.27"
+usb-cfg = { path = "usb-proto" }

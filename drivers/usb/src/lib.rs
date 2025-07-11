@@ -84,6 +84,7 @@ pub mod ehci {
                 address_bmp: 1,
                 ports: port_vec.into_boxed_slice(),
                 async_list: Vec::new(),
+                pnp_watchdog: alloc::sync::Weak::new(),
             })
         }
 
@@ -128,7 +129,10 @@ pub mod ehci {
                     }
                     UsbStatus::PORT_CHANGE_DETECT => {
                         sts_reg.write(UsbStatus::PORT_CHANGE_DETECT);
-                        todo!()
+                        let Some(waiter) = self.pnp_watchdog.upgrade() else {
+                            continue;
+                        }; // What? Are we shutting down? Starting Up?
+                        waiter.wake()
                     }
                     UsbStatus::FRAME_LIST_ROLLOVER => {
                         sts_reg.write(UsbStatus::FRAME_LIST_ROLLOVER);
