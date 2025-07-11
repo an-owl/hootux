@@ -5,7 +5,7 @@ extern crate alloc;
 const PAGE_SIZE: usize = 4096;
 
 pub mod ehci {
-    use crate::{DeviceAddress, Endpoint, PAGE_SIZE, Target};
+    use crate::{DeviceAddress, Endpoint, PAGE_SIZE, PidCode, Target};
     use alloc::boxed::Box;
     use alloc::vec::Vec;
     use bitfield::{Bit, BitMut};
@@ -272,17 +272,121 @@ pub mod ehci {
             int_mode: StringInterruptConfiguration,
         ) {
             let st = TransactionString::new(payload, self.packet_size, int_mode);
+            let fut = st.get_future();
             let Some(last) = self.work.last_mut() else {
                 return;
             };
             // SAFETY: Self ensures that the string is either run to completion or safely removed.
             unsafe { last.append_string(&st) }
+
+            fut
         }
 
         const fn get_target(&self) -> super::Target {
             self.target
         }
+
+        fn append_cmd_string(&mut self, string: TransactionString) -> impl Future<Output = ()> {
+            let fut = string.get_future();
+            if let Some(last) = self.work.last_mut() {
+                // SAFETY: `String` is guaranteed to either be completed or safely aborted.
+                unsafe { last.append_string(&string) };
+            }
+            self.work.push(string);
+            fut
+        }
     }
+
+    struct PnpWatchdog {
+        controller: alloc::sync::Weak<async_lock::Mutex<Ehci>>,
+        ports: Box<[VolatileRef<'static, PortStatusCtl>]>, // ports are owned by self.controller, we must upgrade the controller first.
+    }
+
+    impl PnpWatchdog {
+        async fn run(self) -> hootux::task::TaskResult {
+            match self.run_inner().await {
+                Ok(()) => hootux::task::TaskResult::ExitedNormally,
+                Err(()) => hootux::task::TaskResult::StoppedExternally,
+            }
+        }
+
+        async fn run_inner(mut self) -> Result<(), ()> {
+            #[derive(Copy, Clone)]
+            enum Work {
+                Removed,
+                Added,
+            }
+            let mut work_list: [Option<Work>; 64] = [None; 64];
+            'event_loop: loop {
+                // This acts as a bit like a hardware mutex.
+                // It ensures that the controller is still there before acting and that it will not be dropped while we are working.
+                let controller = self.controller.upgrade().ok_or(())?;
+                for (i, port) in self.ports.iter().enumerate() {
+                    let r = port.as_ptr().read();
+                    if r.connect_status_change() {
+                        port.as_ptr()
+                            .write(PortStatusCtl(PortStatusCtl::ACK_STATUS_CHANGE));
+                        match r.connected() {
+                            true => work_list[i] = Some(Work::Added),
+                            false => work_list[i] = Some(Work::Removed),
+                        }
+                        log::trace!("Work for port {i} queued: {}", work_list[i].unwrap());
+                    }
+                }
+
+                'work_loop: for (i, w) in work_list
+                    .iter_mut()
+                    .enumerate()
+                    .map(|(i, w)| (i, w.as_ref()))
+                {
+                    match w {
+                        None => continue 'work_loop,
+                        Some(Work::Added) => {
+                            let port = self.ports[i].as_mut_ptr();
+
+                            // todo parallelise this.
+                            let mut ctl = port.read();
+                            ctl.set_port_power(true);
+                            port.write(ctl);
+                            hootux::task::util::sleep(100).await;
+
+                            let mut ctl = port.read();
+                            ctl.reset(true);
+                            port.write(ctl);
+                            hootux::task::util::sleep(50).await;
+                            ctl.reset(false);
+                            port.write(ctl);
+
+                            assert!(port.read().enabled(), "Port not enabled {:?}", port.read());
+                            let mut ctl_lock = controller.lock().await;
+                            let mut default_table = ctl_lock.get_default_table().lock();
+                            let new_address = ctl_lock.alloc_address();
+                            drop(ctl_lock);
+
+                            let mut command = hootux::mem::dma::DmaGuard::new(Vec::from(
+                                usb_cfg::CtlTransfer::set_address(new_address).to_bytes(),
+                            ));
+                            let mut ts = TransactionString::empty();
+                            unsafe { ts.append_qtd(&mut command, PidCode::Control) };
+                            default_table.append_cmd_string(ts).await;
+
+                            let eq = EndpointQueue::new(
+                                Target {
+                                    dev: DeviceAddress::Address(new_address.try_into().unwrap()),
+                                    endpoint: Endpoint::new(0).unwrap(),
+                                },
+                                PidCode::Control,
+                                64,
+                            );
+                            let mut ctl_lock = controller.lock().await;
+                            ctl_lock.insert_into_async(alloc::sync::Arc::new(spin::Mutex::new(eq)));
+
+                            log::info!("Port {i} initialised as {address}");
+                        }
+                        Some(Work::Removed) => todo!(), // free all resources attached to the port
+                    }
+                }
+            }
         }
     }
 
@@ -294,6 +398,7 @@ pub mod ehci {
         // current form is more flexible
         // May never have 0 elements
         str: Box<[Box<QueueElementTransferDescriptor, DmaAlloc>]>,
+        waiter: alloc::sync::Arc<hootux::task::util::WorkerWaiter>,
     }
 
     impl TransactionString {
@@ -377,6 +482,7 @@ pub mod ehci {
 
             Self {
                 str: string.into_boxed_slice(),
+                waiter: alloc::sync::Arc::new(hootux::task::util::WorkerWaiter::new()),
             }
         }
 
@@ -435,12 +541,19 @@ pub mod ehci {
             }
             false
         }
+
+        fn get_future(&self) -> impl Future<Output = ()> {
+            self.waiter.clone()
+        }
     }
 
     /// Methods for constructing `TransactionString`s for the default command pipe.
     impl TransactionString {
         const fn empty() -> Self {
-            Self { str: Box::new([]) }
+            Self {
+                str: Box::new([]),
+                waiter: alloc::sync::Arc::new(hootux::task::util::WorkerWaiter::new()),
+            }
         }
 
         /// Constructs and appends a single qtd to `self`.
