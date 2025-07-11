@@ -83,6 +83,7 @@ macro_rules! block_on {
 
 pub use block_on;
 
+#[derive(Default)]
 pub struct WorkerWaiter {
     waker: futures_util::task::AtomicWaker,
     run: atomic::AtomicBool,
