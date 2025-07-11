@@ -1188,6 +1188,7 @@ dependencies = [
  "ehci",
  "futures-util",
  "hootux",
+ "log",
  "spin 0.10.0",
  "suffix",
  "volatile 0.6.1",
