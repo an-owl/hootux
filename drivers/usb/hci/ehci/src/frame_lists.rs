@@ -158,7 +158,7 @@ pub struct QueueHead {
     current_transaction: FrameListLinkPointer,
     next_pointer: FrameListLinkPointer,
     alternate_pointer: FrameListLinkPointerWithNakCount,
-    overlay: [u32; 6],
+    overlay: [u32; 11],
 }
 
 impl QueueHead {
@@ -170,7 +170,7 @@ impl QueueHead {
             current_transaction: FrameListLinkPointer::new(None),
             next_pointer: FrameListLinkPointer::new(None),
             alternate_pointer: FrameListLinkPointerWithNakCount(0),
-            overlay: [0; 6],
+            overlay: [0; 11],
         }
     }
 
@@ -348,6 +348,7 @@ pub struct QueueElementTransferDescriptor {
     config: QtdConfig,
     buffer_offset: BufferOffset,
     buffers: [BufferField; 4],
+    high_puffer_pointers: [u32; 5],
 }
 
 impl QueueElementTransferDescriptor {
@@ -358,6 +359,7 @@ impl QueueElementTransferDescriptor {
             config: QtdConfig(0),
             buffer_offset: BufferOffset(0),
             buffers: [const { BufferField(0) }; 4],
+            high_puffer_pointers: [0; 5],
         };
 
         this.config.set_active(true);
@@ -392,8 +394,14 @@ impl QueueElementTransferDescriptor {
         }
     }
 
-    pub fn set_buffer(&mut self, buffer: usize, adr: u64) {
-        todo!() // add 64bit buffers
+    pub fn set_buffer(&mut self, buffer: usize, addr: u64) {
+        match buffer {
+            0 => self.buffer_offset.set_buffer(addr as u32),
+            1..5 => self.buffers[buffer].set_buffer(addr as u32),
+            _ => panic!("illegal buffer {buffer}, must be 0..5"),
+        }
+
+        self.high_puffer_pointers[buffer] = (addr >> 32) as u32;
     }
 
     pub fn set_int_on_complete(&mut self) {
@@ -654,6 +662,7 @@ pub struct IsochronousTransferDescriptor {
     buff_packet_desc: BufferPointerField<TransactionDescription>,
     buff_multi: BufferPointerField<MultiTransactionField>,
     buffers_3_6: [BufferPointerField; 3],
+    high_pointers: [u32; 5],
 }
 
 pub struct ItdTransactionInfo {
@@ -688,18 +697,21 @@ impl IsochronousTransferDescriptor {
     pub unsafe fn new(
         next: Option<(u32, FrameListLinkType)>,
         target: Target,
-        transfers: impl Iterator<Item = ItdTransactionInfo>,
-        buffers: impl Iterator<Item = core::ops::Range<u64>>,
         direction: TransactionDirection,
     ) -> Self {
-        Self {
+        let mut this = Self {
             next_node: FrameListLinkPointer::new(next),
             descriptors: [IsochronousTransactionDescriptor::empty(); 8],
             buff_addr: BufferPointerField::empty(),
             buff_packet_desc: BufferPointerField::empty(),
             buff_multi: BufferPointerField::empty(),
             buffers_3_6: [BufferPointerField::empty(); 3],
-        }
+            high_pointers: [0; 5],
+        };
+
+        this.buff_addr.set_tgt(target);
+        this.buff_packet_desc.set_direction(direction);
+        this
     }
 
     /// Sets the given buffer to `addr`
@@ -722,6 +734,8 @@ impl IsochronousTransferDescriptor {
             3 | 4 | 5 => self.buffers_3_6[(buffer - 3) as usize].set_pointer(addr as u32),
             _ => unreachable!(),
         }
+
+        self.high_pointers[buffer as usize] = (addr >> 32) as u32;
     }
 
     /// Configures the transaction indicated by `transaction`.
