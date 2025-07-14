@@ -337,6 +337,12 @@ impl<T: DmaClaimable> DmaClaimed<T> {
 /// This is just intended for optimisation.
 pub struct BogusBuffer;
 
+impl BogusBuffer {
+    pub fn boxed() -> Box<Self> {
+        Box::new(BogusBuffer)
+    }
+}
+
 unsafe impl DmaTarget for BogusBuffer {
     fn data_ptr(&mut self) -> *mut [u8] {
         // SAFETY: Always empty
