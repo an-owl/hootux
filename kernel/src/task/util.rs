@@ -81,6 +81,18 @@ macro_rules! block_on {
     }};
 }
 
+/// Allows polling a future once. This may be to allow configuring the waker, or to initialise
+/// a command to hardware without waiting on completion.
+#[macro_export]
+macro_rules! poll_once {
+    ($fut:expr) => {
+        ::core::future::Future::poll(
+            $fut,
+            &mut ::core::task::Context::from_waker(&core::task::Waker::noop()),
+        )
+    };
+}
+
 pub use block_on;
 
 #[derive(Default)]
