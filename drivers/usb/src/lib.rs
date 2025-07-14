@@ -230,7 +230,7 @@ pub mod ehci {
             let mut this = Self {
                 pid,
                 target,
-                packet_size: 0,
+                packet_size,
                 head: Box::new_in(
                     QueueHead::new(),
                     DmaAlloc::new(hootux::mem::MemRegion::Mem32, 32),
