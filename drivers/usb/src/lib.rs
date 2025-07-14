@@ -28,7 +28,7 @@ pub mod ehci {
         async_list: Vec<alloc::sync::Arc<spin::Mutex<EndpointQueue>>>,
 
         // workers
-        pnp_watchdog: alloc::sync::Weak<hootux::task::util::WorkerWaiter>,
+        pnp_watchdog_message: alloc::sync::Weak<hootux::task::util::WorkerWaiter>,
     }
 
     impl Ehci {
@@ -84,7 +84,7 @@ pub mod ehci {
                 address_bmp: 1,
                 ports: port_vec.into_boxed_slice(),
                 async_list: Vec::new(),
-                pnp_watchdog: alloc::sync::Weak::new(),
+                pnp_watchdog_message: alloc::sync::Weak::new(),
             })
         }
 
@@ -129,7 +129,7 @@ pub mod ehci {
                     }
                     UsbStatus::PORT_CHANGE_DETECT => {
                         sts_reg.write(UsbStatus::PORT_CHANGE_DETECT);
-                        let Some(waiter) = self.pnp_watchdog.upgrade() else {
+                        let Some(waiter) = self.pnp_watchdog_message.upgrade() else {
                             continue;
                         }; // What? Are we shutting down? Starting Up?
                         waiter.wake()
