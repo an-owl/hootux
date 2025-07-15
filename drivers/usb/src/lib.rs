@@ -2,7 +2,16 @@
 #![feature(allocator_api)]
 extern crate alloc;
 
+use core::pin::Pin;
+use futures_util::FutureExt;
+use hootux::task::TaskResult;
+
 const PAGE_SIZE: usize = 4096;
+
+const UHCI_PCI_CLASS: [u8; 3] = [0xc, 0x3, 0x00];
+const OHCI_PCI_CLASS: [u8; 3] = [0xc, 0x3, 0x10];
+const EHCI_PCI_CLASS: [u8; 3] = [0xc, 0x3, 0x20];
+const XHCI_PCI_CLASS: [u8; 3] = [0xc, 0x3, 0x30];
 
 pub mod ehci {
     use crate::{DeviceAddress, Endpoint, PAGE_SIZE, PidCode, Target};
@@ -17,6 +26,7 @@ pub mod ehci {
         cap_regs::CapabilityRegisters,
         operational_regs::{OperationalRegisters, PortStatusCtl},
     };
+    use futures_util::FutureExt;
     use hootux::alloc_interface::DmaAlloc;
     use volatile::{VolatilePtr, VolatileRef};
 
@@ -86,6 +96,19 @@ pub mod ehci {
                 async_list: Vec::new(),
                 pnp_watchdog_message: alloc::sync::Weak::new(),
             })
+        }
+
+        /// Spawns the port change watchdog, which will handle initialising ports owned by the controller.
+        ///
+        /// This fn is `async` because it requires locking `this`, this can be run synchronously
+        /// without blocking if the caller can guarantee that `this` is not locked.
+        async fn start_port_watchdog(this: &alloc::sync::Arc<async_lock::Mutex<Self>>) {
+            let wd = PnpWatchdog {
+                controller: alloc::sync::Arc::downgrade(this),
+                ports: core::mem::take(&mut this.lock().await.ports),
+            };
+            // todo: Can I make this a child or something in the future?
+            hootux::task::run_task(wd.run().boxed());
         }
 
         /// Returns an address in the range 1..128
@@ -708,5 +731,64 @@ impl From<PidCode> for ::ehci::frame_lists::PidCode {
             PidCode::Out => Pid::Out,
             PidCode::Control => Pid::Setup,
         }
+    }
+}
+
+pub fn init() {
+    hootux::task::run_task(init_async().boxed());
+}
+
+async fn init_async() -> TaskResult {
+    use cast_trait_object::DynCastExt;
+    use core::task::Poll;
+    use hootux::fs::file::*;
+    use hootux::fs::sysfs::*;
+    loop {
+        let event_file = cast_file!(NormalFile: SysfsDirectory::get_file(&mut SysFsRoot::new().bus,"event").unwrap().into_sysfs_dir().unwrap().dyn_upcast()).unwrap();
+        let mut event = event_file.read(0, hootux::mem::dma::BogusBuffer::boxed());
+        // Poll event to mark to setup wake event, to prevent missed events while we are working
+        {
+            while let Poll::Ready(_) = hootux::poll_once!(Pin::new(&mut event)) {
+                event = event_file.read(0, hootux::mem::dma::BogusBuffer::boxed());
+            }
+        }
+
+        let pci_dir = SysfsDirectory::get_file(&SysFsRoot::new().bus, "pci")
+            .unwrap()
+            .into_sysfs_dir()
+            .unwrap();
+        for i in SysfsDirectory::file_list(&*pci_dir) {
+            let function = SysfsDirectory::get_file(&*pci_dir, &i)
+                .unwrap()
+                .into_sysfs_dir()
+                .unwrap();
+            let class =
+                cast_file!(NormalFile: SysfsDirectory::get_file(&*function,"class").unwrap().dyn_upcast())
+                    .unwrap();
+            let mut buffer = [0u8, 0, 0];
+
+            // SAFETY: sys/bus/pci/*/class is always synchronous PIO and can never be DMA.
+            unsafe {
+                class
+                    .read(
+                        0,
+                        alloc::boxed::Box::new(hootux::mem::dma::StackDmaGuard::new(&mut buffer)),
+                    )
+                    .await
+            }
+            .ok()
+            .unwrap(); // This will not return an error
+
+            match buffer {
+                UHCI_PCI_CLASS => log::info!("UHCI device found but no driver is implemented {i}"),
+                OHCI_PCI_CLASS => log::info!("OHCI device found but no driver is implemented {i}"),
+                EHCI_PCI_CLASS => {
+                    todo!()
+                }
+                XHCI_PCI_CLASS => log::info!("XHCI device found but no driver is implemented {i}"),
+                _ => {} // no match
+            }
+        }
+        let _ = event.await; // never returns err
     }
 }
