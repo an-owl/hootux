@@ -320,6 +320,15 @@ pub struct DmaClaimed<T: DmaClaimable> {
     inner: T,
 }
 
+impl<T: DmaClaimable> core::fmt::Debug for DmaClaimed<T> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("DmaClaimed")
+            .field("T", &core::any::type_name::<T>())
+            .field("can_unwrap", &!self.inner.query_owned())
+            .finish()
+    }
+}
+
 impl<T: DmaClaimable> DmaClaimed<T> {
     /// Attempts to unwrap the buffer calling [DmaClaimable::query_owned] to determine if the inner
     /// value has ownership of its buffer.
