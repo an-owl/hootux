@@ -246,13 +246,16 @@ pub struct PhysicalRegionDescription {
 
 /// A type that implements DmaTarget can be used for DMA operations.
 ///
-/// `async` DMA operations *must* use an implementor of DmaTarget to safely operate. The argument *must* be
+/// `async` DMA operations **must** use an implementor of DmaTarget to safely operate. The argument **must** be
 /// taken by value and not by reference, the future should return ownership of the DmaTarget when it completes.
 /// See [Embedonomicon](https://docs.rust-embedded.org/embedonomicon/dma.html) for details.
 ///
 /// # Safety
 ///
 /// An implementor must ensure that the DMA region returned by [Self::data_ptr] is owned by `self` is treated as volatile.
+///
+/// A `DmaTarget` **must** outlive a future that it's used within, regardless of whether the future completes or not,
+/// this can be done by ensuring that it is safe for a future to upcast a `dyn DmaTarget + 'a` into `dyn DmaTarget + 'static`.
 pub unsafe trait DmaTarget: Send {
     /// Returns a pointer into the target buffer.
     ///
