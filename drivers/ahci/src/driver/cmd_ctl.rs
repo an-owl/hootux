@@ -1,4 +1,4 @@
-use crate::hba::command::{CommandHeader, CommandTableRaw};
+use crate::hba::command::{CommandHeader, CommandTableRaw, PhysicalRegionDescription};
 
 /// This is used to store a table that is not used to send commands and has a constant location in
 /// physical memory.
@@ -101,10 +101,11 @@ impl<'a> CommandTable<'a> {
     pub fn send_fis(
         &mut self,
         fis: crate::hba::command::frame_information_structure::RegisterHostToDevFis,
-        buff: Option<*mut [u8]>,
+        buff: Option<&mut (dyn hootux::mem::dma::DmaTarget + 'static)>,
     ) -> Result<(), CommandError> {
         // See Note above
-        unsafe { self.table.send_fis(fis, buff) }
+        unsafe { self.table.send_fis(fis, buff) }?;
+        Ok(())
     }
 }
 
@@ -164,157 +165,47 @@ impl UnboundCommandTable {
     /// When this fn returns `Err(CommandError::BuffTooLong(n))` the PRDT has been built for `n` bytes.
     /// A second command will be required to fill the remaining buffer.
     // todo: region should ideally use a raw pointer. This is ok for not but watch "raw_slice_len" https://github.com/rust-lang/rust/issues/71146
-    pub(crate) unsafe fn build_prdt(&mut self, region: &[u8]) -> Result<(), CommandError> {
-        unsafe {
-            // increment: this is a separate definition because I may find a reason to change the increments later
-
-            if region.len() % 2 != 0 {
-                return Err(CommandError::BadBuffer);
-            }
-
-            let mut of = alloc::vec::Vec::new();
-            let index = core::cell::Cell::new(0); // counts the number of table entries used only mutate in flush()
-
-            let mut rem = region.len(); // who?
-            let mut ptr = region.as_ptr();
-            let mut blk: Option<(u64, u64)> = None;
-
-            let mut flush = |start, len| {
-                let entry = crate::hba::command::PhysicalRegionDescription::new(start, len)
-                    .expect("Failed to create physical region description");
-                if index.get() > self.table_size {
-                    of.push(entry);
-                } else {
-                    self.table[index.get()] = entry;
-                }
-                index.set(index.get() + 1);
-            };
-
-            // stores the return code. This is used over a `return Err(_)` because this fn needs to
-            // finalize things regardless of the error
-            let mut incomplete = Ok(());
-            loop {
-                // check that prdt space remains
-                if index.get() == u16::MAX {
-                    incomplete = Err(CommandError::BuffTooLong(region.len() - rem));
-                    break;
-                }
-
-                let (len, new_blk) = Self::gen_blk(ptr, rem);
-                let phys_addr =
-                    hootux::mem::mem_map::translate(ptr as usize).ok_or(CommandError::BadBuffer)?;
-
-                // checks the address is 32bit if required
-                if !self.info.is_64_bit && phys_addr & !0xffff_ffff != 0 {
-                    return Err(CommandError::BadAddress);
-                }
-
-                // if contiguous, append new blk
-                //     if next blk will be too long flush now
-                //         if table flush returns true return BuffTooLong
-                // else flush block
-                //     return BuffTooLong if flush returns true
-
-                match blk {
-                    // block is contiguous
-                    Some((start, last)) if last + len as u64 == phys_addr => {
-                        if ((phys_addr + len as u64) - start) > (1 << 21) {
-                            // exceeds maximum block size
-                            flush(start, (last - start) as u32);
-                            blk = Some((phys_addr, phys_addr + len as u64));
-                        } else {
-                            blk = Some((blk.unwrap().0, phys_addr + len as u64));
-                        }
-                    }
-
-                    // block is not contiguous
-                    Some((start, last)) if last + len as u64 != phys_addr => {
-                        flush(start, ((start - last) / 2) as u32);
-                        blk = Some((phys_addr, phys_addr + len as u64));
-                    }
-
-                    None => {
-                        blk = Some((phys_addr, phys_addr + len as u64));
-                    }
-                    _ => unreachable!(),
-                }
-
-                if let Some(nb) = new_blk {
-                    ptr = nb;
-                } else {
-                    if let Some((start, last)) = blk {
-                        flush(start, (last - start) as u32);
-                    }
-                    break;
-                }
-                rem -= len;
-            }
-
-            // realloc table if necessary
-            if of.len() != 0 {
-                // in theory if this overflows the result will be 0. If its not then the las index has been incorrectly calculated
-                // new size
-                let ns = match self.table_size.overflowing_add(of.len() as u16) {
-                    (0, true) => 0u16,
-                    (0, false) => panic!(), // This should never happen, flush has incorrectly calculated last index
-                    (n, false) => n,
-                    (_, true) => panic!(), // see (0,false) arm
-                };
-
-                let (mut nt, addr) = CommandTableRaw::new(ns, self.info.mem_region());
-
-                // moves new entries from old table
-                for i in 0..self.table.len() {
-                    nt[i as u16] = self.table[i as u16];
-                }
-
-                // move entries from overflow
-                for (c, i) in (self.table.len()..ns as usize).enumerate() {
-                    nt[c as u16] = of[i];
-                }
-
-                self.import_table(nt, addr);
-            } else {
-                self.set_len(index.get());
-            }
-
-            incomplete
+    pub(crate) unsafe fn build_prdt(
+        &mut self,
+        region: &mut dyn hootux::mem::dma::DmaTarget,
+    ) -> Result<(), CommandError> {
+        if region.len() & 1 != 0 {
+            log::error!("Buffer has odd length");
+            return Err(CommandError::BadBuffer);
         }
-    }
-
-    /// Attempts to locate an aligned block form a pointer and a remainder.
-    /// Returns the size of the block and address of the next block if any remains.
-    fn gen_blk(ptr: *const u8, rem: usize) -> (usize, Option<*const u8>) {
-        const INC: usize = hootux::mem::PAGE_SIZE;
-
-        let addr = ptr as usize;
-
-        // chk align
-        let offset = addr & (INC - 1);
-        return if offset != 0 {
-            // not aligned to INC
-
-            if rem <= (INC - offset) {
-                // If block ends before next INC
-                // (INC-offset) is size until next INC
-                (rem, None)
-            } else {
-                (
-                    INC - offset,
-                    Some(unsafe { ptr.offset((INC - offset) as isize) }),
-                )
-            }
+        if region.data_ptr().cast::<u8>() as usize & 1 != 0 {
+            log::error!("Buffer pointer is odd");
+            return Err(CommandError::BadBuffer);
+        }
+        // really not that great for performance, but... hey shit it prefetches everything
+        let prd_len = region.prd().flat_map(|prd| prd.limit(0x40_0000)).count();
+        if prd_len > u16::MAX as usize {
+            log::error!(
+                "PRD was determined to be longer {prd_len} than maximum sized command {mx}: Possibly erroneously sized buffer? Continuing anyway.",
+                mx = u16::MAX
+            );
+            return Err(CommandError::BuffTooLong(prd_len));
+        }
+        if self.table.len() < prd_len {
+            let (ctr, addr) = CommandTableRaw::new(prd_len as u16, self.info.mem_region()); // truncating here should be fine, as SATA operations basically max out at 256MiB. A worst case scenario PRD will only be short 2 entries.
+            // SAFETY: This is safe because `addr` is given by CommandTableRaw::new()
+            unsafe { self.import_table(ctr, addr) };
         } else {
-            if INC < rem {
-                // last block not aligned
-                (rem, None)
-            } else if rem == INC {
-                // last block aligned
-                (INC, None)
-            } else {
-                (INC, Some(unsafe { ptr.offset(INC as isize) }))
-            }
-        };
+            // SAFETY: This is guaranteed to be the correct len because it is returned by PRD.iter().count()
+            unsafe { self.set_len(prd_len as u16) };
+        }
+
+        for (i, region) in region
+            .prd()
+            .flat_map(|prd| prd.limit(0x40_0000))
+            .enumerate()
+        {
+            let Ok(i) = i.try_into() else { break };
+            // the cast wont truncate anything because the region size will not
+            self.table[i] =
+                PhysicalRegionDescription::new(region.addr, region.size as u32).unwrap();
+        }
+        Ok(())
     }
 
     /// Sets the len of the PRDT within the command header.
@@ -336,16 +227,15 @@ impl UnboundCommandTable {
     pub(super) unsafe fn send_fis(
         &mut self,
         cmd: crate::hba::command::frame_information_structure::RegisterHostToDevFis,
-        buff: Option<*mut [u8]>,
+        buff: Option<&mut (dyn hootux::mem::dma::DmaTarget + 'static)>,
     ) -> Result<(), CommandError> {
         unsafe {
             if let Some(buff) = buff {
-                self.build_prdt(&*buff)?
+                self.build_prdt(buff)?
             }
             (*self.parent).set_fis_len(
-                (core::mem::size_of::<
-                    crate::hba::command::frame_information_structure::RegisterHostToDevFis,
-                >() / 4)
+                (size_of::<crate::hba::command::frame_information_structure::RegisterHostToDevFis>(
+                ) / 4)
                     .try_into()
                     .unwrap(),
             );

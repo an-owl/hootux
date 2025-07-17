@@ -7,6 +7,7 @@ use core::pin::Pin;
 use core::task::{Context, Poll};
 use hootux::alloc_interface::MmioAlloc;
 use hootux::fs::sysfs::SysfsDirectory;
+use hootux::mem::dma::DmaClaimable;
 use hootux::task::TaskResult;
 
 //pub mod block;
@@ -307,20 +308,26 @@ impl Port {
                 i
             } else {
                 // min alignment for alloc is 8. This should be u16
-                let mut buffer = alloc::boxed::Box::new([0u8; 512]);
+                let buffer = alloc::boxed::Box::new([0u8; 512]);
+                let Some((buffer, borrow)) = hootux::mem::dma::DmaGuard::new(buffer).claim() else {
+                    core::unreachable!()
+                };
 
                 // SAFETY: IdentifyDevice returns a 512 byte buff
                 unsafe {
-                    self.issue_cmd(
-                        ata::command::constructor::NoArgCmd::IdentifyDevice.compose(),
-                        Some(&mut buffer[..]),
-                    )
-                    .await
-                    .unwrap(); // todo handle this
+                    let ret = self
+                        .issue_cmd(
+                            ata::command::constructor::NoArgCmd::IdentifyDevice.compose(),
+                            Some(borrow),
+                        )
+                        .await
+                        .ok()
+                        .unwrap(); // todo handle this
+                    drop(ret); // explicit drop
                 }
 
                 let id_raw: alloc::boxed::Box<ata::structures::identification::DeviceIdentity> =
-                    unsafe { core::mem::transmute(buffer) };
+                    unsafe { core::mem::transmute(buffer.unwrap().unwrap().unwrap()) };
 
                 let id = DevIdentity::from(*id_raw);
 
@@ -343,13 +350,17 @@ impl Port {
 
     /// Attempts to issue the command to the device. If the command list is full the command will be queued.
     // todo: This fn should construct the PRDT. ATM it is only constructed when a command slot is free, doing it here will minimize command downtime.
-    pub async unsafe fn issue_cmd(
-        &self,
+    pub async unsafe fn issue_cmd<'a, 'b>(
+        &'a self,
         cmd: ata::command::constructor::ComposedCommand,
-        buff: Option<&[u8]>,
-    ) -> Result<Option<&[u8]>, CmdErr> {
+        buff: Option<hootux::mem::dma::DmaBuff<'b>>,
+    ) -> Result<
+        Option<hootux::mem::dma::DmaBuff<'b>>,
+        (Option<hootux::mem::dma::DmaBuff<'b>>, CmdErr),
+    > {
         unsafe {
-            let fut = self.construct_future(cmd, buff);
+            // SAFETY: This is guaranteed to be safe by DmaTarget
+            let fut = self.construct_future(cmd, core::mem::transmute(buff));
 
             // this probably won't end up waiting
             if let None = self.exec_cmd(fut.clone()).await {
@@ -358,7 +369,9 @@ impl Port {
 
             // SAFETY: This is safe because the buffer is originally given as a ref.
             // The deref must occur because the buffer may not have an associated lifetime.
-            fut.await.map(|k| k.map(|b| &*b))
+            fut.await
+                .map(|buff| core::mem::transmute(buff))
+                .map_err(|(buff, err)| (core::mem::transmute(buff), err))
         }
     }
 
@@ -368,7 +381,7 @@ impl Port {
     /// # Safety
     ///
     /// The caller must ensure that the buffer is correctly sized for the given command.
-    async unsafe fn exec_cmd(&self, cmd: CmdFuture) -> Option<u8> {
+    async unsafe fn exec_cmd<'a, 'b>(&'a self, cmd: CmdFuture) -> Option<u8> {
         unsafe {
             // not allowed to run commands while in error state
             if self.err_chk.is_err() {
@@ -386,11 +399,14 @@ impl Port {
             };
 
             let mut table = self.cmd_tables.table(slot).unwrap(); // panics here are a bug. Did self.info change?
-            let b = cmd.data.get_buff();
+            let mut b = cmd.data.buff.lock();
 
             // actually sends the command to the device.
+            // map(): coerces Option(&mut Box<dyn DmaGuard>) to Option<&mut dyn DmaGuard>
             // fixme errors here should be handled
-            table.send_fis(fis, b.map(|d| d.cast_mut())).expect("fixme");
+            table
+                .send_fis(fis, b.as_mut().map(|this| &mut **this))
+                .expect("fixme");
             *self.active_cmd_fut[slot as usize].lock() = Some(cmd.clone());
 
             self.port.lock().tfd_wait();
@@ -536,13 +552,13 @@ impl Port {
     fn construct_future(
         &self,
         cmd: ata::command::constructor::ComposedCommand,
-        buff: Option<&[u8]>,
+        buff: Option<hootux::mem::dma::DmaBuff<'static>>,
     ) -> CmdFuture {
         CmdFuture {
             data: alloc::sync::Arc::new(CmdDataInner {
                 cmd,
                 state: atomic::Atomic::new(CmdState::Waiting),
-                buff: atomic::Atomic::new(buff.map(|b| b as *const [u8])),
+                buff: spin::Mutex::new(buff),
                 waker: Default::default(),
                 nqc: atomic::Atomic::new(false),
             }),
@@ -615,68 +631,81 @@ impl Port {
     ///
     /// This fn will return Err(BadArgs) if `lba >= 0x1000000000000`
     /// or if the given lba + count exceeds the last sector on the device.
-    pub async fn read(&self, lba: SectorAddress, buff: &mut [u8]) -> Result<(), CmdErr> {
+    pub async fn read<'a, 'b>(
+        &'a self,
+        lba: SectorAddress,
+        mut buff: hootux::mem::dma::DmaBuff<'b>,
+    ) -> Result<hootux::mem::dma::DmaBuff<'b>, (hootux::mem::dma::DmaBuff<'b>, CmdErr)> {
         use ata::command::constructor;
         let id = self.get_identity().await;
-        let count = SectorCount::new(
-            (buff.len() as u64 / id.lba_size)
-                .try_into()
-                .ok()
-                .ok_or(CmdErr::BadArgs)?,
-        )
-        .ok_or(CmdErr::BadArgs)?;
+        let Ok(raw_count) = (buff.len() as u64 / id.lba_size).try_into() else {
+            return Err((buff, CmdErr::BadArgs));
+        };
+        let Some(count) = SectorCount::new(raw_count) else {
+            return Err((buff, CmdErr::BadArgs));
+        };
 
         let id = self.get_identity().await;
         if id.exceeds_dev(lba, count) {
-            return Err(CmdErr::BadArgs);
+            return Err((buff, CmdErr::BadArgs));
         }
 
-        let c = constructor::SpanningCmd::new(
+        let Some(c) = constructor::SpanningCmd::new(
             constructor::SpanningCmdType::Read,
             lba.raw(),
             count.count_ext(),
-        )
-        .ok_or(CmdErr::BadArgs)?;
+        ) else {
+            return Err((buff, CmdErr::BadArgs));
+        };
 
         // SAFETY: This is safe because the command take a buffer and the buffer size is equal to
         // the size of the expected data.
-        unsafe { self.issue_cmd(c.compose(), Some(&mut *buff)) }.await?;
-        Ok(())
+        Ok(unsafe { self.issue_cmd(c.compose(), Some(buff)) }
+            .await
+            .map_err(|(buff, e)| (buff.unwrap(), e))?
+            .unwrap()) // This always returns Some(buff) when we pass the buffer to it
     }
 
     /// This fn writes the given buffer to the device at starting at `lba`.
     ///
     /// This fn will return Err(BadArgs) if the size of given buffer is not aligned to the logical
     /// sector size of the device or the buffer + `lba` exceeds the size of the device.
-    pub async fn write(&self, lba: SectorAddress, buff: &[u8]) -> Result<(), CmdErr> {
+    pub async fn write<'a, 'b>(
+        &'a self,
+        lba: SectorAddress,
+        mut buff: hootux::mem::dma::DmaBuff<'b>,
+    ) -> Result<hootux::mem::dma::DmaBuff<'b>, (hootux::mem::dma::DmaBuff<'b>, CmdErr)> {
         use ata::command::constructor;
 
         let id = self.get_identity().await;
         if buff.len() as u64 % id.lba_size != 0 {
-            return Err(CmdErr::BadArgs);
+            return Err((buff, CmdErr::BadArgs));
         }
 
-        let count = SectorCount::new(
-            (buff.len() as u64 / id.lba_size)
-                .try_into()
-                .ok()
-                .ok_or(CmdErr::BadArgs)?,
-        )
-        .ok_or(CmdErr::BadArgs)?;
+        let Ok(count_raw) = (buff.len() as u64 / id.lba_size).try_into() else {
+            return Err((buff, CmdErr::BadArgs));
+        };
+        let Some(count) = SectorCount::new(count_raw) else {
+            return Err((buff, CmdErr::BadArgs));
+        };
 
         if id.exceeds_dev(lba, count) || buff.len() == 0 {
-            return Err(CmdErr::BadArgs);
+            return Err((buff, CmdErr::BadArgs));
         }
 
-        let c = constructor::SpanningCmd::new(
+        let Some(c) = constructor::SpanningCmd::new(
             constructor::SpanningCmdType::Write,
             lba.raw(),
             count.count_ext(),
-        )
-        .ok_or(CmdErr::BadArgs)?;
+        ) else {
+            return Err((buff, CmdErr::BadArgs));
+        };
+
         // SAFETY: This is safe because the the count has been calculated from the size of the buffer.
-        unsafe { self.issue_cmd(c.compose(), Some(buff)) }.await?;
-        Ok(())
+        Ok(unsafe { self.issue_cmd(c.compose(), Some(buff)) }
+            .await
+            .map_err(|(buff, e)| (buff.unwrap(), e))?
+            .unwrap())
     }
 
     fn get_state(&self) -> PortState {
@@ -1001,20 +1030,16 @@ impl CmdLock {
 struct CmdDataInner {
     cmd: ata::command::constructor::ComposedCommand,
     state: atomic::Atomic<CmdState>,
-    buff: atomic::Atomic<Option<*const [u8]>>,
+    buff: spin::mutex::Mutex<Option<hootux::mem::dma::DmaBuff<'static>>>,
     waker: futures::task::AtomicWaker,
     // contains whether this command used NQC. This is here exclusively for error checking
     nqc: atomic::Atomic<bool>,
 }
 
 impl CmdDataInner {
-    fn take_buff(&self) -> Option<*const [u8]> {
+    fn take_buff(&self) -> Option<hootux::mem::dma::DmaBuff<'static>> {
         // should be non locking due to non-zero optimization
-        self.buff.swap(None, atomic::Ordering::Relaxed)
-    }
-
-    fn get_buff(&self) -> Option<*const [u8]> {
-        self.buff.load(atomic::Ordering::Relaxed)
+        self.buff.lock().take()
     }
 }
 
@@ -1071,13 +1096,16 @@ impl CmdFuture {
 }
 
 impl core::future::Future for CmdFuture {
-    type Output = Result<Option<*const [u8]>, CmdErr>;
+    type Output = Result<
+        Option<hootux::mem::dma::DmaBuff<'static>>,
+        (Option<hootux::mem::dma::DmaBuff<'static>>, CmdErr),
+    >;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         match self.data.state.load(atomic::Ordering::Relaxed) {
             CmdState::Completed => Poll::Ready(Ok(self.data.take_buff())),
 
-            CmdState::Err(e) => Poll::Ready(Err(e)),
+            CmdState::Err(e) => Poll::Ready(Err((self.data.take_buff(), e))),
 
             _ => {
                 self.data.waker.register(cx.waker());

@@ -319,21 +319,17 @@ impl Read<u8> for AhciCharDevice {
             };
 
             let sector = crate::driver::SectorAddress::new(pos / sector_size.lba_size).unwrap(); // May panic if my maths is incorrect.
-            match self
-                .port
-                .read(sector, &mut unsafe { &mut *buff.data_ptr() }[..len])
-                .await
-            {
-                Ok(()) => Ok((buff, len)),
-                Err(CmdErr::DevErr(b)) => {
+            match self.port.read(sector, buff).await {
+                Ok(buff) => Ok((buff, len)),
+                Err((buff, CmdErr::DevErr(b))) => {
                     log::error!("ATA command returned error with bits {b:?}");
                     Err((IoError::MediaError, buff, 0))
                 }
-                Err(CmdErr::Disowned) => {
+                Err((buff, CmdErr::Disowned)) => {
                     log::info!("Device {} was removed while command was active", self.id);
                     Err((IoError::MediaError, buff, 0))
                 }
-                Err(e) => {
+                Err((buff, e)) => {
                     log::error!("Driver error: Command failed with {e:?}");
                     Err((IoError::DeviceError, buff, 0))
                 }
@@ -357,21 +353,17 @@ impl Write<u8> for AhciCharDevice {
             };
 
             let sector = crate::driver::SectorAddress::new(pos / sector_size.lba_size).unwrap(); // May panic if my maths is incorrect.
-            match self
-                .port
-                .write(sector, &mut unsafe { &mut *buff.data_ptr() }[..len])
-                .await
-            {
-                Ok(()) => Ok((buff, len)),
-                Err(CmdErr::DevErr(b)) => {
+            match self.port.write(sector, buff).await {
+                Ok(buff) => Ok((buff, len)),
+                Err((buff, CmdErr::DevErr(b))) => {
                     log::error!("ATA command returned error with bits {b:?}");
                     Err((IoError::MediaError, buff, 0))
                 }
-                Err(CmdErr::Disowned) => {
+                Err((buff, CmdErr::Disowned)) => {
                     log::info!("Device {} was removed while command was active", self.id);
                     Err((IoError::MediaError, buff, 0))
                 }
-                Err(e) => {
+                Err((buff, e)) => {
                     log::error!("Driver error: Command failed with {e:?}");
                     Err((IoError::DeviceError, buff, 0))
                 }
