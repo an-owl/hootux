@@ -236,12 +236,72 @@ impl Iterator for PhysicalRegionDescriber<'_> {
 /// Describes a contiguous region of physical memory.
 ///
 /// This is used for building Scatter-Gather tables.
-#[derive(Debug)]
+#[derive(Debug, Eq, PartialEq, Copy, Clone)]
 pub struct PhysicalRegionDescription {
     /// Starting physical address of the region.
     pub addr: u64,
     /// Length in bytes.
     pub size: usize,
+}
+
+impl PhysicalRegionDescription {
+    /// Calls `adapt` on `self` until `None` is returned to allow converting `self` between formats.
+    /// This can be used with [Iterator::flat_map] provide device specific physical region description formats.
+    pub fn adapt<F>(self, adapt: F) -> impl Iterator<Item = PhysicalRegionDescription>
+    where
+        F: FnMut(&PhysicalRegionDescription) -> Option<PhysicalRegionDescription>,
+    {
+        PhysicalRegionAdapter {
+            adapter: adapt,
+            region: self,
+        }
+    }
+
+    /// Returns an adaptor where the maximum region size is limited to `len`
+    pub fn limit(self, len: usize) -> impl Iterator<Item = PhysicalRegionDescription> {
+        let mut state = 0;
+        self.adapt(move |desc| {
+            let remain = desc.size - state;
+            if state >= desc.size {
+                return None;
+            }
+            let len = desc.size.min(len).min(remain);
+
+            let r = Some(PhysicalRegionDescription {
+                addr: desc.addr + state as u64,
+                size: len,
+            });
+            state += len;
+            r
+        })
+    }
+}
+
+/// This struct helps with adapting [PhysicalRegionDescription] into different formats.
+/// This takes a `Fn` as an argument which takes an immutable reference to a [PhysicalRegionDescription]
+/// which contains the region that [PhysicalRegionDescription::adapt] was called on, and a mutable
+/// reference which can be used to maintain the adaptors state.
+///
+/// This implements [Iterator] and will return data from `F`.
+#[doc(hidden)]
+pub struct PhysicalRegionAdapter<F>
+where
+    F: FnMut(&PhysicalRegionDescription) -> Option<PhysicalRegionDescription>,
+{
+    adapter: F,
+    region: PhysicalRegionDescription,
+}
+
+impl<F> Iterator for PhysicalRegionAdapter<F>
+where
+    F: FnMut(&PhysicalRegionDescription) -> Option<PhysicalRegionDescription>,
+{
+    type Item = PhysicalRegionDescription;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let ad = &mut self.adapter;
+        ad(&self.region)
+    }
 }
 
 /// A type that implements DmaTarget can be used for DMA operations.
