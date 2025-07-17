@@ -112,3 +112,4 @@ achieve them.
   design decisions
     - I have a half-baked almost-prototype already
 - Optimise memory initialisation, it wasn't ever very fast but legacy boot proves just how abysmally slow it really is.
+- Determine whether DmaTarget should be `where Self: 'static`
