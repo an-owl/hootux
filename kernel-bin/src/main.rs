@@ -182,6 +182,8 @@ fn init_static_drivers() {
     serial::init_rt_serial();
     ahci::init();
     hid_ps2::init();
+    #[cfg(feature = "usb")]
+    usb::init();
 }
 
 #[cfg(not(test))]
