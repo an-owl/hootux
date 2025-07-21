@@ -2,7 +2,6 @@
 #![feature(allocator_api)]
 extern crate alloc;
 
-use crate::ehci::EhciContainer;
 use core::pin::Pin;
 use futures_util::FutureExt;
 use hootux::task::TaskResult;
@@ -15,13 +14,14 @@ const EHCI_PCI_CLASS: [u8; 3] = [0xc, 0x3, 0x20];
 const EHCI_BAR: u8 = 0;
 const XHCI_PCI_CLASS: [u8; 3] = [0xc, 0x3, 0x30];
 
+static DEV_ID: hootux::fs::vfs::DeviceIdDistributer = hootux::fs::vfs::DeviceIdDistributer::new();
+
 pub mod ehci {
     use crate::{DeviceAddress, Endpoint, PAGE_SIZE, PidCode, Target};
     use alloc::boxed::Box;
     use alloc::vec::Vec;
     use bitfield::{Bit, BitMut};
     use core::alloc::Allocator;
-    use core::mem::offset_of;
     use core::ptr::NonNull;
     use derivative::Derivative;
     use ehci::frame_lists::{QueueElementTransferDescriptor, QueueHead};
@@ -32,87 +32,10 @@ pub mod ehci {
     };
     use futures_util::FutureExt;
     use hootux::alloc_interface::DmaAlloc;
+    use hootux::fs::vfs::MajorNum;
     use volatile::{VolatilePtr, VolatileRef};
 
-    pub(crate) struct EhciContainer {
-        controller: alloc::sync::Arc<async_lock::Mutex<Ehci>>,
-        address: u32,
-        allocated: NonNull<[u8]>,
-        layout: core::alloc::Layout,
-        binding: hootux::fs::file::LockedFile<u8>,
-    }
-
-    impl EhciContainer {
-        /// Initialises the EHCI controller and wraps it in a container.
-        ///
-        /// # Safety
-        ///
-        /// The caller must ensure that `binding` is a file lock of the PCI function this driver instance intends to operate.
-        /// `address` and `layout` must accurately describe the EHCI in physical memory.
-        pub(crate) unsafe fn new(
-            binding: hootux::fs::file::LockedFile<u8>,
-            address: u32,
-            layout: core::alloc::Layout,
-        ) -> Self {
-            // SAFETY: Address is guaranteed by caller.
-            let alloc = unsafe { hootux::alloc_interface::MmioAlloc::new(address as usize) };
-            let region = alloc.allocate(layout).unwrap();
-            // SAFETY: This owns the controller and will only free the associated memory after ehci and all its children have stopped
-            let ehci = unsafe { Ehci::new(region).unwrap() };
-
-            Self {
-                controller: alloc::sync::Arc::new(async_lock::Mutex::new(ehci)),
-                address,
-                allocated: region,
-                layout,
-                binding,
-            }
-        }
-
-        async fn drop(mut self) {
-            let address = self.address;
-            let layout = self.layout;
-            let allocated = self.allocated;
-            let this = &raw mut self;
-            core::mem::forget(self);
-            // SAFETY: This is safe, the pointer is valid, this is still present in memory and initialised.
-            let controller = unsafe {
-                this.add(offset_of!(Self, controller))
-                    .cast::<alloc::sync::Arc<async_lock::Mutex<Ehci>>>()
-                    .read()
-            };
-            let weak = alloc::sync::Arc::downgrade(&controller);
-            drop(controller);
-
-            while weak.strong_count() > 0 {
-                hootux::task::util::sleep(1).await; // this could be changed to suspend!()
-            }
-            drop(weak); // no longer needed
-
-            // SAFETY: new(): The address is guaranteed to point to `self`.
-            let alloc = unsafe { hootux::alloc_interface::MmioAlloc::new(address as usize) };
-            // SAFETY: We guarantee that `allocated` is not used by anything anymore
-            unsafe {
-                alloc.deallocate(allocated.cast(), layout);
-            }
-            // SAFETY: Pointer is valid.
-            unsafe {
-                core::ptr::drop_in_place(
-                    this.add(offset_of!(Self, binding))
-                        .cast::<hootux::fs::file::LockedFile<u8>>(),
-                );
-            }
-        }
-    }
-
-    impl Drop for EhciContainer {
-        fn drop(&mut self) {
-            panic!(
-                "Triggered {} drop bomb: {0}::drop() must be called to drop",
-                core::any::type_name::<Self>()
-            );
-        }
-    }
+    pub(super) mod file;
 
     pub struct Ehci {
         capability_registers: &'static CapabilityRegisters,
@@ -121,6 +44,12 @@ pub mod ehci {
         ports: Box<[VolatileRef<'static, PortStatusCtl>]>,
         async_list: Vec<alloc::sync::Arc<spin::Mutex<EndpointQueue>>>,
 
+        memory: InaccessibleAddr<[u8]>,
+        address: u32,
+        layout: core::alloc::Layout,
+        binding: hootux::fs::file::LockedFile<u8>,
+        major_num: MajorNum,
+
         // workers
         pnp_watchdog_message: alloc::sync::Weak<hootux::task::util::WorkerWaiter>,
     }
@@ -128,6 +57,24 @@ pub mod ehci {
     // SAFETY: Ehci is not Send because `operational_registers` contains `VolatilePtr` which is not Send
     // this field is may not be explicitly accessed by other types. Methods are required to operate on these fields.
     unsafe impl Send for Ehci {}
+    unsafe impl Sync for Ehci {}
+
+    struct InaccessibleAddr<T: ?Sized> {
+        addr: NonNull<T>,
+    }
+
+    // SAFETY: Address is inaccessible without owning it
+    unsafe impl<T: ?Sized> Sync for InaccessibleAddr<T> {}
+    unsafe impl<T: ?Sized> Send for InaccessibleAddr<T> {}
+
+    impl<T: ?Sized> InaccessibleAddr<T> {
+        const fn new(addr: NonNull<T>) -> Self {
+            Self { addr }
+        }
+        const fn get_addr(self) -> NonNull<T> {
+            self.addr
+        }
+    }
 
     impl Ehci {
         /// This fn constructs a `Controller`
@@ -141,9 +88,14 @@ pub mod ehci {
         ///
         /// The caller should ensure that `hci_pointer` points to the entire region described by BAR0 in
         /// the PCI configuration region.
-        pub unsafe fn new(hci_pointer: NonNull<[u8]>) -> Option<Self> {
+        pub unsafe fn new(
+            hci_pointer: NonNull<[u8]>,
+            phys_address: u32,
+            layout: core::alloc::Layout,
+            binding: hootux::fs::file::LockedFile<u8>,
+        ) -> Option<Self> {
             let len = hci_pointer.len();
-            let op_offset = unsafe { core::ptr::read_volatile(hci_pointer.cast::<u32>().as_ptr()) };
+            let op_offset = unsafe { core::ptr::read_volatile(hci_pointer.cast::<u8>().as_ptr()) };
             if op_offset as usize + size_of::<OperationalRegisters>() > len {
                 return None;
             }
@@ -182,6 +134,11 @@ pub mod ehci {
                 address_bmp: 1,
                 ports: port_vec.into_boxed_slice(),
                 async_list: Vec::new(),
+                memory: InaccessibleAddr::new(hci_pointer),
+                address: phys_address,
+                layout,
+                binding,
+                major_num: MajorNum::new(),
                 pnp_watchdog_message: alloc::sync::Weak::new(),
             })
         }
@@ -290,6 +247,28 @@ pub mod ehci {
         /// This should only be used to allocate a non-default address to the device.
         fn get_default_table(&self) -> alloc::sync::Arc<spin::Mutex<EndpointQueue>> {
             self.async_list[0].clone()
+        }
+    }
+
+    impl Drop for Ehci {
+        fn drop(&mut self) {
+            let addr = core::mem::replace(
+                &mut self.memory,
+                // SAFETY: We just need to take the address, it doesnt matter what we replace it with because it will never be accessed again.
+                InaccessibleAddr::new(unsafe {
+                    NonNull::new(core::slice::from_raw_parts_mut(
+                        core::ptr::dangling_mut(),
+                        0,
+                    ))
+                    .unwrap()
+                }),
+            )
+            .get_addr();
+            // SAFETY: This is safe because we only free memory
+            let alloc = unsafe { hootux::alloc_interface::MmioAlloc::new(self.address as usize) };
+            // SAFETY: self.capability_registers and self.operational_registers point to this.
+            // But because they are &/VolatilePtr they are not dropped.
+            unsafe { alloc.deallocate(addr.cast(), self.layout) };
         }
     }
 
@@ -853,7 +832,8 @@ async fn init_async() -> TaskResult {
     use hootux::fs::file::*;
     use hootux::fs::sysfs::*;
     loop {
-        let event_file = cast_file!(NormalFile: SysfsDirectory::get_file(&mut SysFsRoot::new().bus,"event").unwrap().into_sysfs_dir().unwrap().dyn_upcast()).unwrap();
+        let event_file = cast_file!(NormalFile: SysfsDirectory::get_file(&mut SysFsRoot::new().bus,"event").unwrap()
+            .dyn_upcast()).unwrap();
         let mut event = event_file.read(0, hootux::mem::dma::BogusBuffer::boxed());
         // Poll event to mark to setup wake event, to prevent missed events while we are working
         {
@@ -899,23 +879,28 @@ async fn init_async() -> TaskResult {
                     let Ok(cfg_file) = SysfsDirectory::get_file(&*function, "cfg") else {
                         continue;
                     };
-                    let cfg = cfg_file
+                    let result = cfg_file
                         .method_call("ctl_raw", &())
                         .await
                         .unwrap()
                         .inner
-                        .downcast::<hootux::system::pci::DeviceControl>()
-                        .unwrap();
+                        .downcast::<alloc::sync::Arc<async_lock::Mutex<hootux::system::pci::DeviceControl>>>().unwrap();
+                    let cfg = result.lock_arc().await;
+
                     let bar_info = cfg.get_bar(EHCI_BAR).unwrap(); // Presence is guaranteed by the spec
                     // SAFETY: This is safe because the the address and layout is guaranteed to be correct.
                     // Both values are fetched directly from the BAR
                     let ehci = unsafe {
-                        EhciContainer::new(
+                        ehci::file::EhciFileContainer::new(
                             bind,
                             bar_info.addr().try_into().unwrap(),
                             bar_info.layout(),
                         )
                     };
+
+                    SysFsRoot::new()
+                        .bus
+                        .insert_device(alloc::boxed::Box::new(ehci));
                 }
 
                 XHCI_PCI_CLASS => log::info!("XHCI device found but no driver is implemented {i}"),
