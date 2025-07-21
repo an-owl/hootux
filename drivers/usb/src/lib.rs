@@ -896,6 +896,7 @@ async fn init_async() -> TaskResult {
                             bar_info.addr().try_into().unwrap(),
                             bar_info.layout(),
                         )
+                        .await
                     };
 
                     SysFsRoot::new()

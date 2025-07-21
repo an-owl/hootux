@@ -28,7 +28,7 @@ impl EhciFileContainer {
     /// `layout` must describe the entire EHCI BAR. `bind` must contain the lock of the binding file
     /// that the other arguments describe.
     /// The binding file can be found at `/sys/bus/pci/{PCI_ADDR}/bind`
-    pub(crate) unsafe fn new(bind: LockedFile<u8>, address: u32, layout: Layout) -> Self {
+    pub(crate) async unsafe fn new(bind: LockedFile<u8>, address: u32, layout: Layout) -> Self {
         // SAFETY: Must be asserted by the caller to be correct
         let alloc = unsafe { hootux::alloc_interface::MmioAlloc::new(address as usize) };
         let Ok(region) = alloc.allocate(layout) else {
@@ -42,7 +42,7 @@ impl EhciFileContainer {
             inner: Arc::new(async_lock::Mutex::new(ehci)),
         };
 
-        hootux::task::run_task(Box::pin(super::Ehci::start_port_watchdog(&this.inner)));
+        super::Ehci::start_port_watchdog(&this.inner).await;
         this
     }
 }
@@ -58,7 +58,7 @@ impl File for EhciFileContainer {
 
     fn device(&self) -> DevID {
         // we are the root device, all devices on the bus use their USB bus address as minor.
-        DevID::new(self.inner.major_num, 0)
+        DevID::new(self.major, 0)
     }
 
     fn clone_file(&self) -> Box<dyn File> {
