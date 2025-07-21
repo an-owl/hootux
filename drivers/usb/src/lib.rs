@@ -727,8 +727,10 @@ pub mod ehci {
             ));
             // SAFETY: MaybeUninit ensures this is aligned.
             // assume_init: Is safe because we initialise `b`
-            b.as_mut_ptr().write_volatile(qtd);
-            c.push(b.assume_init());
+            unsafe {
+                b.as_mut_ptr().write_volatile(qtd);
+                c.push(b.assume_init());
+            }
             self.str = c.into_boxed_slice();
             self
         }
