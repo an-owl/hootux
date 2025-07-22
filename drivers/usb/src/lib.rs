@@ -950,15 +950,14 @@ async fn init_async() -> TaskResult {
                     let cfg = result.lock_arc().await;
 
                     let bar_info = cfg.get_bar(EHCI_BAR).unwrap(); // Presence is guaranteed by the spec
+                    let bar_addr = bar_info.addr().try_into().unwrap();
+                    let bar_layout = bar_info.layout();
+                    drop(cfg);
                     // SAFETY: This is safe because the the address and layout is guaranteed to be correct.
                     // Both values are fetched directly from the BAR
                     let ehci = unsafe {
-                        ehci::file::EhciFileContainer::new(
-                            bind,
-                            bar_info.addr().try_into().unwrap(),
-                            bar_info.layout(),
-                        )
-                        .await
+                        ehci::file::EhciFileContainer::new(*result, bind, bar_addr, bar_layout)
+                            .await
                     };
 
                     SysFsRoot::new()
