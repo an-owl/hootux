@@ -462,7 +462,31 @@ pub mod ehci {
                 Removed,
                 Added,
             }
-            let mut work_list: [Option<Work>; 64] = [None; 64];
+            for i in &mut self.ports {
+                i.as_mut_ptr().update(|mut p| {
+                    p.set_port_power(true);
+                    p.wake_on_connect(true);
+                    p.wake_on_disconnect(true);
+                    p.wake_on_overcurrent(true);
+                    p
+                });
+                assert!(i.as_ptr().read().port_power());
+            }
+            hootux::task::util::sleep(100).await;
+            let work = alloc::sync::Arc::new(hootux::task::util::WorkerWaiter::new());
+            let mut controller = self.controller.upgrade().ok_or(())?.lock_arc().await;
+            controller.pnp_watchdog_message = alloc::sync::Arc::downgrade(&work);
+            drop(controller);
+            // This will add startup work to init ports.
+            // If the port status change bit is set then this will be overwritten by the normal runtime loop
+            let mut work_list: [Option<Work>; 64] = core::array::from_fn(|portnum| {
+                if self.ports.get(portnum)?.as_ptr().read().connected() {
+                    Some(Work::Added)
+                } else {
+                    None
+                }
+            });
+
             loop {
                 // This acts as a bit like a hardware mutex.
                 // It ensures that the controller is still there before acting and that it will not be dropped while we are working.
@@ -489,14 +513,6 @@ pub mod ehci {
                         None => continue 'work_loop,
                         Some(Work::Added) => {
                             let port = &mut self.ports[i];
-
-                            // todo parallelise this.
-
-                            port.as_mut_ptr().update(|mut s| {
-                                s.set_port_power(true);
-                                s
-                            });
-                            hootux::task::util::sleep(100).await;
 
                             port.as_mut_ptr().update(|mut s| {
                                 s.reset(true);
