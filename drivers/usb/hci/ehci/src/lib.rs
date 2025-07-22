@@ -4,6 +4,7 @@
 extern crate alloc;
 
 use bitfield::{Bit, BitMut};
+use core::mem::offset_of;
 
 pub mod frame_lists;
 
@@ -559,6 +560,71 @@ pub mod operational_regs {
     impl Into<u32> for TestCtl {
         fn into(self) -> u32 {
             self as u8 as u32
+        }
+    }
+}
+
+/// This register is located in the PCI configuration region of the controller,
+/// it can be located at the offset [cap_regs::HcCapParams::extended_capabilities].
+///
+/// This register contains 2 semaphore bits indicating ownership of the controller.
+/// When [Self::bios_semaphore] is set the controller is owned by the device firmware and may
+/// not be operated by the OS.
+/// When [Self::os_semaphore] is set the firmware must release control of the controller,
+/// when this precess is completed `Self::bios_semaphore` will be cleared.
+///
+// The specification indicates this is a part of a list, but idk which one.
+// `id` should be `1` but that isn't defined in the PCI spec.
+
+#[repr(C)]
+pub struct LegacySupportRegister {
+    id: u8,
+    next_capability: u8,
+    bios_semaphore: bool,
+    os_semaphore: bool,
+}
+
+impl LegacySupportRegister {
+    /// ## Safety
+    ///
+    /// See [core::ptr::write]
+    pub unsafe fn set_os_semaphore(this: *mut Self) {
+        // SAFETY: This is a field access into `this`.
+        // The caller ensures the pointer points to Self
+        unsafe {
+            let os_sem = this.byte_add(offset_of!(Self, os_semaphore)).cast::<bool>();
+            os_sem.write_volatile(true);
+        }
+    }
+
+    /// ## Safety
+    ///
+    /// See [core::ptr::read]
+    pub unsafe fn wait_for_release(this: *mut Self) {
+        // SAFETY: This is a field access into `this`.
+        // The caller ensures the pointer points to Self
+        unsafe {
+            let os_sem = this
+                .byte_add(offset_of!(Self, bios_semaphore))
+                .cast::<bool>();
+            while !Self::is_os_owned(this) {
+                core::hint::spin_loop();
+            }
+        }
+    }
+
+    /// ## Safety
+    ///
+    /// See [core::ptr::read]
+    pub unsafe fn is_os_owned(this: *mut Self) -> bool {
+        // SAFETY: This is a field access into `this`.
+        // The caller ensures the pointer points to Self
+        unsafe {
+            let os_sem = this.byte_add(offset_of!(Self, os_semaphore)).cast::<bool>();
+            let fw_sem = this
+                .byte_add(offset_of!(Self, bios_semaphore))
+                .cast::<bool>();
+            os_sem.read_volatile() && !fw_sem.read_volatile()
         }
     }
 }
