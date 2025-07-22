@@ -23,7 +23,13 @@ pub mod cap_regs {
         pub fn get_operational_registers(
             &self,
         ) -> *mut crate::operational_regs::OperationalRegisters {
-            (self as *const Self).cast_mut().cast()
+            // SAFETY: The EHCI spec guarantees that the op-regs will be at cap-regs + len
+            unsafe {
+                (self as *const Self)
+                    .byte_add(self.len as usize)
+                    .cast_mut()
+                    .cast()
+            }
         }
     }
 
@@ -482,13 +488,13 @@ pub mod operational_regs {
         ///
         /// When an over-current state is detected this bit my be cleared, disabling power to the device.
         // pp lol
-        pub port_power, set_port_power: 11;
+        pub port_power, set_port_power: 12;
 
         /// When this is bit is cleared *this* controller has ownership of this port.
         /// When this bit is cleared the controller hands off the port to a companion controller.
         ///
         /// This bit is set to `1` when [ConfigureFlag::RoutePortsToCompanions] is set.
-        pub port_owner, set_port_owner: 12;
+        pub port_owner, set_port_owner: 13;
 
         /// When [crate::cap_regs::HcStructParams::port_indicator] is set this sets the port indictor state.
         pub from into PortLed, port_led_state, set_port_led: 15,14;
