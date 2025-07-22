@@ -632,6 +632,13 @@ impl DeviceControl {
     pub fn check_self_test(&self) -> Option<Result<u8, u8>> {
         self.header.check_test()
     }
+
+    /// Returns a raw pointer into the configuration region.
+    ///
+    /// This data is aliased by self, the caller must ensure that no capabilities or header registers are modified.
+    pub fn get_cfg_region_raw(&mut self) -> *mut [u8; 4096] {
+        self.cfg_region.as_mut_ptr().cast()
+    }
 }
 
 // Because of how BARS need to be used they are interacted with using DeviceControl not their own
