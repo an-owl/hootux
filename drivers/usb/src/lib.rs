@@ -49,6 +49,7 @@ pub mod ehci {
         layout: core::alloc::Layout,
         binding: hootux::fs::file::LockedFile<u8>,
         major_num: MajorNum,
+        pci: alloc::sync::Arc<async_lock::Mutex<hootux::system::pci::DeviceControl>>,
 
         // workers
         pnp_watchdog_message: alloc::sync::Weak<hootux::task::util::WorkerWaiter>,
@@ -93,6 +94,7 @@ pub mod ehci {
             phys_address: u32,
             layout: core::alloc::Layout,
             binding: hootux::fs::file::LockedFile<u8>,
+            pci: alloc::sync::Arc<async_lock::Mutex<hootux::system::pci::DeviceControl>>,
         ) -> Option<Self> {
             let len = hci_pointer.len();
             let op_offset = unsafe { core::ptr::read_volatile(hci_pointer.cast::<u8>().as_ptr()) };
@@ -138,9 +140,53 @@ pub mod ehci {
                 address: phys_address,
                 layout,
                 binding,
+                pci,
                 major_num: MajorNum::new(),
                 pnp_watchdog_message: alloc::sync::Weak::new(),
             })
+        }
+
+        /// Sets the configured flag to route ports to the EHCI, and clears the `CTRLDSSEGMENT` register to `0`
+        async fn configure(&mut self) {
+            let cap_params = self
+                .capability_registers
+                .capability_params
+                .extended_capabilities();
+            if cap_params != 0 {
+                assert!(
+                    cap_params >= 0x40,
+                    "Faulty EHCI, has illegal extended capability parameters value {cap_params}"
+                ); // todo we should handle this by returning error and leaking the binding
+                let mut l = self.pci.lock_arc().await;
+                let base = l.get_cfg_region_raw().cast::<u8>();
+                // SAFETY: USB spec guarantees that the configuration-region + cap_parms contains the
+                let legacy_sup_reg = unsafe { base.byte_add(cap_params as usize) }
+                    .cast::<ehci::LegacySupportRegister>();
+                // SAFETY: Guaranteed to point to the legacy support register
+                // This is aliased but the other reference expects this to be volatile.
+                unsafe {
+                    ehci::LegacySupportRegister::set_os_semaphore(legacy_sup_reg);
+                    ehci::LegacySupportRegister::wait_for_release(legacy_sup_reg);
+                };
+            }
+
+            let cfg_flags = unsafe {
+                // SAFETY: configure_flag is ConfigureFlag so this is safe.
+                self.operational_registers.map(|p| {
+                    p.byte_add(core::mem::offset_of!(OperationalRegisters, cfg_flags))
+                        .cast::<ehci::operational_regs::ConfigureFlag>()
+                })
+            };
+            cfg_flags.write(ehci::operational_regs::ConfigureFlag::RoutePortsToSelf);
+
+            let segment = unsafe {
+                // SAFETY: configure_flag is ConfigureFlag so this is safe.
+                self.operational_registers.map(|p| {
+                    p.byte_add(core::mem::offset_of!(OperationalRegisters, g4_seg_selector))
+                        .cast::<u32>()
+                })
+            };
+            segment.write(0); // always use mem32
         }
 
         /// Spawns the port change watchdog, which will handle initialising ports owned by the controller.

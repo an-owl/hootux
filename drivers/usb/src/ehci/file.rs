@@ -28,14 +28,20 @@ impl EhciFileContainer {
     /// `layout` must describe the entire EHCI BAR. `bind` must contain the lock of the binding file
     /// that the other arguments describe.
     /// The binding file can be found at `/sys/bus/pci/{PCI_ADDR}/bind`
-    pub(crate) async unsafe fn new(bind: LockedFile<u8>, address: u32, layout: Layout) -> Self {
+    pub(crate) async unsafe fn new(
+        pci: Arc<async_lock::Mutex<hootux::system::pci::DeviceControl>>,
+        bind: LockedFile<u8>,
+        address: u32,
+        layout: Layout,
+    ) -> Self {
         // SAFETY: Must be asserted by the caller to be correct
         let alloc = unsafe { hootux::alloc_interface::MmioAlloc::new(address as usize) };
         let Ok(region) = alloc.allocate(layout) else {
             handle_alloc_error(layout)
         };
         // SAFETY: region is guaranteed by MmioAlloc to point to `address`, and the rest of the args must be guaranteed by the caller
-        let ehci = unsafe { super::Ehci::new(region, address, layout, bind).unwrap() };
+        let mut ehci = unsafe { super::Ehci::new(region, address, layout, bind, pci).unwrap() };
+        ehci.configure().await;
 
         let this = Self {
             major: ehci.major_num,
