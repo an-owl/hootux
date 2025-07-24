@@ -256,6 +256,14 @@ impl PhysicalRegionDescription {
             region: self,
         }
     }
+    // todo: figure out how to merge this into Self::adapt
+    pub fn adapt_iter<F, I>(self, mut adapt: F) -> impl Iterator<Item = PhysicalRegionDescription>
+    where
+        F: FnMut(&PhysicalRegionDescription) -> I,
+        I: IntoIterator<Item = PhysicalRegionDescription>,
+    {
+        adapt(&self).into_iter()
+    }
 
     /// Returns an adaptor where the maximum region size is limited to `len`
     pub fn limit(self, len: usize) -> impl Iterator<Item = PhysicalRegionDescription> {
