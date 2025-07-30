@@ -94,10 +94,18 @@ bitfield::bitfield! {
 }
 
 impl FrameListLinkPointer {
+    fn set_address(&mut self, address: u32) {
+        self.set_ptr(address >> 5)
+    }
+
+    fn get_address(&self) -> u32 {
+        self.ptr() << 5
+    }
+
     fn new(next_addr: Option<(u32, FrameListLinkType)>) -> Self {
         let mut this = Self(0);
         if let Some((ptr, ty)) = next_addr {
-            this.set_ptr(ptr);
+            this.set_address(ptr);
             this.set_link_type(ty);
             this.set_end(false);
         } else {
@@ -163,7 +171,7 @@ pub struct QueueHead {
 
 impl QueueHead {
     pub fn new() -> Self {
-        Self {
+        let mut this = Self {
             next_link_ptr: FrameListLinkPointer::new(None),
             ctl0: Ctl0(0),
             ctl1: Ctl1(0),
@@ -171,7 +179,9 @@ impl QueueHead {
             next_pointer: FrameListLinkPointer::new(None),
             alternate_pointer: FrameListLinkPointerWithNakCount(0),
             overlay: [0; 11],
-        }
+        };
+        this.current_transaction.set_end(false); // T bit is reserved for current transaction
+        this
     }
 
     /// Sets the current transaction pointer to `addr`
@@ -185,7 +195,8 @@ impl QueueHead {
     /// The caller must ensure that `addr` contains the address of a properly terminated [QueueElementTransferDescriptor]
     pub unsafe fn set_current_transaction(&mut self, addr: u32) {
         assert_eq!(addr & (0x32 - 1), 0);
-        self.current_transaction.set_ptr(addr);
+
+        self.current_transaction.set_address(addr);
     }
 
     /// Sets the "H bit" indicating this is the head of the reclamation list.
@@ -199,8 +210,13 @@ impl QueueHead {
         self.ctl0.set_enpoint(target.endpoint.0 as u32);
     }
 
+    /// Returns the current address of the current QTD
+    pub fn current_qtd(&self) -> u32 {
+        self.current_transaction.ptr()
+    }
+
     pub fn set_next_queue_head(&mut self, addr: u32) {
-        self.next_link_ptr.set_ptr(addr);
+        self.next_link_ptr.set_address(addr);
     }
 }
 
@@ -337,6 +353,13 @@ impl FrameListLinkPointerWithNakCount {
         this.set_end(true);
         this
     }
+
+    fn set_address(&mut self, addr: u32) {
+        self.set_ptr(addr >> 5)
+    }
+    fn get_address(&mut self) -> u32 {
+        self.ptr() << 5
+    }
 }
 
 #[repr(C, align(32))]
@@ -377,7 +400,7 @@ impl QueueElementTransferDescriptor {
     /// valid pointers to another `QTD`
     pub unsafe fn set_next(&mut self, next: Option<u32>) {
         if let Some(next) = next {
-            self.next_qtd.set_ptr(next);
+            self.next_qtd.set_address(next);
             self.next_qtd.set_end(false); // Clear T-bit after setting address to prevent wild pointer dereferencing.
         } else {
             self.next_qtd.set_end(true);
@@ -387,7 +410,7 @@ impl QueueElementTransferDescriptor {
     /// Performs the same operation as [Self::set_next] on the alternate pointer.
     pub unsafe fn set_alternate(&mut self, alternate: Option<u32>) {
         if let Some(next) = alternate {
-            self.alt_qtd.set_ptr(next);
+            self.alt_qtd.set_address(next);
             self.alt_qtd.set_end(false);
         } else {
             self.alt_qtd.set_end(true);
@@ -420,9 +443,28 @@ impl QueueElementTransferDescriptor {
         unsafe { core::ptr::write_volatile(&mut self.config, c) };
     }
 
+    pub fn is_active(&self) -> bool {
+        self.config.active()
+    }
+
     pub fn set_pid<P: Into<PidCode>>(&mut self, pid: P) {
         let pid = pid.into();
         self.config.set_pid_code(pid)
+    }
+
+    pub fn set_offset(&mut self, offset: u32) {
+        self.buffer_offset.set_offset(offset)
+    }
+
+    /// Sets the number of bytes expected to be transferred by this QTD. When this is set to `0`
+    /// The controller will execute a zero length transaction and retire the QTD.
+    ///
+    /// # Panics
+    ///
+    /// `len` must be less than 4096 * 5.
+    pub fn set_data_len(&mut self, len: u32) {
+        assert!(len < 4096 * 5);
+        self.config.expected_size(len)
     }
 }
 
@@ -578,7 +620,7 @@ trait BufferPointerRegister {
     fn set_buffer(&mut self, buffer: u32) {
         assert_eq!(buffer & (4096 - 1), 0, "Buffer misaligned");
         let buzz_cut = self.get_buffer() & (4096 - 1);
-        self.set_buffer(buzz_cut | buffer);
+        self.set_bits(buzz_cut | buffer);
     }
 }
 
@@ -597,7 +639,7 @@ impl BufferOffset {
     ///
     /// This fn will panic if `offset > 0x1000`.
     fn set_offset(&mut self, offset: u32) {
-        assert!(offset > 0x1000);
+        assert!(offset < 0x1000);
         let trimmed = self.0 & !(4096 - 1);
         self.0 = trimmed | offset;
     }
