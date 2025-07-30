@@ -22,6 +22,7 @@ pub mod ehci {
     use alloc::vec::Vec;
     use bitfield::{Bit, BitMut};
     use core::alloc::Allocator;
+    use core::mem::offset_of;
     use core::ptr::NonNull;
     use derivative::Derivative;
     use ehci::frame_lists::{QueueElementTransferDescriptor, QueueHead};
@@ -42,7 +43,7 @@ pub mod ehci {
         operational_registers: VolatilePtr<'static, OperationalRegisters>,
         address_bmp: u128,
         ports: Box<[VolatileRef<'static, PortStatusCtl>]>,
-        async_list: Vec<alloc::sync::Arc<spin::Mutex<EndpointQueue>>>,
+        async_list: Vec<alloc::sync::Arc<spin::Mutex<EndpointQueue>>>, // spin is used here because the EndpointQueue should theoretically be exclusive
 
         memory: InaccessibleAddr<[u8]>,
         address: u32,
@@ -170,6 +171,8 @@ pub mod ehci {
                 };
             }
 
+            self.init_head_table();
+
             let cfg_flags = unsafe {
                 // SAFETY: configure_flag is ConfigureFlag so this is safe.
                 self.operational_registers.map(|p| {
@@ -265,6 +268,26 @@ pub mod ehci {
             }
         }
 
+        fn init_head_table(&mut self) {
+            let head = EndpointQueue::head_of_list();
+            debug_assert!(
+                self.async_list.first().is_none(),
+                "async list already started"
+            );
+            self.async_list
+                .push(alloc::sync::Arc::new(spin::Mutex::new(head)));
+            let op_regs = self.operational_registers;
+            let async_list = volatile::map_field!(op_regs.async_list_addr);
+
+            let start = self.async_list.first().unwrap().lock();
+            let head: &QueueHead = &*start.head;
+            let head_addr = hootux::mem::mem_map::translate_ptr(head)
+                .unwrap()
+                .try_into()
+                .unwrap();
+            async_list.write(head_addr);
+        }
+
         fn insert_into_async(&mut self, queue: alloc::sync::Arc<spin::Mutex<EndpointQueue>>) {
             let mut l = queue.lock();
             let addr: u32 = hootux::mem::mem_map::translate_ptr(self.async_list.first().unwrap())
@@ -293,6 +316,38 @@ pub mod ehci {
         /// This should only be used to allocate a non-default address to the device.
         fn get_default_table(&self) -> alloc::sync::Arc<spin::Mutex<EndpointQueue>> {
             self.async_list[0].clone()
+        }
+
+        fn execute_async(&mut self, state: bool) {
+            let regs = self.operational_registers;
+            let cfg = volatile::map_field!(regs.usb_command);
+            cfg.update(|mut cmd| {
+                cmd.set_async_schedule_enable(state);
+                cmd
+            })
+        }
+        fn execute_periodic(&mut self, state: bool) {
+            let regs = self.operational_registers;
+            let cfg = volatile::map_field!(regs.usb_command);
+            cfg.update(|mut cmd| {
+                cmd.set_periodic_schedule_enable(state);
+                cmd
+            })
+        }
+
+        fn controller_enable(&mut self, state: bool) {
+            let regs = self.operational_registers;
+            let cfg = volatile::map_field!(regs.usb_command);
+            cfg.update(|mut cmd| {
+                cmd.set_enable(state);
+                cmd
+            })
+        }
+
+        fn is_enabled(&self) -> bool {
+            let regs = self.operational_registers;
+            let cfg = volatile::map_field!(regs.usb_command);
+            cfg.read().enable()
         }
     }
 
@@ -377,14 +432,14 @@ pub mod ehci {
                     DmaAlloc::new(hootux::mem::MemRegion::Mem32, 32),
                 )),
             };
-
+            // This is just to guarantee we have the right type
+            let qtd: &mut QueueElementTransferDescriptor = &mut **this.terminator.as_mut().unwrap();
+            qtd.set_active(false);
             // SAFETY: The address is a valid terminated table.
             unsafe {
                 this.head.set_current_transaction(
-                    hootux::mem::mem_map::translate(
-                        this.terminator.as_ref().unwrap() as *const _ as usize
-                    )
-                    .expect("What? Static isn't mapped?") as u32,
+                    hootux::mem::mem_map::translate(qtd as *const _ as usize)
+                        .expect("What? Static isn't mapped?") as u32,
                 )
             };
 
@@ -400,7 +455,7 @@ pub mod ehci {
                     endpoint: crate::Endpoint::new(0).unwrap(),
                 },
                 crate::PidCode::Control,
-                8,
+                64,
             );
             this.head.set_head_of_list();
             this
@@ -413,13 +468,21 @@ pub mod ehci {
         ) -> alloc::sync::Arc<hootux::task::util::WorkerWaiter> {
             let st = TransactionString::new(payload, self.packet_size, int_mode);
             let fut = st.get_future();
-            let Some(last) = self.work.last_mut() else {
-                return fut;
-            };
-            // SAFETY: Self ensures that the string is either run to completion or safely removed.
-            unsafe { last.append_string(&st) }
-
-            fut
+            if let Some(last) = self.work.last_mut() {
+                // SAFETY: Self ensures that the string is either run to completion or safely removed.
+                unsafe { last.append_string(&st) }
+                fut
+            } else {
+                let t = self.terminator.as_mut().unwrap();
+                let tgt: &QueueElementTransferDescriptor = &**st.str.last().unwrap();
+                let addr = hootux::mem::mem_map::translate_ptr(tgt)
+                    .unwrap()
+                    .try_into()
+                    .unwrap();
+                // SAFETY: addr is guaranteed to point to a valid QTD
+                unsafe { t.set_next(Some(addr)) };
+                fut
+            }
         }
 
         const fn get_target(&self) -> super::Target {
@@ -431,12 +494,61 @@ pub mod ehci {
             string: TransactionString,
         ) -> alloc::sync::Arc<hootux::task::util::WorkerWaiter> {
             let fut = string.get_future();
+
             if let Some(last) = self.work.last_mut() {
                 // SAFETY: `String` is guaranteed to either be completed or safely aborted.
                 unsafe { last.append_string(&string) };
+            } else {
+                assert!(self.is_terminated());
+                let tail: &QueueElementTransferDescriptor = &**string.str.last().unwrap();
+                let tail_addr = hootux::mem::mem_map::translate_ptr(tail)
+                    .unwrap()
+                    .try_into()
+                    .unwrap();
+                // SAFETY: tail_addr is guaranteed to correctly point to a QTD & this only runs when self.work has
+                unsafe { self.exit_idle_into(tail_addr) }
             }
             self.work.push(string);
             fut
+        }
+
+        /// Appends a QTD into the work queue when `self` has no work in the work queue.
+        ///
+        /// # Safety
+        ///
+        /// The caller must ensure that [Self::is_terminated] returns `true`.
+        unsafe fn exit_idle_into(&mut self, qtd_addr: u32) {
+            self.head.set_current_transaction(qtd_addr)
+        }
+
+        fn is_terminated(&self) -> bool {
+            let initial_addr = self.head.current_qtd();
+            // SAFETY: This is used to map an address which we will only read.
+            let alloc = unsafe { hootux::alloc_interface::MmioAlloc::new(initial_addr as usize) };
+
+            let addr = alloc
+                .allocate(core::alloc::Layout::new::<QueueElementTransferDescriptor>())
+                .unwrap()
+                .cast::<QueueElementTransferDescriptor>();
+            // SAFETY: addr is returned by MmioAlloc with layout of QTD
+            let qtd = unsafe { addr.read_volatile() };
+            // SAFETY: We can no longer use `addr`
+            unsafe {
+                alloc.deallocate(
+                    addr.cast(),
+                    core::alloc::Layout::new::<QueueElementTransferDescriptor>(),
+                )
+            };
+
+            let t = &raw const *self.head;
+            // SAFETY: Pointer is fetched from reference
+            let raw = unsafe { t.read_volatile() };
+            if raw.current_qtd() != initial_addr {
+                // if the current address changed then clearly we aren't fucking done are we.
+                false
+            } else {
+                !qtd.is_active()
+            }
         }
     }
 
@@ -557,6 +669,11 @@ pub mod ehci {
                         }
                         Some(Work::Removed) => todo!(), // free all resources attached to the port
                     }
+                }
+                let mut timer = hootux::task::util::sleep(100);
+                futures_util::select_biased! {
+                    _ = work.wait().fuse() => {}
+                    _ = timer.fuse() => {}
                 }
             }
         }
@@ -748,30 +865,63 @@ pub mod ehci {
             let mut qtd = QueueElementTransferDescriptor::new();
             assert!(payload.len() <= 5 * PAGE_SIZE);
 
-            let mut page = 0;
-            for i in payload.prd() {
-                let aligned = i.addr & !(PAGE_SIZE - 1) as u64;
-                let len = i.size + (i.addr as usize) & (PAGE_SIZE - 1);
-                assert!(len <= 5 * PAGE_SIZE);
-                qtd.set_buffer(i.addr as usize, aligned);
-                for _ in 0..len / PAGE_SIZE {
-                    qtd.set_buffer(page, aligned + (page * PAGE_SIZE) as u64);
-                    page += 1;
-                }
+            // needed to extract the offset, we cant get if from the iterator because it gets aligned down into PAGE_SIZE
+            let first = payload
+                .prd()
+                .next()
+                .unwrap_or(hootux::mem::dma::PhysicalRegionDescription { addr: 0, size: 0 });
+            for (i, region) in payload
+                .prd()
+                .flat_map(|d| {
+                    d.adapt_iter(|origin| {
+                        // iterates over the aligned down base address
+                        let align_down = origin.addr & (PAGE_SIZE - 1) as u64;
+                        // This may break down if PAGE_SIZE is not 4096
+                        const { assert!(hootux::mem::PAGE_SIZE == PAGE_SIZE) };
+
+                        ((origin.addr - align_down)..(origin.addr + origin.size as u64))
+                            .step_by(PAGE_SIZE)
+                            .map(|b| hootux::mem::dma::PhysicalRegionDescription {
+                                addr: b,
+                                size: PAGE_SIZE,
+                            })
+                    })
+                })
+                .enumerate()
+            {
+                if i > 4 {
+                    break;
+                } // we cant use buffers larger than 5 pages long
+
+                qtd.set_buffer(i, region.addr)
             }
 
+            qtd.set_offset((first.addr & (PAGE_SIZE as u64) - 1) as u32);
             qtd.set_pid(pid);
             qtd.set_active(true);
             let mut b = Box::<QueueElementTransferDescriptor, _>::new_uninit_in(DmaAlloc::new(
                 hootux::mem::MemRegion::Mem32,
                 32,
             ));
+            qtd.set_data_len(payload.len().try_into().unwrap());
             // SAFETY: MaybeUninit ensures this is aligned.
             // assume_init: Is safe because we initialise `b`
-            unsafe {
+            let b = unsafe {
                 b.as_mut_ptr().write_volatile(qtd);
-                c.push(b.assume_init());
+                b.assume_init()
+            };
+
+            if let Some(last) = c.last_mut() {
+                let qtd: &QueueElementTransferDescriptor = &*b;
+                let addr: u32 = hootux::mem::mem_map::translate_ptr(qtd)
+                    .unwrap()
+                    .try_into()
+                    .unwrap();
+
+                last.set_next(Some(addr));
             }
+
+            c.push(b);
             self.str = c.into_boxed_slice();
             self
         }
