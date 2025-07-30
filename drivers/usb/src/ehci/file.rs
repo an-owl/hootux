@@ -42,6 +42,22 @@ impl EhciFileContainer {
         // SAFETY: region is guaranteed by MmioAlloc to point to `address`, and the rest of the args must be guaranteed by the caller
         let mut ehci = unsafe { super::Ehci::new(region, address, layout, bind, pci).unwrap() };
         ehci.configure().await;
+        ehci.controller_enable(false);
+        ehci.execute_async(true);
+        ehci.execute_periodic(true);
+
+        hootux::task::util::sleep(2).await;
+        if ehci.is_enabled() {
+            let timeout: hootux::time::AbsoluteTime = hootux::time::Duration::millis(2).into();
+            log::trace!("EHCI not disabled after deadline");
+            while ehci.is_enabled() {
+                core::hint::spin_loop();
+                if timeout.is_future() {
+                    panic!("EHCI took wayyyy too long to halt")
+                }
+            }
+        }
+        ehci.controller_enable(true);
 
         let this = Self {
             major: ehci.major_num,
