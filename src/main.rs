@@ -309,10 +309,14 @@ impl Options {
         }
     }
 
-    /// This fn may return a Command for QEMU.  
+    /// This fn may return a Command for QEMU.
     fn build_exec(&self, drive: impl AsRef<std::path::Path>, toml: &Value) -> Option<Command> {
         let mut qemu = self.subcommand.build_qemu(drive)?;
         let mut args = Vec::new();
+
+        if self.daemonize {
+            qemu.args(["-D", "/tmp/hootux.log"]);
+        }
 
         let mut parse_args = |table| {
             if let Some(Value::Array(arr)) = toml_fast(&toml, table + ".args") {
