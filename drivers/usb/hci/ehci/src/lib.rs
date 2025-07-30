@@ -180,31 +180,32 @@ pub mod operational_regs {
     }
 
     bitfield! {
-        struct UsbCommand(u32);
+        #[derive(Copy, Clone)]
+        pub struct UsbCommand(u32);
         impl Debug;
         /// When set the controller may execute the schedule.
         /// When this bit is cleared the controller completes the current and any pipelined transactions and then halts.
         /// The controller must halt within 16 micro-frames after this bit is cleared.
         // todo the HC halted bit in the status register indicates that the controller has halted
-        enable, set_enable: 0;
+        pub enable, set_enable: 0;
 
         /// When a `1` is written the controller immediately resets the internal state to its initial value.
         /// Any USB transactions are immediately terminated.
         ///
         /// The PCI configuration space is not affected by this reset.
         /// The reset process is complete when the value of this register is `0`
-        get_reset_state, reset: 1;
+        pub get_reset_state, reset: 1;
 
         /// Indicates the frame list size.
         ///
         /// This value can be modified when [crate::cap_regs::CapabilityRegisters]
-        from into FrameListSize, frame_list_size, set_frame_list_size: 3,2;
+        pub from into FrameListSize, frame_list_size, set_frame_list_size: 3,2;
 
         /// Controls whether the controller skips processing the periodic schedule.
-        periodic_schedule_enable, set_periodic_schedule_enable: 4;
+        pub periodic_schedule_enable, set_periodic_schedule_enable: 4;
 
         /// This controls whether the hos skips processing the asynchronous schedule
-        async_schedule_enable, set_async_schedule_enable: 5;
+        pub async_schedule_enable, set_async_schedule_enable: 5;
 
         /// When this bit is set the, the next time the async schedule is advanced the controller will raise a
         /// "Interrupt on Async Advance" interrupt. When the interrupt is raised this bit will be cleared.
@@ -212,7 +213,7 @@ pub mod operational_regs {
         /// # Safety
         ///
         /// This must not be set when [Self::async_schedule_enable] is disabled
-        get_int_on_async_doorbell, set_int_on_async_doorbell: 6;
+        pub get_int_on_async_doorbell, set_int_on_async_doorbell: 6;
 
         /// (Optional)
         ///
@@ -222,22 +223,22 @@ pub mod operational_regs {
         /// When a read of this bit returns `true` the reset has not completed
         ///
         // Presumably writing 1 to this will start the reset but the spec doesnt say that
-        light_controller_reset, set_light_controller_reset: 7;
+        pub light_controller_reset, set_light_controller_reset: 7;
 
         /// (Optional)
         ///
         /// This indicates the number of asynchronous the controller can execute from a high-speed
         /// queue head before continuing to traverse the asynchronous schedule.
         // fixme What does that even mean?
-        async_schedule_park_count, set_async_schedule_park_count: 9,8;
+        pub async_schedule_park_count, set_async_schedule_park_count: 9,8;
 
         /// (Optional)
         ///
         /// Sets whether [Self::async_schedule_park_count] is enabled.
-        _,async_schedule_park_enable: 11;
+        pub _,async_schedule_park_enable: 11;
 
 
-        u8, from into InterruptThreshold, get_interrupt_threshold, set_interrupt_threshold: 23,16;
+        pub u8, from into InterruptThreshold, get_interrupt_threshold, set_interrupt_threshold: 23,16;
     }
 
     #[repr(u8)]
