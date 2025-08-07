@@ -421,16 +421,6 @@ impl Drop for Ehci {
     }
 }
 
-fn init_default_device(queue_head: &mut EndpointQueue) {
-    const DEFAULT_CONFIG_TARGET: Target = Target {
-        dev: DeviceAddress::Default,
-        endpoint: Endpoint::new(0).unwrap(),
-    };
-    if queue_head.get_target() != DEFAULT_CONFIG_TARGET {
-        panic!("Attempted to assign address to {:?}", queue_head.target)
-    }
-}
-
 /// The EndpointQueue maintains the state of queued operations for asynchronous jobs.
 ///
 /// The EndpointQueue operates using [TransactionString]'s, which each describes a queued operation.
