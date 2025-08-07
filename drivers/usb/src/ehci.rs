@@ -3,11 +3,10 @@ use alloc::boxed::Box;
 use alloc::vec::Vec;
 use bitfield::{Bit, BitMut};
 use core::alloc::Allocator;
-use core::mem::offset_of;
 use core::ptr::NonNull;
 use derivative::Derivative;
-use ehci::frame_lists::{QueueElementTransferDescriptor, QueueHead};
-use ehci::operational_regs::OperationalRegistersVolatileFieldAccess;
+use ehci::frame_lists::{PeriodicFrameList, QueueElementTransferDescriptor, QueueHead};
+use ehci::operational_regs::{IntEnable, OperationalRegistersVolatileFieldAccess};
 use ehci::{
     cap_regs::CapabilityRegisters,
     operational_regs::{OperationalRegisters, PortStatusCtl},
@@ -25,6 +24,9 @@ pub struct Ehci {
     address_bmp: u128,
     ports: Box<[VolatileRef<'static, PortStatusCtl>]>,
     async_list: Vec<alloc::sync::Arc<spin::Mutex<EndpointQueue>>>, // spin is used here because the EndpointQueue should theoretically be exclusive
+    // This is Option because the frame list is allocated by Self::configure() so the pointer can be set at the same time
+    // At runtime callers can assume this is Some
+    periodic_frame_list: Option<Box<PeriodicFrameList, DmaAlloc>>,
 
     memory: InaccessibleAddr<[u8]>,
     address: u32,
@@ -118,6 +120,7 @@ impl Ehci {
             address_bmp: 1,
             ports: port_vec.into_boxed_slice(),
             async_list: Vec::new(),
+            periodic_frame_list: None,
             memory: InaccessibleAddr::new(hci_pointer),
             address: phys_address,
             layout,
@@ -126,6 +129,19 @@ impl Ehci {
             major_num: MajorNum::new(),
             pnp_watchdog_message: alloc::sync::Weak::new(),
         })
+    }
+
+    fn setup_periodic_list(&mut self) {
+        let periodic_list = Box::new_in(
+            PeriodicFrameList::new(),
+            DmaAlloc::new(hootux::mem::MemRegion::Mem32, PAGE_SIZE),
+        );
+        let list_ref: &PeriodicFrameList = &*periodic_list;
+        // DmaAlloc(Mem32) will guarantee that this always returns Some(<u32::MAX)
+        self.operational_registers
+            .frame_list_addr()
+            .write(hootux::mem::mem_map::translate_ptr(list_ref).unwrap() as u32);
+        self.periodic_frame_list = Some(periodic_list)
     }
 
     /// Sets the configured flag to route ports to the EHCI, and clears the `CTRLDSSEGMENT` register to `0`
@@ -152,8 +168,43 @@ impl Ehci {
             };
         }
 
+        self.controller_enable(false);
+
+        hootux::task::util::sleep(2).await;
+        if !self.is_halted() {
+            let timeout: hootux::time::AbsoluteTime = hootux::time::Duration::millis(2).into();
+            log::trace!("EHCI not disabled after deadline");
+            while !self.is_halted() {
+                core::hint::spin_loop();
+                if timeout.is_future() {
+                    panic!("EHCI took wayyyy too long to halt")
+                }
+            }
+        }
+
+        self.operational_registers.g4_seg_selector().write(0); // always use mem32
+
+        self.execute_periodic(false);
+        self.execute_async(false);
         self.init_head_table();
 
+        self.operational_registers.int_enable().update(|mut sts| {
+            sts.set(
+                IntEnable::FRAME_LIST_ROLLOVER | IntEnable::INTERRUPT_ON_ASYNC_ADVANCE,
+                false,
+            );
+            sts.set(
+                IntEnable::HOST_SYSTEM_ERROR
+                    | IntEnable::PORT_CHANGE_DETECT
+                    | IntEnable::USB_ERROR_INT
+                    | IntEnable::USB_INT,
+                true,
+            );
+            sts
+        });
+
+        self.setup_periodic_list();
+        self.controller_enable(true);
         let cfg_flags = unsafe {
             // SAFETY: configure_flag is ConfigureFlag so this is safe.
             self.operational_registers.map(|p| {
@@ -162,15 +213,8 @@ impl Ehci {
             })
         };
         cfg_flags.write(ehci::operational_regs::ConfigureFlag::RoutePortsToSelf);
-
-        let segment = unsafe {
-            // SAFETY: configure_flag is ConfigureFlag so this is safe.
-            self.operational_registers.map(|p| {
-                p.byte_add(core::mem::offset_of!(OperationalRegisters, g4_seg_selector))
-                    .cast::<u32>()
-            })
-        };
-        segment.write(0); // always use mem32
+        self.execute_periodic(true);
+        self.execute_async(true);
     }
 
     /// Spawns the port change watchdog, which will handle initialising ports owned by the controller.
