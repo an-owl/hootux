@@ -719,11 +719,6 @@ impl PnpWatchdog {
                     Some(Work::Removed) => todo!(), // free all resources attached to the port
                 }
             }
-            let mut timer = hootux::task::util::sleep(100);
-            futures_util::select_biased! {
-                _ = work.wait().fuse() => {}
-                _ = timer.fuse() => {}
-            }
         }
     }
 }
