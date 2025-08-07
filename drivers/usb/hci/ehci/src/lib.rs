@@ -374,12 +374,12 @@ pub mod operational_regs {
     impl UsbStatus {
         /// Masks out bits that do not reflect an interrupt status.
         pub fn int_only(self) -> Self {
-            self & Self::USB_INT
+            self & (Self::USB_INT
                 | Self::USB_ERROR_INT
                 | Self::PORT_CHANGE_DETECT
                 | Self::FRAME_LIST_ROLLOVER
                 | Self::HOST_SYSTEM_ERROR
-                | Self::INTERRUPT_ON_ASYNC_ADVANCE
+                | Self::INTERRUPT_ON_ASYNC_ADVANCE)
         }
     }
 
