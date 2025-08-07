@@ -387,6 +387,7 @@ pub mod operational_regs {
         /// See [UsbStatus] for corresponding interrupt meanings.
         ///
         /// Bits in this struct allow the controller to raise the corresponding interrupt.
+        #[derive(Copy, Clone, Debug)]
         pub struct IntEnable: u32 {
             const USB_INT = 1;
             const USB_ERROR_INT = 1 << 1;
