@@ -455,7 +455,7 @@ struct EndpointQueue {
 }
 
 impl EndpointQueue {
-    fn new(target: super::Target, pid: super::PidCode, packet_size: u32) -> Self {
+    fn new_async(target: super::Target, pid: super::PidCode, packet_size: u32) -> Self {
         let mut this = Self {
             pid,
             target,
@@ -487,7 +487,7 @@ impl EndpointQueue {
     }
 
     fn head_of_list() -> Self {
-        let mut this = Self::new(
+        let mut this = Self::new_async(
             crate::Target {
                 dev: crate::DeviceAddress::Default,
                 endpoint: crate::Endpoint::new(0).unwrap(),
@@ -496,6 +496,14 @@ impl EndpointQueue {
             64,
         );
         this.head.set_head_of_list();
+        let qh: &QueueHead = &*this.head;
+
+        this.head.set_next_queue_head(
+            hootux::mem::mem_map::translate_ptr(qh)
+                .unwrap()
+                .try_into()
+                .unwrap(),
+        );
         this
     }
 
@@ -692,7 +700,7 @@ impl PnpWatchdog {
                         unsafe { ts.append_qtd(&mut command, PidCode::Control) };
                         default_table.append_cmd_string(ts).wait().await;
 
-                        let eq = EndpointQueue::new(
+                        let eq = EndpointQueue::new_async(
                             Target {
                                 dev: DeviceAddress::Address(new_address.try_into().unwrap()),
                                 endpoint: Endpoint::new(0).unwrap(),
