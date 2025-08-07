@@ -680,6 +680,15 @@ pub struct PeriodicFrameList {
     list: [FrameListLinkPointer; 1024],
 }
 
+impl PeriodicFrameList {
+    /// Returns a completely terminated periodic frame list base.
+    pub const fn new() -> Self {
+        Self {
+            list: [FrameListLinkPointer(1); 1024],
+        }
+    }
+}
+
 pub enum FrameListNode {
     IsochronousTransferDescriptor(IsochronousTransferDescriptor),
     QueueHead(),
