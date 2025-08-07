@@ -698,6 +698,8 @@ impl PnpWatchdog {
                         ));
                         let mut ts = TransactionString::empty();
                         unsafe { ts.append_qtd(&mut command, PidCode::Control) };
+                        ts.set_tail_interrupt();
+
                         default_table.append_cmd_string(ts).wait().await;
 
                         let eq = EndpointQueue::new_async(
@@ -879,6 +881,19 @@ impl TransactionString {
 
     fn get_future(&self) -> alloc::sync::Arc<hootux::task::util::WorkerWaiter> {
         self.waiter.clone()
+    }
+
+    /// This will set the last QTD in the string to raise an interrupt on completion.
+    ///
+    /// This fn is intended for constructing command strings not normal transaction strings.
+    ///
+    /// The caller should ensure this is only called when the entire string is assembled,
+    /// failure to adhere to this will cause extraneous interrupts.
+    fn set_tail_interrupt(&mut self) {
+        let Some(last) = self.str.last_mut() else {
+            return;
+        };
+        last.set_int_on_complete()
     }
 }
 
