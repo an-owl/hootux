@@ -31,7 +31,7 @@ pub struct Ehci {
     memory: InaccessibleAddr<[u8]>,
     address: u32,
     layout: core::alloc::Layout,
-    binding: hootux::fs::file::LockedFile<u8>,
+    _binding: hootux::fs::file::LockedFile<u8>,
     major_num: MajorNum,
     pci: alloc::sync::Arc<async_lock::Mutex<hootux::system::pci::DeviceControl>>,
 
@@ -124,7 +124,7 @@ impl Ehci {
             memory: InaccessibleAddr::new(hci_pointer),
             address: phys_address,
             layout,
-            binding,
+            _binding: binding,
             pci,
             major_num: MajorNum::new(),
             pnp_watchdog_message: alloc::sync::Weak::new(),
