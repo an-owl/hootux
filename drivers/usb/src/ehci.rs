@@ -296,7 +296,7 @@ impl Ehci {
                 }
                 UsbStatus::FRAME_LIST_ROLLOVER => {
                     sts_reg.write(UsbStatus::FRAME_LIST_ROLLOVER);
-                    todo!()
+                    // do nothing for now
                 }
                 UsbStatus::HOST_SYSTEM_ERROR => {
                     sts_reg.write(UsbStatus::HOST_SYSTEM_ERROR);
