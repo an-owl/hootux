@@ -975,7 +975,10 @@ impl TransactionString {
                 .try_into()
                 .unwrap();
 
-            last.set_next(Some(addr));
+            // SAFETY: `addr` is guaranteed to point to a valid QTD
+            unsafe {
+                last.set_next(Some(addr));
+            }
         }
 
         c.push(b);
