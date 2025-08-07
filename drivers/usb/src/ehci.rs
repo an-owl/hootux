@@ -37,6 +37,7 @@ pub struct Ehci {
 
     // workers
     pnp_watchdog_message: alloc::sync::Weak<hootux::task::util::WorkerWaiter>,
+    poll_worker: Option<alloc::sync::Arc<EhciPoller>>,
 }
 
 // SAFETY: Ehci is not Send because `operational_registers` contains `VolatilePtr` which is not Send
@@ -128,6 +129,7 @@ impl Ehci {
             pci,
             major_num: MajorNum::new(),
             pnp_watchdog_message: alloc::sync::Weak::new(),
+            poll_worker: None,
         })
     }
 
@@ -228,6 +230,22 @@ impl Ehci {
         };
         // todo: Can I make this a child or something in the future?
         hootux::task::run_task(wd.run().boxed());
+    }
+
+    async fn start_polling(this: &alloc::sync::Arc<async_lock::Mutex<Self>>) {
+        let mut l = this.lock().await;
+        let worker = alloc::sync::Arc::new(EhciPoller {
+            controller: alloc::sync::Arc::downgrade(this),
+        });
+        l.poll_worker = Some(worker.clone());
+        hootux::task::run_task(Box::pin(worker.run()))
+    }
+
+    fn is_halted(&self) -> bool {
+        self.operational_registers
+            .usb_status()
+            .read()
+            .contains(ehci::operational_regs::UsbStatus::CONTROLLER_HALTED)
     }
 
     /// Returns an address in the range 1..128
@@ -963,4 +981,35 @@ pub enum StringInterruptConfiguration {
     /// Indicates the controller should raise an interrupt when any transaction descriptor is completed.
     /// When only one transaction descriptor is present this acts the same as [Self::End]
     Always,
+}
+
+struct EhciPoller {
+    controller: alloc::sync::Weak<async_lock::Mutex<Ehci>>,
+}
+
+impl EhciPoller {
+    async fn run(mut self: alloc::sync::Arc<Self>) -> hootux::task::TaskResult {
+        static POLL_RATE_MSEC: u64 = 10;
+
+        let this = alloc::sync::Arc::downgrade(&self);
+        drop(self);
+        loop {
+            let Some(t) = this.upgrade() else {
+                return hootux::task::TaskResult::ExitedNormally;
+            };
+            self = t;
+            let Some(controller) = self.controller.upgrade() else {
+                return hootux::task::TaskResult::StoppedExternally;
+            };
+            let mut l = controller.lock().await;
+            let status = l.operational_registers.usb_status();
+            if status.read().int_only().bits() != 0 {
+                l.handle_interrupt();
+            }
+            drop(l);
+            drop(controller);
+
+            hootux::task::util::sleep(POLL_RATE_MSEC).await
+        }
+    }
 }
