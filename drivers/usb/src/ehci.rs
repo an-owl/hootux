@@ -564,7 +564,8 @@ impl EndpointQueue {
     ///
     /// The caller must ensure that [Self::is_terminated] returns `true`.
     unsafe fn exit_idle_into(&mut self, qtd_addr: u32) {
-        self.head.set_current_transaction(qtd_addr)
+        // SAFETY: Guaranteed by caller.
+        unsafe { self.head.set_current_transaction(qtd_addr) }
     }
 
     fn is_terminated(&self) -> bool {
