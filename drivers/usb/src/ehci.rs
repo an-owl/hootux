@@ -331,6 +331,11 @@ impl Ehci {
         async_list.write(head_addr);
     }
 
+    /// Inserts a queue head into the asynchronous queue head list.
+    ///
+    /// # Deadlocks
+    ///
+    /// This requires locking the last entry in the list, the caller must ensure that it is free.
     fn insert_into_async(&mut self, queue: alloc::sync::Arc<spin::Mutex<EndpointQueue>>) {
         let mut l = queue.lock();
         let addr: u32 = hootux::mem::mem_map::translate_ptr(self.async_list.first().unwrap())
