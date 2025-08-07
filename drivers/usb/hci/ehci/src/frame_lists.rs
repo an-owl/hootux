@@ -95,7 +95,8 @@ bitfield::bitfield! {
 
 impl FrameListLinkPointer {
     fn set_address(&mut self, address: u32) {
-        self.set_ptr(address >> 5)
+        self.set_ptr(address >> 5);
+        self.set_end(false)
     }
 
     fn get_address(&self) -> u32 {
@@ -177,7 +178,7 @@ impl QueueHead {
             ctl1: Ctl1(0),
             current_transaction: FrameListLinkPointer::new(None),
             next_pointer: FrameListLinkPointer::new(None),
-            alternate_pointer: FrameListLinkPointerWithNakCount(0),
+            alternate_pointer: FrameListLinkPointerWithNakCount(1),
             overlay: [0; 11],
         };
         this.current_transaction.set_end(false); // T bit is reserved for current transaction
@@ -212,11 +213,13 @@ impl QueueHead {
 
     /// Returns the current address of the current QTD
     pub fn current_qtd(&self) -> u32 {
-        self.current_transaction.ptr()
+        self.current_transaction.get_address()
     }
 
     pub fn set_next_queue_head(&mut self, addr: u32) {
         self.next_link_ptr.set_address(addr);
+        self.next_link_ptr
+            .set_link_type(FrameListLinkType::QueueHead);
     }
 }
 
