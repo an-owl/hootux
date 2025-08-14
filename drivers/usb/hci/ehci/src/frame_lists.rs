@@ -198,6 +198,7 @@ impl QueueHead {
         assert_eq!(addr & (0x32 - 1), 0);
 
         self.current_transaction.set_address(addr);
+        self.next_pointer.set_address(addr);
     }
 
     /// Sets the "H bit" indicating this is the head of the reclamation list.
@@ -469,11 +470,15 @@ impl QueueElementTransferDescriptor {
         assert!(len < 4096 * 5);
         self.config.expected_size(len)
     }
+
+    pub fn get_config(&self) -> QtdConfig {
+        self.config
+    }
 }
 
 bitfield! {
     #[derive(Copy, Clone)]
-    struct QtdConfig(u32);
+    pub struct QtdConfig(u32);
     impl Debug;
 
     /// When [Ctl0::endpoint_speed] of the [QueueHead] is [EndpointSpeed::HighSpeed] and
@@ -484,7 +489,7 @@ bitfield! {
     ///
     /// A PING transaction will determine return NAK if the next OUT transaction cannot currently
     /// be received by the endpoint.
-    get_ping_state,ping: 0;
+    pub get_ping_state,ping: 0;
 
     /// This bit is not used unless the [QueueHead]'s [Ctl0::endpoint_speed] is not [EndpointSpeed::FullSpeed]
     ///
@@ -495,36 +500,36 @@ bitfield! {
     /// When this bit is set the controller issues a complete split transaction to the the endpoint.
     /// Wen this bit is clear the controller will issue a start split transaction to the endpoint.
     // I dont think this actually matters.
-    split_transaction_state,_: 1;
+    pub split_transaction_state,_: 1;
 
     /// This bit is ignored if this transaction is [EndpointSpeed::HighSpeed].
     ///
     /// This bit indicates that the controller detected a host-induced hold-off caused the host
     /// controller to mis a required complete-split transaction.
-    missed_mocro_frame,_: 2;
+    pub missed_mocro_frame,_: 2;
 
     /// The controller sets this bit when an invalid response is received from the device.
     /// Causes may be timeout, CRC, bad PID etc.
-    transaction_error,_: 3;
+    pub transaction_error,_: 3;
 
     /// This is set when the the controller detected babble during the transaction.
     /// Babble is when the controller receives more data from then endpoint than was expected.
     /// When this bit is set the [Self::halted] is also set.
-    babbble_detected,_: 4;
+    pub babbble_detected,_: 4;
 
     /// The controller sets this bit when the controller is unable to transmit or receive data at
     /// the rate required.
-    data_buffer_err,_: 5;
+    pub data_buffer_err,_: 5;
 
     /// This bit is set to indicate a serious error has occurred at teh device/endpoint.
     /// This may be caused by [Self::babble], the error counter reaching 0, or reception of the
     /// stall handshake from the device. Any time that a transaction results in the halted bit
     /// being set the [Self::active] bit is also cleared.
-    halted,_: 6;
+    pub halted,_: 6;
 
     /// The active bit is set by software to enable execution of transactions defined by this
     /// [QueueElementTransferDescriptor].
-    active, set_active: 7;
+    pub active, set_active: 7;
 
     /// Indicates the token used for transactions used with this descriptor.
     from into PidCode, get_pid_code,set_pid_code: 9,8;
@@ -541,19 +546,19 @@ bitfield! {
     /// limit the number of retries for  the transaction.
     ///
     /// Note on an error the value is written back to the [QueueHead] not the [QueueElementTransferDescriptor]
-    error_count, _: 11,10;
+    pub error_count, _: 11,10;
 
     /// This field indicates the buffer to use.
     ///
     /// Valid values are `0..=4`
     ///
     /// This field is not written back to by the controller.
-    current_page, set_current_page: 14,12;
+    pub current_page, set_current_page: 14,12;
 
 
     /// When this bit is set the controller will raise an interrupt when this
     /// [QueueElementTransferDescriptor] has completed execution.
-    get_interrupt_on_complete, interrupt_on_complete: 15;
+    pub get_interrupt_on_complete, interrupt_on_complete: 15;
 
     /// This indicates the number of bytes to be moved for this [QueueElementTransferDescriptor].
     /// The controller will decrement this by the number of bytes actually transferred during this
@@ -564,12 +569,18 @@ bitfield! {
     /// When this is zero the controller will execute a zero length transaction.
     ///
     /// This field is not required to be a multiple of the maximum packet length.
-    get_expected_size, expected_size: 30,16;
+    pub get_expected_size, expected_size: 30,16;
 
     /// This is the current value of the data toggle bit.
     ///
     /// [Ctl0::get_data_toggle_ctl] indicates whether this bit will be used.
-    data_toggle, _: 31;
+    pub data_toggle, _: 31;
+}
+
+impl QtdConfig {
+    pub fn error(self) -> bool {
+        self.0 & 0x7c != 0
+    }
 }
 
 #[repr(u8)]
