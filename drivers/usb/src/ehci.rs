@@ -14,6 +14,8 @@ use ehci::{
 use futures_util::FutureExt;
 use hootux::alloc_interface::DmaAlloc;
 use hootux::fs::vfs::MajorNum;
+use hootux::mem::dma::DmaTarget;
+use hootux::task::util::WorkerWaiter;
 use volatile::{VolatilePtr, VolatileRef};
 
 pub(super) mod file;
@@ -23,7 +25,7 @@ pub struct Ehci {
     operational_registers: VolatilePtr<'static, OperationalRegisters>,
     address_bmp: u128,
     ports: Box<[VolatileRef<'static, PortStatusCtl>]>,
-    async_list: Vec<alloc::sync::Arc<spin::Mutex<EndpointQueue>>>, // spin is used here because the EndpointQueue should theoretically be exclusive
+    async_list: Vec<alloc::sync::Arc<EndpointQueue>>, // spin is used here because the EndpointQueue should theoretically be exclusive
     // This is Option because the frame list is allocated by Self::configure() so the pointer can be set at the same time
     // At runtime callers can assume this is Some
     periodic_frame_list: Option<Box<PeriodicFrameList, DmaAlloc>>,
@@ -36,8 +38,9 @@ pub struct Ehci {
     pci: alloc::sync::Arc<async_lock::Mutex<hootux::system::pci::DeviceControl>>,
 
     // workers
-    pnp_watchdog_message: alloc::sync::Weak<hootux::task::util::WorkerWaiter>,
-    poll_worker: Option<alloc::sync::Arc<EhciPoller>>,
+    pnp_watchdog_message: alloc::sync::Weak<WorkerWaiter>,
+    interrupt_worker: alloc::sync::Weak<InterruptWorker>,
+    int_handler: Option<alloc::sync::Arc<IntHandler>>,
 }
 
 // SAFETY: Ehci is not Send because `operational_registers` contains `VolatilePtr` which is not Send
@@ -129,7 +132,8 @@ impl Ehci {
             pci,
             major_num: MajorNum::new(),
             pnp_watchdog_message: alloc::sync::Weak::new(),
-            poll_worker: None,
+            interrupt_worker: alloc::sync::Weak::new(),
+            int_handler: None,
         })
     }
 
@@ -224,21 +228,71 @@ impl Ehci {
     /// This fn is `async` because it requires locking `this`, this can be run synchronously
     /// without blocking if the caller can guarantee that `this` is not locked.
     async fn start_port_watchdog(this: &alloc::sync::Arc<async_lock::Mutex<Self>>) {
+        let mut l = this.lock().await;
         let wd = PnpWatchdog {
             controller: alloc::sync::Arc::downgrade(this),
-            ports: core::mem::take(&mut this.lock().await.ports),
+            ports: core::mem::take(&mut l.ports),
+            work: alloc::sync::Arc::new(WorkerWaiter::new()),
         };
+        l.pnp_watchdog_message = alloc::sync::Arc::downgrade(&wd.work);
         // todo: Can I make this a child or something in the future?
         hootux::task::run_task(wd.run().boxed());
     }
 
-    async fn start_polling(this: &alloc::sync::Arc<async_lock::Mutex<Self>>) {
-        let mut l = this.lock().await;
-        let worker = alloc::sync::Arc::new(EhciPoller {
-            controller: alloc::sync::Arc::downgrade(this),
+    async fn start_int_worker(this: &alloc::sync::Arc<async_lock::Mutex<Self>>) {
+        let mut l = this.lock_arc().await;
+        let None = l.interrupt_worker.upgrade() else {
+            panic!("Attempted to start interrupt worker twice")
+        };
+        let weak = alloc::sync::Arc::downgrade(this);
+        let iw = alloc::sync::Arc::new(InterruptWorker {
+            worker_waiter: Default::default(),
+            parent: weak,
         });
-        l.poll_worker = Some(worker.clone());
-        hootux::task::run_task(Box::pin(worker.run()))
+
+        l.interrupt_worker = alloc::sync::Arc::downgrade(&iw);
+        hootux::task::run_task(iw.run().boxed());
+    }
+
+    async fn get_int_handler(
+        this: alloc::sync::Arc<async_lock::Mutex<Self>>,
+    ) -> alloc::sync::Arc<IntHandler> {
+        Ehci::start_port_watchdog(&this).await;
+        Ehci::start_int_worker(&this).await;
+
+        let mut l = this.lock_arc().await;
+        match &mut l.int_handler {
+            Some(a) => a.clone(),
+            None => {
+                let ih = IntHandler {
+                    parent: alloc::sync::Arc::downgrade(&this),
+                    // SAFETY: All code accessing this field must ensure that `self.parent` is upgraded first.
+                    status_register: unsafe {
+                        VolatilePtr::new(l.operational_registers.usb_status().as_raw_ptr())
+                    },
+                    interrupt_worker: l.interrupt_worker.clone(),
+                    pnp_watchdog: l.pnp_watchdog_message.clone(),
+                    poll_period: core::sync::atomic::AtomicU64::new(0),
+                    polling: core::sync::atomic::AtomicBool::new(false),
+                };
+                let ih = alloc::sync::Arc::new(ih);
+                l.int_handler = Some(ih.clone());
+                ih
+            }
+        }
+    }
+
+    /// Enables/Disables polling, or changes the polling rate.
+    /// Setting `msec` to `None` will cause polling to stop.
+    fn start_polling(&self, msec: Option<core::num::NonZeroU64>) {
+        let t = self.int_handler.as_ref().unwrap();
+        let time = msec.map(|t| t.get()).unwrap_or(0);
+        t.poll_period
+            .store(time, core::sync::atomic::Ordering::SeqCst);
+        // Checks if polling is already active.
+        if !t.polling.load(core::sync::atomic::Ordering::SeqCst) {
+            hootux::task::run_task(Box::pin(t.clone().poll()))
+        }
     }
 
     fn is_halted(&self) -> bool {
@@ -272,63 +326,19 @@ impl Ehci {
         self.address_bmp.set_bit(address as usize, false)
     }
 
-    pub fn handle_interrupt(&mut self) {
-        use ehci::operational_regs::UsbStatus;
-        let sts_reg = self.operational_registers.usb_status();
-        let int_status = sts_reg.read();
-
-        for i in int_status.int_only().iter() {
-            match i {
-                UsbStatus::USB_INT => {
-                    sts_reg.write(UsbStatus::USB_INT);
-                    todo!()
-                }
-                UsbStatus::USB_ERROR_INT => {
-                    sts_reg.write(UsbStatus::USB_ERROR_INT);
-                    todo!()
-                }
-                UsbStatus::PORT_CHANGE_DETECT => {
-                    sts_reg.write(UsbStatus::PORT_CHANGE_DETECT);
-                    let Some(waiter) = self.pnp_watchdog_message.upgrade() else {
-                        continue;
-                    }; // What? Are we shutting down? Starting Up?
-                    waiter.wake()
-                }
-                UsbStatus::FRAME_LIST_ROLLOVER => {
-                    sts_reg.write(UsbStatus::FRAME_LIST_ROLLOVER);
-                    // do nothing for now
-                }
-                UsbStatus::HOST_SYSTEM_ERROR => {
-                    sts_reg.write(UsbStatus::HOST_SYSTEM_ERROR);
-                    todo!()
-                }
-                UsbStatus::INTERRUPT_ON_ASYNC_ADVANCE => {
-                    sts_reg.write(UsbStatus::INTERRUPT_ON_ASYNC_ADVANCE);
-                    todo!()
-                }
-                _ => unreachable!(), // All remaining bits are masked out
-            }
-        }
-    }
-
     fn init_head_table(&mut self) {
         let head = EndpointQueue::head_of_list();
         debug_assert!(
             self.async_list.first().is_none(),
             "async list already started"
         );
-        self.async_list
-            .push(alloc::sync::Arc::new(spin::Mutex::new(head)));
+        self.async_list.push(alloc::sync::Arc::new(head));
         let op_regs = self.operational_registers;
         let async_list = volatile::map_field!(op_regs.async_list_addr);
 
-        let start = self.async_list.first().unwrap().lock();
-        let head: &QueueHead = &*start.head;
-        let head_addr = hootux::mem::mem_map::translate_ptr(head)
-            .unwrap()
-            .try_into()
-            .unwrap();
-        async_list.write(head_addr);
+        let start = self.async_list.first().unwrap();
+
+        async_list.write(start.head_addr());
     }
 
     /// Inserts a queue head into the asynchronous queue head list.
@@ -336,33 +346,17 @@ impl Ehci {
     /// # Deadlocks
     ///
     /// This requires locking the last entry in the list, the caller must ensure that it is free.
-    fn insert_into_async(&mut self, queue: alloc::sync::Arc<spin::Mutex<EndpointQueue>>) {
-        let mut l = queue.lock();
-        let addr: u32 = hootux::mem::mem_map::translate_ptr(self.async_list.first().unwrap())
-            .unwrap()
-            .try_into()
-            .unwrap();
-        l.head.set_next_queue_head(addr);
+    fn insert_into_async(&mut self, queue: alloc::sync::Arc<EndpointQueue>) {
+        queue.set_next_endpoint_queue(self.async_list.first().unwrap());
+        let last = self.async_list.last().unwrap();
+        last.set_next_endpoint_queue(&queue);
 
-        let addr: u32 = hootux::mem::mem_map::translate_ptr(&*l.head)
-            .unwrap()
-            .try_into()
-            .unwrap();
-
-        self.async_list
-            .last()
-            .unwrap()
-            .lock()
-            .head
-            .set_next_queue_head(addr);
-
-        drop(l);
         self.async_list.push(queue)
     }
 
     /// Fetches the default table, which is configured for the control-pipe of the default address.
     /// This should only be used to allocate a non-default address to the device.
-    fn get_default_table(&self) -> alloc::sync::Arc<spin::Mutex<EndpointQueue>> {
+    fn get_default_table(&self) -> alloc::sync::Arc<EndpointQueue> {
         self.async_list[0].clone()
     }
 
@@ -426,7 +420,7 @@ impl Drop for Ehci {
 /// The EndpointQueue operates using [TransactionString]'s, which each describes a queued operation.
 #[derive(Derivative)]
 #[derivative(Ord, PartialEq, PartialOrd, Eq)]
-struct EndpointQueue {
+struct EndpointQueueInner {
     // For some reason the PID is in the QTD, not the QueueHead so we need to keep the PID
     // I'm sure I'll figure out why soon enough
     #[derivative(PartialEq = "ignore")]
@@ -454,7 +448,7 @@ struct EndpointQueue {
     terminator: Option<Box<QueueElementTransferDescriptor, DmaAlloc>>,
 }
 
-impl EndpointQueue {
+impl EndpointQueueInner {
     fn new_async(target: super::Target, pid: super::PidCode, packet_size: u32) -> Self {
         let mut this = Self {
             pid,
@@ -597,11 +591,114 @@ impl EndpointQueue {
             !qtd.is_active()
         }
     }
+
+    /// Checks state of all work. Indicates whether we raised an interrupt.
+    fn check_state(&self) -> bool {
+        // SAFETY: Pointer is cast from reference
+        let t = unsafe { (&raw const *self.head).read_volatile() };
+        let current_addr = t.current_qtd();
+        let mut rc = false;
+
+        for i in &self.work {
+            match i.evaluate_state(current_addr) {
+                (TransactionStringState::Completed, brk) => {
+                    log::trace!("Completion on {:?}", self.target);
+                    rc = true;
+                    i.get_future().wake();
+                    if brk {
+                        break;
+                    }
+                }
+                (TransactionStringState::Interrupt, brk) => {
+                    log::trace!("Interrupt on {:?}", self.target);
+                    rc = true;
+                    if brk {
+                        break;
+                    }
+                }
+                (TransactionStringState::Error, _) => {
+                    log::error!("USB error on {:?}", self.target);
+                    todo!(); // IDK what to do from here.
+                }
+                _ => {}
+            }
+        }
+        rc
+    }
+}
+
+#[repr(transparent)]
+struct EndpointQueue {
+    inner: spin::Mutex<EndpointQueueInner>,
+}
+
+impl EndpointQueue {
+    fn new_async(target: super::Target, pid: super::PidCode, packet_size: u32) -> Self {
+        Self {
+            inner: spin::Mutex::new(EndpointQueueInner::new_async(target, pid, packet_size)),
+        }
+    }
+
+    fn head_of_list() -> Self {
+        Self {
+            inner: spin::Mutex::new(EndpointQueueInner::head_of_list()),
+        }
+    }
+
+    fn new_string(
+        &self,
+        payload: Box<dyn DmaTarget>,
+        int_cfg: StringInterruptConfiguration,
+    ) -> alloc::sync::Arc<hootux::task::util::WorkerWaiter> {
+        x86_64::instructions::interrupts::without_interrupts(|| {
+            self.inner.lock().new_string(payload, int_cfg)
+        })
+    }
+
+    fn get_target(&self) -> Target {
+        x86_64::instructions::interrupts::without_interrupts(|| self.inner.lock().get_target())
+    }
+
+    fn append_cmd_string(
+        &self,
+        string: TransactionString,
+    ) -> alloc::sync::Arc<hootux::task::util::WorkerWaiter> {
+        x86_64::instructions::interrupts::without_interrupts(|| {
+            self.inner.lock().append_cmd_string(string)
+        })
+    }
+
+    fn check_state(&self) -> bool {
+        self.inner.lock().check_state()
+    }
+
+    fn set_next_endpoint_queue(&self, other: &Self) {
+        let addr: &QueueHead = &*other.inner.lock().head;
+        let phys_addr = hootux::mem::mem_map::translate_ptr(addr)
+            .unwrap()
+            .try_into()
+            .unwrap();
+        x86_64::instructions::interrupts::without_interrupts(|| {
+            let mut l = self.inner.lock();
+            l.head.set_next_queue_head(phys_addr);
+        });
+    }
+
+    fn head_addr(&self) -> u32 {
+        let addr: *const QueueHead = x86_64::instructions::interrupts::without_interrupts(|| {
+            &raw const *self.inner.lock().head
+        });
+        hootux::mem::mem_map::translate_ptr(addr)
+            .unwrap()
+            .try_into()
+            .unwrap()
+    }
 }
 
 struct PnpWatchdog {
     controller: alloc::sync::Weak<async_lock::Mutex<Ehci>>,
-    ports: Box<[VolatileRef<'static, PortStatusCtl>]>, // ports are owned by self.controller, we must upgrade the controller first.
+    ports: Box<[VolatileRef<'static, PortStatusCtl>]>, // ports are owned by self.controller, we must upgrade the controller first.\
+    work: alloc::sync::Arc<WorkerWaiter>,
 }
 
 // SAFETY: This is safe because we never call into_inner from the mutex
@@ -632,9 +729,8 @@ impl PnpWatchdog {
             assert!(i.as_ptr().read().port_power());
         }
         hootux::task::util::sleep(100).await;
-        let work = alloc::sync::Arc::new(hootux::task::util::WorkerWaiter::new());
         let mut controller = self.controller.upgrade().ok_or(())?.lock_arc().await;
-        controller.pnp_watchdog_message = alloc::sync::Arc::downgrade(&work);
+
         drop(controller);
         // This will add startup work to init ports.
         // If the port status change bit is set then this will be overwritten by the normal runtime loop
@@ -689,8 +785,8 @@ impl PnpWatchdog {
                             port.as_ptr().read()
                         );
                         let mut ctl_lock = controller.lock().await;
-                        let b = ctl_lock.get_default_table();
-                        let mut default_table = b.lock();
+                        let default_table = ctl_lock.get_default_table();
+
                         let new_address = ctl_lock.alloc_address();
                         drop(ctl_lock);
 
@@ -712,7 +808,7 @@ impl PnpWatchdog {
                             64,
                         );
                         let mut ctl_lock = controller.lock().await;
-                        ctl_lock.insert_into_async(alloc::sync::Arc::new(spin::Mutex::new(eq)));
+                        ctl_lock.insert_into_async(alloc::sync::Arc::new(eq));
 
                         log::info!("Port {i} initialised as {new_address}");
                     }
@@ -859,20 +955,39 @@ impl TransactionString {
         }
     }
 
-    /// Determines if `addr` points to one of the QTDs owned by `self`.
-    fn addr_is_self(&self, addr: u32) -> bool {
-        for i in &self.str {
-            // unwrap: All QTDs must be in Dma32 memory
-            let i_t: &QueueElementTransferDescriptor = &**i; // just ensures the type is correct
-            let i_addr: u32 = hootux::mem::mem_map::translate_ptr(i_t)
-                .unwrap()
-                .try_into()
-                .unwrap();
-            if i_addr == addr {
-                return true;
+    /// Evaluates the state up-to and including the QTD at the address `last_qtd`.
+    /// Also emits a bool indicating whether execution has stopped here.
+    fn evaluate_state(&self, last_qtd: u32) -> (TransactionStringState, bool) {
+        let mut rc = TransactionStringState::None;
+        let len = self.str.len();
+        for (i, boxed_qtd) in self.str.iter().enumerate() {
+            // SAFETY: Pointer is cast from reference
+            let qtd_ptr = &raw const **boxed_qtd;
+            let qtd = unsafe { qtd_ptr.read_volatile() };
+            let config = qtd.get_config();
+            // if inactive and data remains then we had a short packet, so this string is compplete
+            let qtd_phys_addr = hootux::mem::mem_map::translate_ptr(qtd_ptr).unwrap() as u32;
+
+            if config.error() {
+                return (TransactionStringState::Error, true); // error always stalls the endpoint
+            } else if !qtd.is_active() && config.get_expected_size() >= 0 {
+                return (TransactionStringState::Completed, false);
+            } else if !qtd.is_active() && config.get_interrupt_on_complete() {
+                log::debug!("Config {config:?}");
+                rc = TransactionStringState::Interrupt
+            } else if config.active() && qtd_phys_addr != last_qtd && i == 0 {
+                // This detects if the last QTD transitioned to the alternate QTD instead of this one.
+                return (TransactionStringState::Completed, false);
+            }
+            // We have checked the last QTD
+            if qtd_phys_addr == last_qtd {
+                return (rc, true);
+            } else if i == len {
+                // this is the last qtd in this string. If we have made it here then this string has been completed.
+                return (TransactionStringState::Completed, false);
             }
         }
-        false
+        panic!("Evaluate state managed to escape the loop")
     }
 
     fn get_future(&self) -> alloc::sync::Arc<hootux::task::util::WorkerWaiter> {
@@ -891,6 +1006,19 @@ impl TransactionString {
         };
         last.set_int_on_complete()
     }
+}
+
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+enum TransactionStringState {
+    /// No state requiring action was found.
+    None,
+    /// QTD with an interrupt state was found.
+    Interrupt,
+    /// String has been completed.
+    /// This almost definitely indicates an interrupt too
+    Completed,
+    /// Encountered an error.
+    Error,
 }
 
 /// Methods for constructing `TransactionString`s for the default command pipe.
@@ -1000,33 +1128,117 @@ pub enum StringInterruptConfiguration {
     Always,
 }
 
-struct EhciPoller {
-    controller: alloc::sync::Weak<async_lock::Mutex<Ehci>>,
+struct InterruptWorker {
+    worker_waiter: WorkerWaiter,
+    parent: alloc::sync::Weak<async_lock::Mutex<Ehci>>,
 }
 
-impl EhciPoller {
-    async fn run(mut self: alloc::sync::Arc<Self>) -> hootux::task::TaskResult {
-        static POLL_RATE_MSEC: u64 = 10;
-
-        let this = alloc::sync::Arc::downgrade(&self);
-        drop(self);
+impl InterruptWorker {
+    async fn run(self: alloc::sync::Arc<Self>) -> hootux::task::TaskResult {
         loop {
-            let Some(t) = this.upgrade() else {
-                return hootux::task::TaskResult::ExitedNormally;
-            };
-            self = t;
-            let Some(controller) = self.controller.upgrade() else {
-                return hootux::task::TaskResult::StoppedExternally;
-            };
-            let mut l = controller.lock().await;
-            let status = l.operational_registers.usb_status();
-            if status.read().int_only().bits() != 0 {
-                l.handle_interrupt();
-            }
-            drop(l);
-            drop(controller);
+            // This shouldn't return, the above should always do it.
+            {
+                let Some(parent) = self.parent.upgrade() else {
+                    return hootux::task::TaskResult::ExitedNormally;
+                };
+                let parent = parent.lock_arc().await;
+                let mut found_int = false;
+                for i in &parent.async_list {
+                    if i.check_state() {
+                        found_int = true
+                    }
+                }
 
-            hootux::task::util::sleep(POLL_RATE_MSEC).await
+                if !found_int {
+                    log::trace!("USB spurious interrupt"); // note this is very likely on startup
+                }
+            }
+            self.worker_waiter.wait().await;
         }
     }
 }
+
+/// This exists to immediately handle interrupts and either perform work immediately or wake a worker.
+/// This is required because [Ehci] is managed through a mutex, this contains all required components
+/// which can be accessed without requiring a lock to the mutex.
+struct IntHandler {
+    parent: alloc::sync::Weak<async_lock::Mutex<Ehci>>,
+    status_register: VolatilePtr<'static, ehci::operational_regs::UsbStatus>,
+    interrupt_worker: alloc::sync::Weak<InterruptWorker>,
+    pnp_watchdog: alloc::sync::Weak<WorkerWaiter>,
+    poll_period: core::sync::atomic::AtomicU64,
+    polling: core::sync::atomic::AtomicBool,
+}
+
+impl IntHandler {
+    pub fn handle_interrupt(&self) {
+        use ehci::operational_regs::UsbStatus;
+        let int_status = self.status_register.read();
+        // We are using this as a mutex, if we fail to acquire this then we cannot do anything.
+        // Also prevents the EHCI from being dropped in operation.
+        if let Some(_ehci) = self.parent.upgrade() {
+            for i in int_status.int_only().iter() {
+                match i {
+                    UsbStatus::USB_INT => {
+                        self.status_register.write(UsbStatus::USB_INT);
+                        self.interrupt_worker
+                            .upgrade()
+                            .unwrap()
+                            .worker_waiter
+                            .wake();
+                    }
+                    UsbStatus::USB_ERROR_INT => {
+                        self.status_register.write(UsbStatus::USB_ERROR_INT);
+                        panic!("USB error")
+                    }
+                    UsbStatus::PORT_CHANGE_DETECT => {
+                        self.status_register.write(UsbStatus::PORT_CHANGE_DETECT);
+                        let Some(waiter) = self.pnp_watchdog.upgrade() else {
+                            continue;
+                        }; // What? Are we shutting down? Starting Up?
+                        waiter.wake();
+                    }
+                    UsbStatus::FRAME_LIST_ROLLOVER => {
+                        self.status_register.write(UsbStatus::FRAME_LIST_ROLLOVER);
+                        // do nothing for now
+                    }
+                    UsbStatus::HOST_SYSTEM_ERROR => {
+                        self.status_register.write(UsbStatus::HOST_SYSTEM_ERROR);
+                        panic!("USB error")
+                    }
+                    UsbStatus::INTERRUPT_ON_ASYNC_ADVANCE => {
+                        self.status_register
+                            .write(UsbStatus::INTERRUPT_ON_ASYNC_ADVANCE);
+                        todo!()
+                    }
+                    _ => unreachable!(), // All remaining bits are masked out
+                }
+            }
+        }
+    }
+
+    async fn poll(self: alloc::sync::Arc<Self>) -> hootux::task::TaskResult {
+        // We use a semaphore to determine whether we need to exit.
+        // This is used to indicate if we are currently running, if not a caller can restart this.
+        self.polling
+            .store(true, core::sync::atomic::Ordering::Relaxed);
+        let rc = loop {
+            let sleep_period = self.poll_period.load(core::sync::atomic::Ordering::Acquire);
+            if sleep_period == 0 {
+                break hootux::task::TaskResult::ExitedNormally;
+            }
+            hootux::task::util::sleep(sleep_period).await;
+            let Some(_parent) = self.parent.upgrade() else {
+                break hootux::task::TaskResult::ExitedNormally;
+            };
+            self.handle_interrupt()
+        };
+        self.polling
+            .store(false, core::sync::atomic::Ordering::Release);
+        rc
+    }
+}
+
+// SAFETY: auto Send is blocked by VolatilePtr<UsbSts>, but this must be (Send + Sync) to facilitate interrupts.
+unsafe impl Send for IntHandler {}
+unsafe impl Sync for IntHandler {}

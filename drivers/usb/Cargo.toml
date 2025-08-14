@@ -17,3 +17,4 @@ futures-util = { version = "0.3.31", default-features = false }
 log = "0.4.27"
 usb-cfg = { path = "usb-proto" }
 cast_trait_object = "0.1.4"
+x86_64 = "0.15.2"

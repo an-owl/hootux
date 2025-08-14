@@ -5,6 +5,7 @@ use alloc::sync::Arc;
 use alloc::vec::Vec;
 use core::alloc::{Allocator, Layout};
 use core::any::Any;
+use core::num::NonZeroU64;
 use futures_util::FutureExt;
 use hootux::fs::file::*;
 use hootux::fs::sysfs::SysfsFile;
@@ -48,7 +49,11 @@ impl EhciFileContainer {
             inner: Arc::new(async_lock::Mutex::new(ehci)),
         };
 
-        super::Ehci::start_port_watchdog(&this.inner).await;
+        super::Ehci::get_int_handler(this.inner.clone()).await;
+        this.inner
+            .lock_arc()
+            .await
+            .start_polling(Some(NonZeroU64::new_unchecked(10)));
         this
     }
 }
