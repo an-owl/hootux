@@ -195,6 +195,8 @@ bitflags! {
     }
 }
 
+//fn get_descriptor<C: ConfigurationMarker>(raw: &[u8]) -> Option<&C> {}
+
 mod sealed {
     pub trait Sealed {}
 }
@@ -399,3 +401,46 @@ bitfield! {
     /// `self.isochronous_mult() + 1` indicates number of possible transactions per microframe.
     isochronus_mult, _: 12,11;
 }
+
+trait Descriptor: Sized {
+    fn length(&self) -> u8;
+    fn descriptor_type() -> DescriptorType;
+
+    fn from_raw(raw: &[u8]) -> Option<&Self> {
+        if raw.len() < size_of::<Self>() {
+            return None;
+        }
+        if *raw.get(1).unwrap() != Self::descriptor_type() as u8 {
+            return None;
+        }
+        // SAFETY: All invariants of self muse be valid, we assert the descriptor type of self
+        Some(unsafe { &*(raw[0] as *const u8).cast::<Self>() })
+    }
+}
+
+macro_rules! impl_descriptor {
+    ($ty:ty,$id_byte:expr) => {
+        impl Descriptor for $ty {
+            fn length(&self) -> u8 {
+                self.length
+            }
+            fn descriptor_type(&self) -> DescriptorType {
+                $id_byte
+            }
+        }
+    };
+}
+
+impl_descriptor!(DeviceDescriptor, DescriptorType::Device);
+impl_descriptor!(
+    ConfigurationDescriptor<Normal>,
+    DescriptorType::Configuration
+);
+impl_descriptor!(
+    ConfigurationDescriptor<AlternateSpeed>,
+    DescriptorType::OtherSpeedConfiguration
+);
+impl_descriptor!(InterfaceDescriptor, DescriptorType::Interface);
+impl_descriptor!(EndpointDescriptor, DescriptorType::Endpoint);
+
+impl_descriptor!(DeviceQualifier, DescriptorType::DeviceQualifier);
