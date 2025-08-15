@@ -402,7 +402,7 @@ bitfield! {
     isochronus_mult, _: 12,11;
 }
 
-trait Descriptor: Sized {
+pub trait Descriptor: Sized + Sealed {
     fn length(&self) -> u8;
     fn descriptor_type() -> DescriptorType;
 
@@ -424,7 +424,7 @@ macro_rules! impl_descriptor {
             fn length(&self) -> u8 {
                 self.length
             }
-            fn descriptor_type(&self) -> DescriptorType {
+            fn descriptor_type() -> DescriptorType {
                 $id_byte
             }
         }
@@ -441,6 +441,8 @@ impl_descriptor!(
     DescriptorType::OtherSpeedConfiguration
 );
 impl_descriptor!(InterfaceDescriptor, DescriptorType::Interface);
+impl Sealed for InterfaceDescriptor {}
 impl_descriptor!(EndpointDescriptor, DescriptorType::Endpoint);
+impl Sealed for EndpointDescriptor {}
 
 impl_descriptor!(DeviceQualifier, DescriptorType::DeviceQualifier);
