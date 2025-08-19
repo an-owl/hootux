@@ -8,7 +8,7 @@ use crate::mem::dma::{DmaClaimable, DmaGuard};
 use crate::println;
 use crate::task::TaskResult;
 use alloc::boxed::Box;
-use alloc::string::{String, ToString};
+use alloc::string::String;
 use alloc::vec;
 use alloc::vec::Vec;
 use futures_util::FutureExt;
@@ -49,8 +49,6 @@ impl KernelShell {
                 crate::print!("\nKSHELL# ")
             }
             //buffer[..].fill(0);
-            // indicates if we should run the command or wait for more data
-            let mut exec = false;
             let dma = DmaGuard::new(buffer);
             let (claimed, buff) = dma.claim().unwrap();
             match self.in_fo.read(0, buff).await {
@@ -148,7 +146,7 @@ impl KernelShell {
     }
 }
 
-trait Command: Send + Sync {
+pub trait Command: Send + Sync {
     /// This is called by the shell when a command is entered.
     ///
     /// The implementation should attempt to match until the first whitespace character to determine
@@ -163,7 +161,7 @@ trait Command: Send + Sync {
 }
 
 #[derive(Debug, Clone, Copy, Ord, PartialOrd, Eq, PartialEq)]
-enum CommandResult {
+pub enum CommandResult {
     /// Command completed without error
     Ok,
     /// Command string did not match this fn
@@ -178,44 +176,41 @@ struct BuiltinCommands;
 impl Command for BuiltinCommands {
     fn execute<'a>(&self, args: &'a str) -> BoxFuture<'a, CommandResult> {
         async move {
-            if args.starts_with("ls") {
-                let Some(p) = args.find("/") else {
-                    log::error!("invalid arguments");
-                    return CommandResult::Err;
-                };
-                let path = args.split_at(p).1;
-                let f = match get_vfs().open(path).await {
-                    Ok(f) => f,
-                    Err(e) => {
-                        log::error!("ls: got {e:?} when opening {path}");
+            let ls_pat = regex::Regex::new(r#"^\s*(?<cmd>ls) (?<arg>/\S*)"#).unwrap();
+            if let Some(captures) = ls_pat.captures(args) {
+                if !captures["cmd"].is_empty() {
+                    let path = &captures["arg"];
+                    let f = match get_vfs().open(path).await {
+                        Ok(f) => f,
+                        Err(e) => {
+                            log::error!("ls: got {e:?} when opening {path}");
+                            return CommandResult::Err;
+                        }
+                    };
+                    let Ok(dir) = cast_dir!(f) else {
+                        log::error!("ls: file was not a directory");
                         return CommandResult::Err;
-                    }
-                };
-                let Ok(dir) = cast_dir!(f) else {
-                    log::error!("ls: file was not a directory");
-                    return CommandResult::Err;
-                };
+                    };
 
-                let Ok(len) = dir.len().await else {
-                    log::error!("ls: Failed to open {path}");
-                    return CommandResult::Err;
-                };
-                println!("{path}: {len} files",);
-                let Ok(iter) = dir.file_list().await else {
-                    log::error!("ls: Failed to enumerate files");
-                    return CommandResult::Err;
-                };
-                for i in iter {
-                    println!("{i}");
+                    let Ok(len) = dir.len().await else {
+                        log::error!("ls: Failed to open {path}");
+                        return CommandResult::Err;
+                    };
+                    println!("{path}: {len} files",);
+                    let Ok(iter) = dir.file_list().await else {
+                        log::error!("ls: Failed to enumerate files");
+                        return CommandResult::Err;
+                    };
+                    for i in iter {
+                        println!("{i}");
+                    }
+                    return CommandResult::Ok;
                 }
             }
-            // Note: This had some wierd issues initially that I didnt fix but now cant reproduce.
-            if args.starts_with("cat") {
-                let Some(p) = args.find("/") else {
-                    log::error!("invalid arguments");
-                    return CommandResult::Err;
-                };
-                let path = args.split_at(p).1;
+
+            let cat_pat = regex::Regex::new(r#"^\s*(?<cmd>cat) (?<arg>/\S*)"#).unwrap();
+            if let Some(captures) = cat_pat.captures(args) {
+                let path = &captures["arg"];
                 let f = match get_vfs().open(path).await {
                     Ok(f) => f,
                     Err(e) => {
@@ -242,6 +237,7 @@ impl Command for BuiltinCommands {
                             drop(buff);
                             let t = guard.unwrap().ok().unwrap().unwrap();
                             full_buff.extend_from_slice(&t[..len]);
+                            count += len as u64;
                             if len != PARTIAL_SIZE {
                                 break;
                             }
@@ -257,6 +253,7 @@ impl Command for BuiltinCommands {
                     Ok(s) => println!("{}\nformat: utf8\n{}", path, s),
                     Err(_) => println!("{}\nformat: byte hex\n{:?}", path, &*full_buff),
                 }
+                return CommandResult::Ok;
             }
             CommandResult::BadMatch
         }

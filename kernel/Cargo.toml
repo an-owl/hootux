@@ -10,7 +10,7 @@ default = ["write-combining", "multiprocessing"]
 alloc-debug-serial = [] #This is for debugging the memory allocator
 multiprocessing = []
 write-combining = []
-kernel-shell = []
+kernel-shell = ["regex"]
 
 [dependencies]
 volatile = "0.4.6"
@@ -41,6 +41,8 @@ cast_trait_object = "0.1.4"
 
 slablike = { git = "https://github.com/an-owl/slablike-allocator" }
 suffix = { git = "https://github.com/an-owl/suffix" }
+
+regex = { version = "1.11.1", default-features = false, features = ["unicode-perl"], optional = true }
 
 [[test]]
 name = "should_panic"
