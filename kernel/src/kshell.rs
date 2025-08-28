@@ -255,6 +255,71 @@ impl Command for BuiltinCommands {
                 }
                 return CommandResult::Ok;
             }
+
+            let read_pat =
+                regex::Regex::new(r#"(?<cmd>read) @(?<pos>[0-9]+) >>(?<len>[0-9]+) (?<path>/\S+)"#)
+                    .unwrap();
+            if let Some(captures) = read_pat.captures(args) {
+                let file = match get_vfs().open(&captures["path"]).await {
+                    Ok(f) => f,
+                    Err(err) => {
+                        log::info!("Read: got {err:?} when opening {}", &captures["path"]);
+                        return CommandResult::Err;
+                    }
+                };
+                let file = match file.file_type() {
+                    FileType::NormalFile => cast_file!(NormalFile: file).unwrap(),
+                    FileType::CharDev => {
+                        log::info!("Read: Can currently operate on {:?}", FileType::NormalFile);
+                        return CommandResult::Err;
+                    }
+                    f => {
+                        log::error!("Read: unsupported file type: {f:?}");
+                        return CommandResult::Err;
+                    }
+                };
+
+                let Ok(len) = captures["len"]
+                    .parse()
+                    .inspect_err(|_| log::error!("Read: Invalid len {}", &captures["len"]))
+                else {
+                    return CommandResult::Err;
+                };
+                let buffer = alloc::vec![0u8;len];
+                let Ok(pos) = captures["pos"]
+                    .parse()
+                    .inspect_err(|_| log::error!("Read: Invalid position {}", &captures["len"]))
+                else {
+                    return CommandResult::Err;
+                };
+                let dma = DmaGuard::new(buffer);
+                let (dma, borrow) = dma.claim().unwrap();
+                match file.read(pos, borrow).await {
+                    Ok((buff, read_len)) => {
+                        drop(buff);
+                        if read_len != len {
+                            log::warn!("Only read {len} bytes");
+                        }
+                        let buff = dma.unwrap().unwrap().unwrap();
+                        match str::from_utf8(&buff) {
+                            Ok(s) => {
+                                println!("{}", s)
+                            }
+                            Err(_) => {
+                                use core::fmt::Write as _;
+                                let mut s = String::new();
+                                for i in buff {
+                                    core::write!(s, "{:#x} ", i).unwrap();
+                                }
+                                println!("{s}");
+                            }
+                        }
+                    }
+                    Err((err, ..)) => {
+                        log::error!("Got {err:?} when reading {}", &captures["path"])
+                    }
+                }
+            }
             CommandResult::BadMatch
         }
         .boxed()
