@@ -730,9 +730,8 @@ impl PnpWatchdog {
             assert!(i.as_ptr().read().port_power());
         }
         hootux::task::util::sleep(100).await;
-        let mut controller = self.controller.upgrade().ok_or(())?.lock_arc().await;
+        let mut controller = self.controller.upgrade().ok_or(())?;
 
-        drop(controller);
         // This will add startup work to init ports.
         // If the port status change bit is set then this will be overwritten by the normal runtime loop
         let mut work_list: [Option<Work>; 64] = core::array::from_fn(|portnum| {
@@ -746,25 +745,8 @@ impl PnpWatchdog {
         loop {
             // This acts as a bit like a hardware mutex.
             // It ensures that the controller is still there before acting and that it will not be dropped while we are working.
-            let controller = self.controller.upgrade().ok_or(())?;
-            for (i, port) in self.ports.iter_mut().enumerate() {
-                let r = port.as_ptr().read();
-                if r.connect_status_change() {
-                    port.as_mut_ptr()
-                        .write(PortStatusCtl(PortStatusCtl::ACK_STATUS_CHANGE));
-                    match r.connected() {
-                        true => work_list[i] = Some(Work::Added),
-                        false => work_list[i] = Some(Work::Removed),
-                    }
-                    log::trace!("Work for port {i} queued: {:?}", work_list[i].unwrap());
-                }
-            }
 
-            'work_loop: for (i, w) in work_list
-                .iter_mut()
-                .enumerate()
-                .map(|(i, w)| (i, w.as_ref()))
-            {
+            'work_loop: for (i, w) in work_list.iter_mut().enumerate().map(|(i, w)| (i, w.take())) {
                 match w {
                     None => continue 'work_loop,
                     Some(Work::Added) => {
@@ -809,11 +791,47 @@ impl PnpWatchdog {
                             64,
                         );
                         let mut ctl_lock = controller.lock().await;
-                        ctl_lock.insert_into_async(alloc::sync::Arc::new(eq));
+                        let eq = alloc::sync::Arc::new(eq);
+                        ctl_lock.insert_into_async(eq.clone());
 
                         log::info!("Port {i} initialised as {new_address}");
+
+                        drop(ctl_lock);
+
+                        unsafe {
+                            device::UsbDeviceAccessor::insert_into_controller(
+                                new_address,
+                                eq,
+                                controller.clone(),
+                            )
+                            .await;
+                        }
                     }
                     Some(Work::Removed) => todo!(), // free all resources attached to the port
+                }
+            }
+
+            drop(controller);
+
+            self.work.wait().await;
+
+            controller = self.controller.upgrade().ok_or(())?;
+
+            for (i, port) in self.ports.iter_mut().enumerate() {
+                let port_sts = port.as_ptr().read();
+                if port_sts.connect_status_change() {
+                    // Clear other write-one bits and write-back
+                    port.as_mut_ptr().write(PortStatusCtl(
+                        port_sts.0
+                            & !(PortStatusCtl::ACK_OVER_CURRENT | PortStatusCtl::ACK_PORT_ENABLE),
+                    ));
+                    work_list[i] = if port_sts.connected() {
+                        Some(Work::Added)
+                    } else {
+                        Some(Work::Removed)
+                    }
+                } else {
+                    work_list[i] = None;
                 }
             }
         }
