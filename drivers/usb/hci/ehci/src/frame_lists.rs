@@ -171,7 +171,7 @@ pub struct QueueHead {
 }
 
 impl QueueHead {
-    pub fn new() -> Self {
+    pub fn new(max_packet_len: u32) -> Self {
         let mut this = Self {
             next_link_ptr: FrameListLinkPointer::new(None),
             ctl0: Ctl0(0),
@@ -181,8 +181,20 @@ impl QueueHead {
             alternate_pointer: FrameListLinkPointerWithNakCount(1),
             overlay: [0; 11],
         };
+        this.ctl0.set_max_packet_len(max_packet_len);
         this.current_transaction.set_end(false); // T bit is reserved for current transaction
         this
+    }
+
+    /// Sets the data toggle ctl (DT) bit. When this is `true` the data toggle bit is fetched from the
+    /// incoming QTD. When this if `false` the DT bit will from the QTD will be ignored and the
+    /// current DT state in the QueueHead will be used.
+    pub fn data_toggle_ctl(&mut self, data_toggle_ctl: bool) {
+        self.ctl0.use_dt_from_qtd(data_toggle_ctl);
+    }
+
+    fn set_max_len(&mut self, max_len: u32) {
+        self.ctl0.set_max_packet_len(max_len);
     }
 
     /// Sets the current transaction pointer to `addr`
@@ -261,7 +273,7 @@ bitfield! {
     is_head_reclimation_list,set_head_reclimation_list: 15;
 
     /// This field sets the maximum packet length.
-    max_packet_len,  set_max_packet_len: 16,26;
+    max_packet_len,  set_max_packet_len: 26,16;
 
     /// If [Self::endpoint_speed] is not [EndpointSpeed::FullSpeed] and [Self::get_addr] is `0` then this must be set.
     /// Otherwise it must be cleared
@@ -409,6 +421,13 @@ impl QueueElementTransferDescriptor {
         } else {
             self.next_qtd.set_end(true);
         }
+    }
+
+    /// Sets the state of the `data_toggle` bit in the QTD.
+    /// This will cause the controller to expect/send a DATA(`dt_state`) handshake for the first
+    /// transaction.
+    pub fn data_toggle(&mut self, dt_state: bool) {
+        self.config.set_data_toggle(dt_state);
     }
 
     /// Performs the same operation as [Self::set_next] on the alternate pointer.
@@ -574,7 +593,7 @@ bitfield! {
     /// This is the current value of the data toggle bit.
     ///
     /// [Ctl0::get_data_toggle_ctl] indicates whether this bit will be used.
-    pub data_toggle, _: 31;
+    pub _, set_data_toggle: 31;
 }
 
 impl QtdConfig {
