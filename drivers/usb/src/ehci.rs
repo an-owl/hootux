@@ -3,6 +3,7 @@ use alloc::boxed::Box;
 use alloc::vec::Vec;
 use bitfield::{Bit, BitMut};
 use core::alloc::Allocator;
+use core::cmp::PartialEq;
 use core::ptr::NonNull;
 use derivative::Derivative;
 use ehci::frame_lists::{PeriodicFrameList, QueueElementTransferDescriptor, QueueHead};
@@ -450,13 +451,18 @@ struct EndpointQueueInner {
 }
 
 impl EndpointQueueInner {
-    fn new_async(target: super::Target, pid: super::PidCode, packet_size: u32) -> Self {
+    fn new_async(
+        target: super::Target,
+        pid: super::PidCode,
+        packet_size: u32,
+        data_toggle_ctl: bool,
+    ) -> Self {
         let mut this = Self {
             pid,
             target,
             packet_size,
             head: Box::new_in(
-                QueueHead::new(),
+                QueueHead::new(packet_size),
                 DmaAlloc::new(hootux::mem::MemRegion::Mem32, 32),
             ),
             work: Vec::new(),
@@ -468,6 +474,7 @@ impl EndpointQueueInner {
         // This is just to guarantee we have the right type
         let qtd: &mut QueueElementTransferDescriptor = &mut **this.terminator.as_mut().unwrap();
         qtd.set_active(false);
+        this.head.data_toggle_ctl(data_toggle_ctl);
         // SAFETY: The address is a valid terminated table.
         unsafe {
             this.head.set_current_transaction(
@@ -489,6 +496,7 @@ impl EndpointQueueInner {
             },
             crate::PidCode::Control,
             64,
+            true,
         );
         this.head.set_head_of_list();
         let qh: &QueueHead = &*this.head;
@@ -526,7 +534,7 @@ impl EndpointQueueInner {
         }
     }
 
-    const fn get_target(&self) -> super::Target {
+    const fn get_target(&self) -> Target {
         self.target
     }
 
@@ -541,13 +549,13 @@ impl EndpointQueueInner {
             unsafe { last.append_string(&string) };
         } else {
             assert!(self.is_terminated());
-            let tail: &QueueElementTransferDescriptor = &**string.str.last().unwrap();
-            let tail_addr = hootux::mem::mem_map::translate_ptr(tail)
+            let head: &QueueElementTransferDescriptor = &**string.str.first().unwrap();
+            let head_addr = hootux::mem::mem_map::translate_ptr(head)
                 .unwrap()
                 .try_into()
                 .unwrap();
             // SAFETY: tail_addr is guaranteed to correctly point to a QTD & this only runs when self.work has
-            unsafe { self.exit_idle_into(tail_addr) }
+            unsafe { self.exit_idle_into(head_addr) };
         }
         self.work.push(string);
         fut
@@ -634,9 +642,19 @@ struct EndpointQueue {
 }
 
 impl EndpointQueue {
-    fn new_async(target: super::Target, pid: super::PidCode, packet_size: u32) -> Self {
+    fn new_async(
+        target: super::Target,
+        pid: super::PidCode,
+        packet_size: u32,
+        data_toggle_ctl: bool,
+    ) -> Self {
         Self {
-            inner: spin::Mutex::new(EndpointQueueInner::new_async(target, pid, packet_size)),
+            inner: spin::Mutex::new(EndpointQueueInner::new_async(
+                target,
+                pid,
+                packet_size,
+                data_toggle_ctl,
+            )),
         }
     }
 
@@ -773,13 +791,11 @@ impl PnpWatchdog {
                         let new_address = ctl_lock.alloc_address();
                         drop(ctl_lock);
 
-                        let mut command = hootux::mem::dma::DmaGuard::new(Vec::from(
-                            usb_cfg::CtlTransfer::set_address(new_address).to_bytes(),
-                        ));
-                        let mut ts = TransactionString::empty();
-                        unsafe { ts.append_qtd(&mut command, PidCode::Control) };
-                        ts.set_tail_interrupt();
+                        let command = hootux::mem::dma::DmaGuard::new({
+                            Vec::from(usb_cfg::CtlTransfer::set_address(new_address).to_bytes())
+                        });
 
+                        let ts = TransactionString::setup_transaction(Box::new(command), None);
                         default_table.append_cmd_string(ts).wait().await;
 
                         let eq = EndpointQueue::new_async(
@@ -788,7 +804,8 @@ impl PnpWatchdog {
                                 endpoint: Endpoint::new(0).unwrap(),
                             },
                             PidCode::Control,
-                            64,
+                            8,
+                            true,
                         );
                         let mut ctl_lock = controller.lock().await;
                         let eq = alloc::sync::Arc::new(eq);
@@ -842,16 +859,26 @@ impl PnpWatchdog {
 /// Due to the limited buffer size of a single [QueueElementTransferDescriptor] a large number
 /// of them may be required for a single expected operation.
 struct TransactionString {
+    meta: TransactionStringMetadata,
     // This can be changed into `Box<[QTD],DmaAlloc>` which may be more optimal
     // current form is more flexible
     // May never have 0 elements
     str: Box<[Box<QueueElementTransferDescriptor, DmaAlloc>]>,
-    waiter: alloc::sync::Arc<hootux::task::util::WorkerWaiter>,
+    waiter: alloc::sync::Arc<WorkerWaiter>,
+    buffers: Vec<Box<dyn DmaTarget>>,
+}
+
+/// Defines how the [TransactionString] should processed on completion.
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Default)]
+enum TransactionStringMetadata {
+    Control,
+    #[default]
+    NormalData,
 }
 
 impl TransactionString {
     fn new(
-        mut payload: Box<dyn hootux::mem::dma::DmaTarget>,
+        mut payload: Box<dyn DmaTarget>,
         transaction_len: u32,
         interrupt: StringInterruptConfiguration,
     ) -> Self {
@@ -929,8 +956,10 @@ impl TransactionString {
         };
 
         Self {
+            meta: TransactionStringMetadata::NormalData,
             str: string.into_boxed_slice(),
-            waiter: alloc::sync::Arc::new(hootux::task::util::WorkerWaiter::new()),
+            waiter: alloc::sync::Arc::new(WorkerWaiter::new()),
+            buffers: alloc::vec![payload],
         }
     }
 
@@ -1009,7 +1038,7 @@ impl TransactionString {
         panic!("Evaluate state managed to escape the loop")
     }
 
-    fn get_future(&self) -> alloc::sync::Arc<hootux::task::util::WorkerWaiter> {
+    fn get_future(&self) -> alloc::sync::Arc<WorkerWaiter> {
         self.waiter.clone()
     }
 
@@ -1044,12 +1073,18 @@ enum TransactionStringState {
 impl TransactionString {
     fn empty() -> Self {
         Self {
+            meta: TransactionStringMetadata::Control,
             str: Box::new([]),
-            waiter: alloc::sync::Arc::new(hootux::task::util::WorkerWaiter::new()),
+            waiter: alloc::sync::Arc::new(WorkerWaiter::new()),
+            buffers: alloc::vec![],
         }
     }
 
     /// Constructs and appends a single qtd to `self`.
+    ///
+    /// `data_toggle` indicates the initial state of the data toggle bit.
+    /// This setting has no effect when `pid` is [PidCode::Control].
+    /// This is required to be set when configuring setup transactions for both the data and status stage.
     ///
     /// # Panics
     ///
@@ -1061,12 +1096,14 @@ impl TransactionString {
     /// performs DMA to `payload`.
     unsafe fn append_qtd<'a, 'b>(
         &'a mut self,
-        payload: &'b mut dyn hootux::mem::dma::DmaTarget,
+        payload: &'b mut dyn DmaTarget,
         pid: super::PidCode,
+        data_toggle: bool,
     ) -> &'a mut Self {
         let str = core::mem::take(&mut self.str);
         let mut c = str.into_vec();
         let mut qtd = QueueElementTransferDescriptor::new();
+        qtd.data_toggle(data_toggle);
         assert!(payload.len() <= 5 * PAGE_SIZE);
 
         // needed to extract the offset, we cant get if from the iterator because it gets aligned down into PAGE_SIZE
@@ -1131,6 +1168,52 @@ impl TransactionString {
         c.push(b);
         self.str = c.into_boxed_slice();
         self
+    }
+
+    /// Setup as in the PID not we are setting up a transaction.
+    fn setup_transaction(
+        mut setup: Box<dyn DmaTarget + 'static>,
+        data: Option<(Box<dyn DmaTarget + 'static>, PidCode)>,
+    ) -> Self {
+        let mut this = Self::empty();
+        assert_eq!(
+            setup.len(),
+            8,
+            "Setup transactions must always contain 8 bytes"
+        );
+        // SAFETY: We guarantee that `setup` owns this address.
+        let len = unsafe { *setup.data_ptr().cast::<u8>().byte_add(8) } as usize;
+        // Determines the status PID from `data`
+        let status_pid = data
+            .as_ref()
+            .map(|(_, p)| {
+                if *p == PidCode::In {
+                    PidCode::Out
+                } else {
+                    PidCode::In
+                }
+            })
+            .unwrap_or(PidCode::In);
+
+        unsafe {
+            this.append_qtd(&mut *setup, PidCode::Control, false);
+            this.buffers.push(setup);
+            if let Some((mut payload, pid)) = data {
+                assert_ne!(
+                    len, 0,
+                    "Setup did not expect a data phase but one was specified anyway"
+                );
+                assert_ne!(pid, PidCode::Control, "Data PID may not be \"Control\"");
+                this.append_qtd(&mut *payload, pid, true);
+                this.buffers.push(payload);
+            }
+            // A transaction is used to indicate the setup-command is completed.
+            // No data is expected.
+            this.append_qtd(&mut hootux::mem::dma::BogusBuffer, status_pid, true);
+        };
+
+        this.set_tail_interrupt();
+        this
     }
 }
 

@@ -14,8 +14,6 @@ const EHCI_PCI_CLASS: [u8; 3] = [0xc, 0x3, 0x20];
 const EHCI_BAR: u8 = 0;
 const XHCI_PCI_CLASS: [u8; 3] = [0xc, 0x3, 0x30];
 
-static DEV_ID: hootux::fs::vfs::DeviceIdDistributer = hootux::fs::vfs::DeviceIdDistributer::new();
-
 pub mod ehci;
 
 /// Represents a target device address. USB address are `0..128`
@@ -82,7 +80,7 @@ impl TryFrom<Target> for ::ehci::frame_lists::Target {
     }
 }
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum PidCode {
     Control,
     In,
