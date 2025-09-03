@@ -43,6 +43,9 @@ pub struct Ehci {
     pnp_watchdog_message: alloc::sync::Weak<WorkerWaiter>,
     interrupt_worker: alloc::sync::Weak<InterruptWorker>,
     int_handler: Option<alloc::sync::Arc<IntHandler>>,
+
+    // Maintained state
+    port_files: alloc::collections::BTreeMap<u8, alloc::sync::Arc<device::UsbDeviceAccessor>>,
 }
 
 // SAFETY: Ehci is not Send because `operational_registers` contains `VolatilePtr` which is not Send
@@ -136,6 +139,7 @@ impl Ehci {
             pnp_watchdog_message: alloc::sync::Weak::new(),
             interrupt_worker: alloc::sync::Weak::new(),
             int_handler: None,
+            port_files: alloc::collections::BTreeMap::new(),
         })
     }
 
