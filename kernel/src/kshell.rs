@@ -298,10 +298,10 @@ impl Command for BuiltinCommands {
                     Ok((buff, read_len)) => {
                         drop(buff);
                         if read_len != len {
-                            log::warn!("Only read {len} bytes");
+                            log::warn!("Read {read_len} bytes expected {len}");
                         }
                         let buff = dma.unwrap().unwrap().unwrap();
-                        match str::from_utf8(&buff) {
+                        match str::from_utf8(&buff[..read_len]) {
                             Ok(s) => {
                                 println!("{}", s)
                             }
