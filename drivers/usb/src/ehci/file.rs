@@ -1,6 +1,6 @@
 use alloc::alloc::handle_alloc_error;
 use alloc::boxed::Box;
-use alloc::string::String;
+use alloc::string::{String, ToString};
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 use core::alloc::{Allocator, Layout};
@@ -87,15 +87,34 @@ impl File for EhciFileContainer {
 
 impl SysfsDirectory for EhciFileContainer {
     fn entries(&self) -> usize {
-        todo!()
+        let controller = hootux::block_on!(core::pin::pin!(self.inner.lock()));
+        (controller.address_bmp.count_ones() - 1) as usize + 2
     }
 
     fn file_list(&self) -> Vec<String> {
-        todo!()
+        let controller = hootux::block_on!(core::pin::pin!(self.inner.lock()));
+        controller
+            .port_files
+            .keys()
+            .map(|k| alloc::format!("{k}"))
+            .chain([".".to_string(), "..".to_string()])
+            .collect()
     }
 
-    fn get_file(&self, _name: &str) -> Result<Box<dyn SysfsFile>, IoError> {
-        todo!()
+    fn get_file(&self, name: &str) -> Result<Box<dyn SysfsFile>, IoError> {
+        match name {
+            "." => Ok(Box::new(self.clone())),
+            ".." => Ok(Box::new(hootux::fs::sysfs::SysFsRoot::new().bus.clone())),
+            _ => {
+                let controller = hootux::block_on!(core::pin::pin!(self.inner.lock()));
+                let int = name.parse().map_err(|_| IoError::InvalidData)?;
+                let acc = controller
+                    .port_files
+                    .get(&int)
+                    .ok_or_else(|| IoError::InvalidData.into())?;
+                Ok(acc.get_file())
+            }
+        }
     }
 
     fn store(&self, _name: &str, _file: Box<dyn SysfsFile>) -> Result<(), IoError> {
