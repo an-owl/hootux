@@ -445,7 +445,7 @@ struct EndpointQueueInner {
     #[derivative(PartialEq = "ignore")]
     #[derivative(Ord = "ignore")]
     #[derivative(PartialOrd = "ignore")]
-    work: Vec<TransactionString>,
+    work: alloc::collections::VecDeque<TransactionString>,
     // Option because this isn't required when transactions are running.
     // This can be used as a cached descriptor
     #[derivative(PartialEq = "ignore")]
@@ -469,7 +469,7 @@ impl EndpointQueueInner {
                 QueueHead::new(packet_size),
                 DmaAlloc::new(hootux::mem::MemRegion::Mem32, 32),
             ),
-            work: Vec::new(),
+            work: alloc::collections::VecDeque::new(),
             terminator: Some(Box::new_in(
                 QueueElementTransferDescriptor::new(),
                 DmaAlloc::new(hootux::mem::MemRegion::Mem32, 32),
@@ -518,10 +518,10 @@ impl EndpointQueueInner {
         &mut self,
         payload: Box<dyn hootux::mem::dma::DmaTarget>,
         int_mode: StringInterruptConfiguration,
-    ) -> alloc::sync::Arc<hootux::task::util::WorkerWaiter> {
-        let st = TransactionString::new(payload, self.packet_size, int_mode);
+    ) -> impl Future<Output = StringCompletion> + use<> {
+        let mut st = TransactionString::new(payload, self.packet_size, int_mode);
         let fut = st.get_future();
-        if let Some(last) = self.work.last_mut() {
+        if let Some(last) = self.work.get_mut(self.work.len() - 1) {
             // SAFETY: Self ensures that the string is either run to completion or safely removed.
             unsafe { last.append_string(&st) }
             fut
@@ -544,11 +544,11 @@ impl EndpointQueueInner {
 
     fn append_cmd_string(
         &mut self,
-        string: TransactionString,
-    ) -> alloc::sync::Arc<hootux::task::util::WorkerWaiter> {
+        mut string: TransactionString,
+    ) -> impl Future<Output = StringCompletion> + use<> {
         let fut = string.get_future();
 
-        if let Some(last) = self.work.last_mut() {
+        if let Some(last) = self.work.get_mut(self.work.len() - 1) {
             // SAFETY: `String` is guaranteed to either be completed or safely aborted.
             unsafe { last.append_string(&string) };
         } else {
@@ -561,7 +561,7 @@ impl EndpointQueueInner {
             // SAFETY: tail_addr is guaranteed to correctly point to a QTD & this only runs when self.work has
             unsafe { self.exit_idle_into(head_addr) };
         }
-        self.work.push(string);
+        self.work.push_back(string);
         fut
     }
 
@@ -606,18 +606,18 @@ impl EndpointQueueInner {
     }
 
     /// Checks state of all work. Indicates whether we raised an interrupt.
-    fn check_state(&self) -> bool {
+    fn check_state(&mut self) -> bool {
         // SAFETY: Pointer is cast from reference
         let t = unsafe { (&raw const *self.head).read_volatile() };
         let current_addr = t.current_qtd();
         let mut rc = false;
 
-        for i in &self.work {
+        while let Some(i) = self.work.pop_front() {
             match i.evaluate_state(current_addr) {
                 (TransactionStringState::Completed, brk) => {
                     log::trace!("Completion on {:?}", self.target);
                     rc = true;
-                    i.get_future().wake();
+                    i.complete();
                     if brk {
                         break;
                     }
@@ -631,7 +631,7 @@ impl EndpointQueueInner {
                 }
                 (TransactionStringState::Error, _) => {
                     log::error!("USB error on {:?}", self.target);
-                    todo!(); // IDK what to do from here.
+                    todo!(); // fixme: Remove this, errors should be handled by the device driver.
                 }
                 _ => {}
             }
@@ -641,7 +641,7 @@ impl EndpointQueueInner {
 }
 
 #[repr(transparent)]
-struct EndpointQueue {
+pub struct EndpointQueue {
     inner: spin::Mutex<EndpointQueueInner>,
 }
 
@@ -668,11 +668,31 @@ impl EndpointQueue {
         }
     }
 
-    fn new_string(
+    fn update_transaction_len(&self, new_len: u8) -> Result<(), ()> {
+        x86_64::instructions::interrupts::without_interrupts(|| {
+            let mut l = self.inner.lock();
+            if l.is_terminated() || l.pid != PidCode::Control {
+                return Err(());
+            };
+
+            let head = &raw mut *l.head;
+            // SAFETY: We guarantee that this QueueHead is currently terminated and that this is
+            // indeed an endpoint where we can update this.
+            // Pointers are guaranteed to be fine to use, because head is cast from reference.
+            unsafe {
+                let mut copy = head.read_volatile(); // fixme this can be optimised
+                copy.set_max_len(new_len as u32);
+                head.write_volatile(copy);
+            }
+            Ok(())
+        })
+    }
+
+    pub fn new_string(
         &self,
         payload: Box<dyn DmaTarget>,
         int_cfg: StringInterruptConfiguration,
-    ) -> alloc::sync::Arc<hootux::task::util::WorkerWaiter> {
+    ) -> impl Future<Output = StringCompletion> + use<> {
         x86_64::instructions::interrupts::without_interrupts(|| {
             self.inner.lock().new_string(payload, int_cfg)
         })
@@ -685,7 +705,7 @@ impl EndpointQueue {
     fn append_cmd_string(
         &self,
         string: TransactionString,
-    ) -> alloc::sync::Arc<hootux::task::util::WorkerWaiter> {
+    ) -> impl Future<Output = StringCompletion> + use<> {
         x86_64::instructions::interrupts::without_interrupts(|| {
             self.inner.lock().append_cmd_string(string)
         })
@@ -800,7 +820,9 @@ impl PnpWatchdog {
                         });
 
                         let ts = TransactionString::setup_transaction(Box::new(command), None);
-                        default_table.append_cmd_string(ts).wait().await;
+                        if !default_table.append_cmd_string(ts).await.is_ok() {
+                            panic!("Failed to set address for device");
+                        }
 
                         let eq = EndpointQueue::new_async(
                             Target {
@@ -868,8 +890,10 @@ struct TransactionString {
     // current form is more flexible
     // May never have 0 elements
     str: Box<[Box<QueueElementTransferDescriptor, DmaAlloc>]>,
-    waiter: alloc::sync::Arc<WorkerWaiter>,
-    buffers: Vec<Box<dyn DmaTarget>>,
+    send: hootux::task::util::MessageFuture<hootux::task::util::Sender, StringCompletion>,
+    recv: Option<hootux::task::util::MessageFuture<hootux::task::util::Receiver, StringCompletion>>,
+    command_buffer: Option<Box<dyn DmaTarget>>,
+    data_buffer: Box<dyn DmaTarget>,
 }
 
 /// Defines how the [TransactionString] should processed on completion.
@@ -959,11 +983,14 @@ impl TransactionString {
             }
         };
 
+        let (tx, rx) = hootux::task::util::new_message::<StringCompletion>();
         Self {
             meta: TransactionStringMetadata::NormalData,
             str: string.into_boxed_slice(),
-            waiter: alloc::sync::Arc::new(WorkerWaiter::new()),
-            buffers: alloc::vec![payload],
+            send: tx,
+            recv: Some(rx),
+            command_buffer: None,
+            data_buffer: Box::new(hootux::mem::dma::DmaGuard::from(Box::new(payload))),
         }
     }
 
@@ -1010,43 +1037,55 @@ impl TransactionString {
     /// Evaluates the state up-to and including the QTD at the address `last_qtd`.
     /// Also emits a bool indicating whether execution has stopped here.
     fn evaluate_state(&self, last_qtd: u32) -> (TransactionStringState, bool) {
-        let mut rc = TransactionStringState::None;
-        let len = self.str.len();
-        for (i, boxed_qtd) in self.str.iter().enumerate() {
-            // SAFETY: Pointer is cast from reference
-            let qtd_ptr = &raw const **boxed_qtd;
-            let qtd = unsafe { qtd_ptr.read_volatile() };
-            let config = qtd.get_config();
-            // if inactive and data remains then we had a short packet, so this string is compplete
-            let qtd_phys_addr = hootux::mem::mem_map::translate_ptr(qtd_ptr).unwrap() as u32;
+        match self.meta {
+            TransactionStringMetadata::NormalData => {
+                let mut rc = TransactionStringState::None;
+                let len = self.str.len();
+                for (i, boxed_qtd) in self.str.iter().enumerate() {
+                    // SAFETY: Pointer is cast from reference
+                    let qtd_ptr = &raw const **boxed_qtd;
+                    let qtd = unsafe { qtd_ptr.read_volatile() };
+                    let config = qtd.get_config();
+                    // if inactive and data remains then we had a short packet, so this string is compplete
+                    let qtd_phys_addr =
+                        hootux::mem::mem_map::translate_ptr(qtd_ptr).unwrap() as u32;
 
-            if config.error() {
-                return (TransactionStringState::Error, true); // error always stalls the endpoint
-            } else if !qtd.is_active() && config.get_expected_size() >= 0 {
-                return (TransactionStringState::Completed, false);
-            } else if !qtd.is_active() && config.get_interrupt_on_complete() {
-                log::debug!("Config {config:?}");
-                rc = TransactionStringState::Interrupt
-            } else if config.active() && qtd_phys_addr != last_qtd && i == 0 {
-                // This detects if the last QTD transitioned to the alternate QTD instead of this one.
-                return (TransactionStringState::Completed, false);
+                    if config.error() {
+                        return (TransactionStringState::Error, true); // error always stalls the endpoint
+                    } else if !qtd.is_active() && (config.get_expected_size() != 0) {
+                        return (TransactionStringState::Completed, false);
+                    } else if !qtd.is_active() && config.get_interrupt_on_complete() {
+                        log::debug!("Config {config:?}");
+                        rc = TransactionStringState::Interrupt
+                    } else if config.active() && qtd_phys_addr != last_qtd && i == 0 {
+                        // This detects if the last QTD transitioned to the alternate QTD instead of this one.
+                        return (TransactionStringState::Completed, false);
+                    }
+                    // We have checked the last QTD
+                    if qtd_phys_addr == last_qtd {
+                        return (rc, true);
+                    } else if i == len {
+                        // this is the last qtd in this string. If we have made it here then this string has been completed.
+                        return (TransactionStringState::Completed, false);
+                    }
+                }
+                panic!("Evaluate state managed to escape the loop")
             }
-            // We have checked the last QTD
-            if qtd_phys_addr == last_qtd {
-                return (rc, true);
-            } else if i == len {
-                // this is the last qtd in this string. If we have made it here then this string has been completed.
-                return (TransactionStringState::Completed, false);
+            TransactionStringMetadata::Control => {
+                if !self.str.last().unwrap().get_config().active() {
+                    (TransactionStringState::Completed, false)
+                } else {
+                    (TransactionStringState::None, false)
+                }
             }
         }
-        panic!("Evaluate state managed to escape the loop")
     }
 
-    fn get_future(&self) -> alloc::sync::Arc<WorkerWaiter> {
-        self.waiter.clone()
+    fn get_future(&mut self) -> impl Future<Output = StringCompletion> + use<> {
+        self.recv.take().expect("Future already taken")
     }
 
-    /// This will set the last QTD in the string to raise an interrupt on completion.
+    /// This will set th + use<>e last QTD in the string to raise an interrupt on completion.
     ///
     /// This fn is intended for constructing command strings not normal transaction strings.
     ///
@@ -1057,6 +1096,71 @@ impl TransactionString {
             return;
         };
         last.set_int_on_complete()
+    }
+
+    fn complete(mut self) {
+        let comp = match self.meta {
+            TransactionStringMetadata::Control => {
+                // Control always has 3 QTDs only the middle one gets counted.
+                let len = self.data_buffer.len()
+                    - (self.str[1].get_config().get_expected_size() as usize);
+                let mut state = crate::UsbError::Ok;
+                for i in self.str {
+                    if i.get_config().missed_mocro_frame() {
+                        state += crate::UsbError::RecoveredError
+                    }
+                    if i.get_config().data_buffer_err() {
+                        state += crate::UsbError::RecoveredError
+                    }
+                    if i.get_config().transaction_error() {
+                        state += crate::UsbError::RecoveredError
+                    }
+                    if i.get_config().babbble_detected() {
+                        state += crate::UsbError::Halted
+                    }
+                    if i.get_config().halted() {
+                        state += crate::UsbError::Halted
+                    }
+                }
+
+                StringCompletion {
+                    dma_payload: self.data_buffer,
+                    command: None,
+                    len,
+                    state: state.to_result(),
+                }
+            }
+            TransactionStringMetadata::NormalData => {
+                let mut len = self.data_buffer.len();
+                let mut state = crate::UsbError::Ok;
+                for i in self.str {
+                    len -= i.get_config().get_expected_size() as usize;
+                    if i.get_config().missed_mocro_frame() {
+                        state += crate::UsbError::RecoveredError
+                    }
+                    if i.get_config().data_buffer_err() {
+                        state += crate::UsbError::RecoveredError
+                    }
+                    if i.get_config().transaction_error() {
+                        state += crate::UsbError::RecoveredError
+                    }
+                    if i.get_config().babbble_detected() {
+                        state += crate::UsbError::Halted
+                    }
+                    if i.get_config().halted() {
+                        state += crate::UsbError::Halted
+                    }
+                }
+                StringCompletion {
+                    dma_payload: self.data_buffer,
+                    command: None,
+                    len,
+                    state: state.to_result(),
+                }
+            }
+        };
+
+        self.send.complete(comp);
     }
 }
 
@@ -1076,11 +1180,14 @@ enum TransactionStringState {
 /// Methods for constructing `TransactionString`s for the default command pipe.
 impl TransactionString {
     fn empty() -> Self {
+        let (tx, rx) = hootux::task::util::new_message();
         Self {
             meta: TransactionStringMetadata::Control,
             str: Box::new([]),
-            waiter: alloc::sync::Arc::new(WorkerWaiter::new()),
-            buffers: alloc::vec![],
+            send: tx,
+            recv: Some(rx),
+            command_buffer: None,
+            data_buffer: Box::new(hootux::mem::dma::BogusBuffer),
         }
     }
 
@@ -1186,7 +1293,7 @@ impl TransactionString {
             "Setup transactions must always contain 8 bytes"
         );
         // SAFETY: We guarantee that `setup` owns this address.
-        let len = unsafe { *setup.data_ptr().cast::<u8>().byte_add(8) } as usize;
+        let len = unsafe { *setup.data_ptr().cast::<u16>().byte_add(6) } as usize;
         // Determines the status PID from `data`
         let status_pid = data
             .as_ref()
@@ -1201,7 +1308,7 @@ impl TransactionString {
 
         unsafe {
             this.append_qtd(&mut *setup, PidCode::Control, false);
-            this.buffers.push(setup);
+            this.command_buffer = Some(setup);
             if let Some((mut payload, pid)) = data {
                 assert_ne!(
                     len, 0,
@@ -1209,7 +1316,7 @@ impl TransactionString {
                 );
                 assert_ne!(pid, PidCode::Control, "Data PID may not be \"Control\"");
                 this.append_qtd(&mut *payload, pid, true);
-                this.buffers.push(payload);
+                this.data_buffer = payload;
             }
             // A transaction is used to indicate the setup-command is completed.
             // No data is expected.
@@ -1232,6 +1339,30 @@ pub enum StringInterruptConfiguration {
     /// Indicates the controller should raise an interrupt when any transaction descriptor is completed.
     /// When only one transaction descriptor is present this acts the same as [Self::End]
     Always,
+}
+
+// todo: maybe elevate to crate level.
+#[must_use]
+pub struct StringCompletion {
+    dma_payload: Box<dyn DmaTarget>,
+    command: Option<Box<dyn DmaTarget>>,
+    len: usize,
+    state: Result<crate::UsbError, ()>,
+}
+
+impl StringCompletion {
+    pub fn complete(self) -> (Box<dyn DmaTarget>, usize, Result<crate::UsbError, ()>) {
+        (self.dma_payload, self.len, self.state)
+    }
+
+    fn is_ok(&self) -> bool {
+        self.state.is_ok()
+    }
+
+    #[allow(dead_code)]
+    fn get_cmd_buffer(&mut self) -> Option<Box<dyn DmaTarget>> {
+        self.command.take()
+    }
 }
 
 struct InterruptWorker {

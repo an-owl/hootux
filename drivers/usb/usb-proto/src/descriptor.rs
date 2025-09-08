@@ -38,6 +38,24 @@ impl DeviceDescriptor {
             self.device_protocol,
         ]
     }
+
+    /// Before any setup transactions beyond [super::CtlTransfer::set_address] the driver should
+    /// identify the maximum packet size of the device's default pipe.
+    ///
+    /// This will check that the buffer contains the descriptor type for [DescriptorType::Device].
+    /// If so it will return the maximum packet size.
+    /// The maximum packet size must be set to the returned value or `8`.
+    ///
+    /// This takes a `[u8;8]` because only the first 8 bytes should've been fetched from the device
+    /// descriptor as described in the USB specification 2.0.
+    // Why cant we read the whole thing with 8 bye transfers? IDK.
+    pub const fn packet_size(buffer: &[u8; 8]) -> Option<u8> {
+        if buffer[1] != Self::DESCRIPTOR_TYPE as u8 {
+            Some(buffer[core::mem::offset_of!(DeviceDescriptor, max_packet_size_0)])
+        } else {
+            None
+        }
+    }
 }
 
 /// Contains a USB revision number as a binary coded decimal.
@@ -414,7 +432,7 @@ pub trait Descriptor: Sized + Sealed {
             return None;
         }
         // SAFETY: All invariants of self muse be valid, we assert the descriptor type of self
-        Some(unsafe { &*(raw[0] as *const u8).cast::<Self>() })
+        Some(unsafe { &*(&raw[0] as *const u8).cast::<Self>() })
     }
 }
 

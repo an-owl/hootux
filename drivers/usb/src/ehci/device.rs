@@ -1,4 +1,4 @@
-use crate::ehci::EndpointQueue;
+use crate::ehci::{EndpointQueue, TransactionString};
 use alloc::boxed::Box;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
@@ -10,11 +10,12 @@ use hootux::fs::file::*;
 use hootux::fs::sysfs::{SysfsDirectory, SysfsFile};
 use hootux::fs::vfs::MajorNum;
 use hootux::fs::{IoError, IoResult};
-use hootux::mem::dma::DmaBuff;
+use hootux::mem::dma::{DmaBuff, DmaClaimable};
+use usb_cfg::descriptor::Descriptor;
 
 #[derive(Clone)]
 #[file]
-struct UsbDeviceFile {
+pub(super) struct UsbDeviceFile {
     major_num: MajorNum,
     address: u8,
     usb_device_accessor: alloc::sync::Weak<UsbDeviceAccessor>,
@@ -58,6 +59,7 @@ impl SysfsDirectory for UsbDeviceFile {
             .as_ref()
             .map(|file| SysfsDirectory::entries(&**file))
             .unwrap_or(0)
+            + 2
     }
 
     fn file_list(&self) -> Vec<String> {
@@ -81,6 +83,14 @@ impl SysfsDirectory for UsbDeviceFile {
 
     fn get_file(&self, name: &str) -> Result<Box<dyn SysfsFile>, IoError> {
         match name {
+            "." => Ok(Box::new(self.clone())),
+            ".." => {
+                let usb = SysfsDirectory::get_file(&hootux::fs::sysfs::SysFsRoot::new().bus, "usb")
+                    .unwrap()
+                    .into_sysfs_dir()
+                    .unwrap();
+                SysfsDirectory::get_file(&*usb, &alloc::format!("usb{}", self.device().as_int().0))
+            }
             "configuration" => Ok(Box::new(ConfigurationIo {
                 major_num: self.major_num,
                 address: self.address,
@@ -118,7 +128,7 @@ impl SysfsDirectory for UsbDeviceFile {
     }
 }
 
-struct UsbDeviceAccessor {
+pub(super) struct UsbDeviceAccessor {
     major_num: MajorNum,
     address: u8,
     ctl_endpoint: alloc::sync::Arc<EndpointQueue>,
@@ -127,15 +137,63 @@ struct UsbDeviceAccessor {
     endpoints: async_lock::Mutex<[Option<alloc::sync::Arc<EndpointQueue>>; 15]>, // endpoints 1..16
     controller: alloc::sync::Weak<async_lock::Mutex<super::Ehci>>,
     extra: async_lock::Mutex<Option<Box<dyn SysfsDirectory>>>,
+
+    configurations: u8,
 }
 
 impl UsbDeviceAccessor {
-    pub(super) async unsafe fn new(
+    pub(super) async unsafe fn insert_into_controller(
         address: u8,
         ctl_endpoint: alloc::sync::Arc<EndpointQueue>,
         controller: alloc::sync::Arc<async_lock::Mutex<super::Ehci>>,
-    ) -> Self {
-        let l = controller.lock().await;
+    ) {
+        let mut l = controller.lock().await;
+
+        let data_buff = hootux::mem::dma::DmaGuard::new(alloc::vec![0u8;8]);
+        let (guarded, borrowed) = data_buff.claim().unwrap();
+        let ts = TransactionString::setup_transaction(
+            {
+                let descriptor = usb_cfg::CtlTransfer::get_descriptor::<
+                    usb_cfg::descriptor::DeviceDescriptor,
+                >(0, Some(8));
+                log::debug!("{descriptor:?} : {:?}", descriptor.to_bytes());
+                Box::new(hootux::mem::dma::DmaGuard::new(Vec::from(
+                    descriptor.to_bytes(),
+                )))
+            },
+            Some((borrowed, crate::PidCode::In)),
+        );
+
+        let (_, 8, Ok(_)) = ctl_endpoint.append_cmd_string(ts).await.complete() else {
+            panic!("USB device threw error on initialisation")
+        };
+        let buffer = guarded.unwrap().unwrap().unwrap();
+        ctl_endpoint
+            .update_transaction_len(
+                usb_cfg::descriptor::DeviceDescriptor::packet_size((&*buffer).try_into().unwrap())
+                    .unwrap(),
+            )
+            .unwrap(); // Will never panic
+
+        let data_buff = hootux::mem::dma::DmaGuard::new(
+            alloc::vec![0u8;size_of::<usb_cfg::descriptor::DeviceDescriptor>()],
+        );
+        let (guarded, borrowed) = data_buff.claim().unwrap();
+        let ts = TransactionString::setup_transaction(
+            Box::new(hootux::mem::dma::DmaGuard::new(Vec::from(
+                usb_cfg::CtlTransfer::get_descriptor::<usb_cfg::descriptor::DeviceDescriptor>(
+                    0,
+                    Some(size_of::<usb_cfg::descriptor::DeviceDescriptor>() as u16),
+                )
+                .to_bytes(),
+            ))),
+            Some((borrowed, crate::PidCode::In)),
+        );
+        let (_, _, Ok(_)) = ctl_endpoint.append_cmd_string(ts).await.complete() else {
+            panic!("USB device threw error on initialisation")
+        };
+        let raw_buffer = guarded.unwrap().unwrap().unwrap();
+        let buff = usb_cfg::descriptor::DeviceDescriptor::from_raw(&*raw_buffer).unwrap();
 
         let mut this = Self {
             major_num: l.major_num,
@@ -144,12 +202,14 @@ impl UsbDeviceAccessor {
             endpoints: async_lock::Mutex::new([const { None }; 15]),
             controller: alloc::sync::Weak::new(),
             extra: async_lock::Mutex::new(None),
+            configurations: buff.num_configurations,
         };
         this.controller = alloc::sync::Arc::downgrade(&controller);
-        this
+        l.port_files
+            .insert(this.address, alloc::sync::Arc::new(this));
     }
 
-    fn get_file(self: &alloc::sync::Arc<Self>) -> Box<dyn File> {
+    pub(super) fn get_file(self: &alloc::sync::Arc<Self>) -> Box<UsbDeviceFile> {
         Box::new(UsbDeviceFile {
             major_num: self.major_num,
             address: self.address,
@@ -240,7 +300,7 @@ impl Read<u8> for ClassFinderFle {
     /// ```
     ///
     /// This will perform a breadth-first-search, this will return the value and descriptor type
-    /// where the class is first found. The result. The results will be returned in the first two
+    /// where the class is first found. The results will be returned in the first two
     /// bytes of the data buffer.
     ///
     /// * The first byte will indicate which configuration the class was found in (0 if device).
@@ -254,7 +314,7 @@ impl Read<u8> for ClassFinderFle {
         async move {
             let (class, descriptors) = match pos.to_le_bytes() {
                 [_, _, _, descriptors_bitmap, ..]
-                if !DescriptorBitmap::from_bits(descriptors_bitmap).is_none() =>
+                if DescriptorBitmap::from_bits(descriptors_bitmap).unwrap_or(DescriptorBitmap::empty()).is_empty() =>
                     {
                         return Err((IoError::InvalidData, buff, 0));
                     }
@@ -278,22 +338,22 @@ impl Read<u8> for ClassFinderFle {
 
                 ($descriptor:ty,$index:expr) => {
                     {
-                        let mut ts = super::TransactionString::empty();
-                        let mut guarded = hootux::mem::dma::DmaGuard::new(alloc::vec![0u8;255]);
+                        let guarded = hootux::mem::dma::DmaGuard::new(alloc::vec![0u8;255]);
+                        let (guarded,borrow) = guarded.claim().unwrap();
                         let command = usb_cfg::CtlTransfer::get_descriptor::<$descriptor>($index,Some(255));
-
                         let cmd_raw = Vec::from(command.to_bytes());
 
-                        let mut command = hootux::mem::dma::DmaGuard::new(cmd_raw);
-                        // SAFETY: Buffers are stack allocated
-                        unsafe {
-                            ts.append_qtd(&mut command,crate::PidCode::Control);
-                            ts.append_qtd(&mut guarded,crate::PidCode::Out);
-                        }
+                        let command = hootux::mem::dma::DmaGuard::new(cmd_raw);
+                        let ts = TransactionString::setup_transaction(Box::new(command),Some((borrow,crate::PidCode::In)));
 
                         let ctl: &alloc::sync::Arc<EndpointQueue> = &acc.ctl_endpoint;
-                        ctl.append_cmd_string(ts).wait().await;
-                        guarded.unwrap()
+                        let rc = ctl.append_cmd_string(ts).await;
+                        let (_,len,Ok(_)) = rc.complete() else {
+                            return Err((IoError::MediaError,buff,0))
+                        };
+                        let mut g = guarded.unwrap().unwrap().unwrap();
+                        g.truncate(len);
+                        g
                     }
                 };
             }
@@ -305,7 +365,7 @@ impl Read<u8> for ClassFinderFle {
             };
             if dev_descriptor.class() == class && descriptors.contains(DescriptorBitmap::DEVICE) {
                 // SAFETY: This is safe because `DmaTarget::data_ptr()` must be writable.
-                unsafe { (&mut *buff.data_ptr())[0..2].copy_from_slice(&[0,1]) }
+                unsafe { (&mut *buff.data_ptr())[0..2].copy_from_slice(&[0, 1]) }
                 return Ok((buff, 2));
             }
 
@@ -316,11 +376,11 @@ impl Read<u8> for ClassFinderFle {
 
             for configuration in 0..dev_descriptor.num_configurations {
                 let cfg_raw = get_descriptor_full!(usb_cfg::descriptor::ConfigurationDescriptor,configuration);
-                let Some(cfg_descriptor): Option<&usb_cfg::descriptor::ConfigurationDescriptor> = usb_cfg::descriptor::Descriptor::from_raw(&cfg_raw) else { return Err((IoError::MediaError,buff,0)) }; // fixme get actual length
+                let Some(cfg_descriptor): Option<&usb_cfg::descriptor::ConfigurationDescriptor> = usb_cfg::descriptor::Descriptor::from_raw(&cfg_raw) else { return Err((IoError::MediaError, buff, 0)) };
                 // SAFETY: We fetch the max size for a descriptor, so we definitely have the whole thing & it has not been modified.
                 for interface_desc in unsafe { cfg_descriptor.iter() } {
                     if descriptors.contains(DescriptorBitmap::INTERFACE) && interface_desc.class() == class {
-                        unsafe { (&mut *buff.data_ptr())[0..2].copy_from_slice(&[configuration, DescriptorBitmap::INTERFACE.bits()])};
+                        unsafe { (&mut *buff.data_ptr())[0..2].copy_from_slice(&[configuration, DescriptorBitmap::INTERFACE.bits()]) };
                         return Ok((buff, 2));
                     }
                 }
@@ -380,8 +440,6 @@ impl Read<u8> for ConfigurationIo {
             const OTHER_SPEED_CONFIGURATION: u8 =
                 usb_cfg::DescriptorType::OtherSpeedConfiguration as u8;
 
-            let mut ts = super::TransactionString::empty();
-
             let command = match pos.to_le_bytes() {
                 [0, DEVICE_DESCRIPTOR_ID, ..] => Vec::from(
                     usb_cfg::CtlTransfer::get_descriptor::<usb_cfg::descriptor::DeviceDescriptor>(
@@ -421,21 +479,23 @@ impl Read<u8> for ConfigurationIo {
                 _ => return Err((IoError::EndOfFile, buff, 0)),
             };
 
-            let mut dma = hootux::mem::dma::DmaGuard::new(command);
-
-            // SAFETY: `dma` is heap allocated and ts will be completed.
-            unsafe {
-                ts.append_qtd(&mut dma, crate::PidCode::Control);
-                ts.append_qtd(&mut *buff, crate::PidCode::In);
-            };
+            let command = hootux::mem::dma::DmaGuard::new(command);
+            // SAFETY: Unsafe
+            // todo: I must change DmaBuffer to be `+ 'static`
+            let ts = TransactionString::setup_transaction(
+                Box::new(command),
+                Some((unsafe { core::mem::transmute(buff) }, crate::PidCode::In)),
+            );
 
             // We need to actually get completion information from the ts rather than just assuming
             // it completed properly and completely
-            let _: () = acc.ctl_endpoint.append_cmd_string(ts).wait().await;
-            let l = buff.len();
+            let (buff, len, result) = acc.ctl_endpoint.append_cmd_string(ts).await.complete();
+            if let Err(_) = result {
+                return Err((IoError::MediaError, buff, len));
+            }
             // If we are fetching the current configuration then the len is always `1`
             if pos != 0 {
-                Ok((buff, l))
+                Ok((buff, len))
             } else {
                 Ok((buff, 1))
             }
@@ -480,17 +540,20 @@ impl Write<u8> for ConfigurationIo {
                 }
             }
 
-            let mut ts = super::TransactionString::empty();
-            let mut command = hootux::mem::dma::DmaGuard::new(Vec::from(
+            let command = hootux::mem::dma::DmaGuard::new(Vec::from(
                 usb_cfg::CtlTransfer::set_configuration(target_config).to_bytes(),
             ));
             // SAFETY: `command` is stack allocated and will not be dropped before the operation is completed.
-            unsafe { ts.append_qtd(&mut command, crate::PidCode::Control) };
+            let ts = TransactionString::setup_transaction(Box::new(command), None);
             // no data stage here
-            let _: () = acc.ctl_endpoint.append_cmd_string(ts).wait().await;
+            let sc: super::StringCompletion = acc.ctl_endpoint.append_cmd_string(ts).await;
 
             drop(ports);
-            Ok((buff, 0))
+            let (buff, len, ok) = sc.complete();
+            match ok {
+                Ok(_) => Ok((buff, len)),
+                Err(_) => Err((IoError::MediaError, buff, len)),
+            }
         }
         .boxed()
     }

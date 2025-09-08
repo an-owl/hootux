@@ -197,3 +197,31 @@ async fn init_async() -> TaskResult {
         let _ = event.await; // never returns err
     }
 }
+
+#[derive(Debug, Copy, Clone, Ord, PartialOrd, Eq, PartialEq)]
+pub enum UsbError {
+    Ok,
+    RecoveredError,
+    Halted,
+}
+
+impl UsbError {
+    /// Converts Self into a result indicating whether the command completed.
+    ///
+    /// This will never return `Ok(Self::Stalled)`
+    fn to_result(self) -> Result<Self, ()> {
+        match self {
+            Self::Ok => Ok(self),
+            Self::RecoveredError => Ok(self),
+            Self::Halted => Err(()),
+        }
+    }
+}
+
+impl core::ops::AddAssign for UsbError {
+    fn add_assign(&mut self, other: Self) {
+        if other > *self {
+            *self = other;
+        }
+    }
+}
