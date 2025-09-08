@@ -455,13 +455,15 @@ impl Read<u8> for ConfigurationIo {
                     )
                     .to_bytes(),
                 ),
-                [index, CONFIGURATION_DESCRIPTOR_ID, ..] => Vec::from(
-                    usb_cfg::CtlTransfer::get_descriptor::<
-                        usb_cfg::descriptor::ConfigurationDescriptor,
-                    >(index, Some(buff.len().try_into().unwrap_or(255)))
-                    .to_bytes(),
-                ),
-                [index, OTHER_SPEED_CONFIGURATION, ..] => Vec::from(
+                [index, CONFIGURATION_DESCRIPTOR_ID, ..] if index < acc.configurations => {
+                    Vec::from(
+                        usb_cfg::CtlTransfer::get_descriptor::<
+                            usb_cfg::descriptor::ConfigurationDescriptor,
+                        >(index, Some(buff.len().try_into().unwrap_or(255)))
+                        .to_bytes(),
+                    )
+                }
+                [index, OTHER_SPEED_CONFIGURATION, ..] if index < acc.configurations => Vec::from(
                     usb_cfg::CtlTransfer::get_descriptor::<
                         usb_cfg::descriptor::ConfigurationDescriptor<
                             usb_cfg::descriptor::AlternateSpeed,

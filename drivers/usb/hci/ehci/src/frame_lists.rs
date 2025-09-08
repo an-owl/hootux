@@ -193,7 +193,7 @@ impl QueueHead {
         self.ctl0.use_dt_from_qtd(data_toggle_ctl);
     }
 
-    fn set_max_len(&mut self, max_len: u32) {
+    pub fn set_max_len(&mut self, max_len: u32) {
         self.ctl0.set_max_packet_len(max_len);
     }
 
