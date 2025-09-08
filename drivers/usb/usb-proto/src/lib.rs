@@ -18,6 +18,7 @@ use bitfield::bitfield;
 ///
 /// When an illegal request is made to a device it must respond with "Stall".
 #[repr(C, packed)]
+#[derive(Copy, Clone, Debug)]
 pub struct CtlTransfer {
     request_type: RequestHeader,
     request: u8,
