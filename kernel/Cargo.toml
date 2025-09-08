@@ -41,6 +41,7 @@ cast_trait_object = "0.1.4"
 
 slablike = { git = "https://github.com/an-owl/slablike-allocator" }
 suffix = { git = "https://github.com/an-owl/suffix" }
+marker_maker = { git = "https://github.com/an-owl/marker-maker" }
 
 regex = { version = "1.11.1", default-features = false, features = ["unicode-perl"], optional = true }
 
