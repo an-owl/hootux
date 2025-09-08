@@ -61,9 +61,16 @@ fn main() {
     };
 
     if opts.daemonize {
+        let stderr = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(true)
+            .write(true)
+            .open("/tmp/hootux.stderr")
+            .unwrap();
         let d = daemonize::Daemonize::new()
             .user(&*std::env::var("USER").expect("Who are you people!?: No user"))
-            .working_directory(&*std::env::current_dir().unwrap());
+            .working_directory(&*std::env::current_dir().unwrap())
+            .stderr(stderr);
         if d.execute().is_child() {
             // idc what it returns
             let _ = run().wait();
