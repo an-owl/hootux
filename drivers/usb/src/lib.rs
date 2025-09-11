@@ -39,6 +39,15 @@ impl DeviceAddress {
     }
 }
 
+impl From<DeviceAddress> for u8 {
+    fn from(address: DeviceAddress) -> Self {
+        match address {
+            DeviceAddress::Default => 0,
+            DeviceAddress::Address(address) => address.get(),
+        }
+    }
+}
+
 #[derive(Debug, Copy, Clone, Ord, PartialOrd, Eq, PartialEq)]
 struct Endpoint {
     num: u8,
@@ -53,6 +62,19 @@ impl Endpoint {
             0..16 => Some(Endpoint { num }),
             _ => None,
         }
+    }
+}
+
+impl From<Endpoint> for u8 {
+    fn from(endpoint: Endpoint) -> Self {
+        endpoint.num
+    }
+}
+
+impl From<&usb_cfg::descriptor::EndpointDescriptor> for Endpoint {
+    fn from(descriptor: &usb_cfg::descriptor::EndpointDescriptor) -> Self {
+        // SAFETY: The address is fetched form a 4 bit bitfield, it cannot be >15 and so new() cannot return None
+        unsafe { Self::new(descriptor.endpoint_address.endpoint()).unwrap_unchecked() }
     }
 }
 
