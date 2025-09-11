@@ -21,6 +21,32 @@ pub(super) struct UsbDeviceFile {
     usb_device_accessor: alloc::sync::Weak<UsbDeviceAccessor>,
 }
 
+impl UsbDeviceFile {
+    async fn acquire_ctl(
+        &self,
+        driver: &Box<dyn UsbDeviceDriver>,
+    ) -> Result<frontend::UsbDevCtl, IoError> {
+        let acc = self
+            .usb_device_accessor
+            .upgrade()
+            .ok_or(IoError::NotPresent)?;
+        let endpoints = acc.endpoints.try_lock_arc().ok_or(IoError::Busy)?;
+        let mut acc_driver = acc.usb_device_driver.lock().await;
+        if acc_driver.is_some() {
+            log::error!(
+                "The fuck? Somehow a driver is registered to {:?} but the endpoints arent acquired",
+                self.device()
+            );
+            return Err(IoError::AlreadyExists);
+        }
+        *acc_driver = Some(UsbDeviceDriver::clone(&**driver));
+        Ok(frontend::UsbDevCtl {
+            acc: alloc::sync::Arc::downgrade(&acc),
+            endpoints,
+        })
+    }
+}
+
 impl File for UsbDeviceFile {
     fn file_type(&self) -> FileType {
         FileType::Directory
@@ -45,6 +71,14 @@ impl File for UsbDeviceFile {
     fn len(&self) -> IoResult<u64> {
         async { Ok(hootux::fs::sysfs::SysfsDirectory::entries(self) as u64) }.boxed()
     }
+
+    fn method_call<'f, 'a: 'f, 'b: 'f>(
+        &'b self,
+        method: &str,
+        arguments: &'a (dyn Any + Send + Sync + 'a),
+    ) -> IoResult<'f, MethodRc> {
+        impl_method_call!(method,arguments => acquire_ctl(Box<UsbDeviceDriver>))
+    }
 }
 
 impl SysfsDirectory for UsbDeviceFile {
@@ -54,7 +88,7 @@ impl SysfsDirectory for UsbDeviceFile {
             .upgrade()
             .expect("USB device disappeared");
 
-        let extra = hootux::block_on!(pin!(acc.extra.lock()));
+        let extra = hootux::block_on!(pin!(acc.usb_device_driver.lock()));
         extra
             .as_ref()
             .map(|file| SysfsDirectory::entries(&**file))
@@ -67,7 +101,7 @@ impl SysfsDirectory for UsbDeviceFile {
             .usb_device_accessor
             .upgrade()
             .expect("USB device disappeared"); // fixme this should not result in a panic
-        let extra = hootux::block_on!(pin!(acc.extra.lock()));
+        let extra = hootux::block_on!(pin!(acc.usb_device_driver.lock()));
 
         let mut v = extra
             .as_ref()
@@ -106,7 +140,7 @@ impl SysfsDirectory for UsbDeviceFile {
                     .usb_device_accessor
                     .upgrade()
                     .ok_or(IoError::NotPresent)?;
-                Ok(hootux::block_on!(pin!(acc.extra.lock()))
+                Ok(hootux::block_on!(pin!(acc.usb_device_driver.lock()))
                     .as_ref()
                     .map_or(Err(IoError::NotPresent), |file| {
                         SysfsDirectory::get_file(&**file, name)
@@ -130,15 +164,19 @@ impl SysfsDirectory for UsbDeviceFile {
 
 pub(super) struct UsbDeviceAccessor {
     major_num: MajorNum,
-    address: u8,
+    address: crate::DeviceAddress,
     ctl_endpoint: alloc::sync::Arc<EndpointQueue>,
     /// Contains all the optional endpoints.
     /// When configuring the device this mutex must be locked.
-    endpoints: async_lock::Mutex<[Option<alloc::sync::Arc<EndpointQueue>>; 15]>, // endpoints 1..16
+    endpoints: alloc::sync::Arc<async_lock::Mutex<[Option<alloc::sync::Arc<EndpointQueue>>; 15]>>, // endpoints 1..16
     controller: alloc::sync::Weak<async_lock::Mutex<super::Ehci>>,
-    extra: async_lock::Mutex<Option<Box<dyn SysfsDirectory>>>,
+    usb_device_driver: async_lock::Mutex<Option<Box<dyn UsbDeviceDriver>>>,
 
     configurations: u8,
+}
+
+trait UsbDeviceDriver: SysfsDirectory + 'static {
+    fn clone(&self) -> Box<dyn UsbDeviceDriver>;
 }
 
 impl UsbDeviceAccessor {
@@ -199,20 +237,20 @@ impl UsbDeviceAccessor {
             major_num: l.major_num,
             address,
             ctl_endpoint,
-            endpoints: async_lock::Mutex::new([const { None }; 15]),
+            endpoints: alloc::sync::Arc::new(async_lock::Mutex::new([const { None }; 15])),
             controller: alloc::sync::Weak::new(),
-            extra: async_lock::Mutex::new(None),
+            usb_device_driver: async_lock::Mutex::new(None),
             configurations: buff.num_configurations,
         };
         this.controller = alloc::sync::Arc::downgrade(&controller);
         l.port_files
-            .insert(this.address, alloc::sync::Arc::new(this));
+            .insert(this.address.into(), alloc::sync::Arc::new(this));
     }
 
     pub(super) fn get_file(self: &alloc::sync::Arc<Self>) -> Box<UsbDeviceFile> {
         Box::new(UsbDeviceFile {
             major_num: self.major_num,
-            address: self.address,
+            address: self.address.into(),
             usb_device_accessor: alloc::sync::Arc::downgrade(self),
         })
     }
@@ -558,5 +596,180 @@ impl Write<u8> for ConfigurationIo {
             }
         }
         .boxed()
+    }
+}
+
+pub mod frontend {
+    use super::*;
+    use alloc::sync::Arc;
+    use hootux::mem::dma::DmaGuard;
+
+    pub struct UsbDevCtl {
+        pub(super) acc: alloc::sync::Weak<UsbDeviceAccessor>,
+        pub(super) endpoints: async_lock::MutexGuardArc<[Option<Arc<EndpointQueue>>; 15]>,
+    }
+
+    impl UsbDevCtl {
+        /// Requests a particular descriptor with a given index. If `T` is a
+        /// [usb_cfg::descriptor::DeviceDescriptor] or [usb_cfg::descriptor::DeviceQualifier] then
+        /// `index` is ignored.
+        ///
+        /// This may issue 2 transactions.
+        pub async fn get_descriptor<T: usb_cfg::descriptor::RequestableDescriptor>(
+            &mut self,
+            mut index: u8,
+        ) -> Result<Box<T>, IoError> {
+            let is_device = if core::any::TypeId::of::<T>()
+                == core::any::TypeId::of::<usb_cfg::descriptor::DeviceDescriptor>()
+                || core::any::TypeId::of::<T>()
+                    == core::any::TypeId::of::<usb_cfg::descriptor::DeviceQualifier>()
+            {
+                index = 0;
+                true
+            } else {
+                false
+            };
+            let base_len = size_of::<T>();
+            let buffer = alloc::vec![0u8; base_len];
+            let command = Box::new(DmaGuard::new(Vec::from(
+                usb_cfg::CtlTransfer::get_descriptor::<T>(index, Some(buffer.len() as u16))
+                    .to_bytes(),
+            )));
+
+            let (guarded, borrow) = DmaGuard::new(buffer).claim().unwrap();
+            let acc = self.acc.upgrade().ok_or(IoError::NotPresent)?;
+            let ts =
+                TransactionString::setup_transaction(command, Some((borrow, crate::PidCode::In)));
+            let (_, _, Ok(_)) = acc.ctl_endpoint.append_cmd_string(ts).await.complete() else {
+                return Err(IoError::MediaError);
+            };
+
+            let mut b = guarded.unwrap().unwrap().unwrap();
+            if is_device {
+                let op_len = u16::from_le_bytes((&b[2..3]).try_into().unwrap());
+                b.resize(op_len as usize, 0);
+                let (guarded, borrow) = DmaGuard::new(b).claim().unwrap();
+                let ts = TransactionString::setup_transaction(
+                    Box::new(DmaGuard::new(Vec::from(
+                        usb_cfg::CtlTransfer::get_descriptor::<T>(index, Some(op_len)).to_bytes(),
+                    ))),
+                    Some((borrow, crate::PidCode::In)),
+                );
+                let (_, _, Ok(_)) = acc.ctl_endpoint.append_cmd_string(ts).await.complete() else {
+                    return Err(IoError::MediaError);
+                };
+                b = guarded.unwrap().unwrap().unwrap();
+            }
+
+            if b[1] == T::DESCRIPTOR_TYPE as u8 {
+                b.shrink_to_fit();
+                let ptr = (&raw mut *b.leak()).cast::<T>();
+                // SAFETY: We have checked that this is T and that it is the correct size for T
+                Ok(unsafe { Box::from_raw(ptr) })
+            } else {
+                Err(IoError::MediaError)
+            }
+        }
+
+        /// Sets the device's configuration to the `configuration`
+        async fn set_configuration(&mut self, configuration: u8) -> Result<(), IoError> {
+            let acc = self.acc.upgrade().ok_or(IoError::NotPresent)?;
+            if acc.configurations >= configuration {
+                return Err(IoError::InvalidData);
+            }
+            let command =
+                Vec::from(usb_cfg::CtlTransfer::set_configuration(configuration).to_bytes());
+            acc.ctl_endpoint
+                .append_cmd_string(TransactionString::setup_transaction(
+                    Box::new(DmaGuard::new(command)),
+                    None,
+                ))
+                .await
+                .complete()
+                .2
+                .map_err(|_| IoError::MediaError)?;
+            Ok(())
+        }
+
+        /// Configures an endpoint in the async list for the device.
+        ///
+        /// # Safety
+        ///
+        /// The caller must ensure the endpoint is actually configured.
+        async unsafe fn setup_endpoint(
+            &mut self,
+            descriptor: &usb_cfg::descriptor::EndpointDescriptor,
+        ) -> Result<Arc<EndpointQueue>, IoError> {
+            let acc = self.acc.upgrade().ok_or(IoError::NotPresent)?;
+            let pid = if descriptor.attributes.transfer_type()
+                == usb_cfg::descriptor::EndpointTransferType::Control
+            {
+                crate::PidCode::Control
+            } else {
+                if descriptor.endpoint_address.in_endpoint() {
+                    crate::PidCode::In
+                } else {
+                    crate::PidCode::Out
+                }
+            };
+            let dt_ctl = pid == crate::PidCode::Control;
+            let qh = EndpointQueue::new_async(
+                crate::Target {
+                    dev: acc.address,
+                    endpoint: descriptor.into(),
+                },
+                pid,
+                descriptor.max_packet_size.max_packet_size() as u32,
+                dt_ctl,
+            );
+            let qh = Arc::new(qh);
+            match self.endpoints[descriptor.endpoint_address.endpoint() as usize]
+                .replace(qh.clone())
+            {
+                None => {}
+                Some(old_head) => {
+                    self.endpoints[descriptor.endpoint_address.endpoint() as usize] =
+                        Some(old_head);
+                    log::error!("Attempted to configure endpoint that was already configured");
+                    return Err(IoError::AlreadyExists);
+                }
+            }
+
+            let mut ctl = acc
+                .controller
+                .upgrade()
+                .ok_or(IoError::NotPresent)?
+                .lock_arc()
+                .await;
+            ctl.insert_into_async(qh.clone());
+            Ok(qh)
+        }
+
+        fn endpoint(&self, ep: impl Into<crate::Endpoint>) -> Option<Arc<EndpointQueue>> {
+            Some(
+                self.endpoints[Into::<u8>::into(ep.into()) as usize]
+                    .as_ref()?
+                    .clone(),
+            )
+        }
+    }
+
+    impl Drop for UsbDevCtl {
+        fn drop(&mut self) {
+            // Deconfigure device
+            let Some(acc) = self.acc.upgrade() else {
+                return;
+            }; // If `acc` is not present then we can just drop everything dumbly.
+            let command = Box::new(DmaGuard::new(Vec::from(
+                usb_cfg::CtlTransfer::set_configuration(0).to_bytes(),
+            )));
+
+            let ts = TransactionString::setup_transaction(command, None);
+            acc.ctl_endpoint.append_cmd_string(ts);
+            todo!("Must pass deconfiguration command to worker");
+
+            // remove all EndpointQueues
+            todo!()
+        }
     }
 }
