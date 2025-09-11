@@ -143,7 +143,7 @@ pub(super) struct UsbDeviceAccessor {
 
 impl UsbDeviceAccessor {
     pub(super) async unsafe fn insert_into_controller(
-        address: u8,
+        address: crate::DeviceAddress,
         ctl_endpoint: alloc::sync::Arc<EndpointQueue>,
         controller: alloc::sync::Arc<async_lock::Mutex<super::Ehci>>,
     ) {

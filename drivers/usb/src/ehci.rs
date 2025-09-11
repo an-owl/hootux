@@ -843,7 +843,7 @@ impl PnpWatchdog {
 
                         unsafe {
                             device::UsbDeviceAccessor::insert_into_controller(
-                                new_address,
+                                DeviceAddress::new(new_address).unwrap(),
                                 eq,
                                 controller.clone(),
                             )
