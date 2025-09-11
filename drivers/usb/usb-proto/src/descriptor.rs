@@ -219,7 +219,7 @@ mod sealed {
     pub trait Sealed {}
 }
 
-pub trait RequestableDescriptor: Sealed {
+pub trait RequestableDescriptor: Sealed + 'static {
     const DESCRIPTOR_TYPE: DescriptorType;
 }
 
@@ -296,7 +296,7 @@ impl InterfaceDescriptor {
     }
 }
 
-#[repr(C, packed)]
+#[repr(C)]
 pub struct EndpointDescriptor {
     pub length: u8,
     pub descriptor_type: u8,
@@ -325,8 +325,8 @@ bitfield! {
     #[derive(Copy, Clone)]
     pub struct EndpointAddress(u8);
     impl Debug;
-    endpoint, _: 6,0;
-    in_endpoint, _: 7, 4;
+    pub endpoint, _: 3,0;
+    pub in_endpoint, _: 7;
 }
 
 bitfield! {
@@ -337,13 +337,13 @@ bitfield! {
 
     /// Indicates the endpoint type, [Self::endpoint_synchronisation] and [Self::endpoint_usage]
     /// are only valid if this is [EndpointTransferType::Isochronous].
-    from EndpointTransferType, transfer_type,_: 1,0;
-    from EndpointSynchronisationType, endpoint_synchronisation,_:  3,2;
-    from EndpointUsageType, endpoint_usage, _: 5,4
+    pub into EndpointTransferType, transfer_type,_: 1,0;
+    pub into EndpointSynchronisationType, endpoint_synchronisation,_:  3,2;
+    pub into EndpointUsageType, endpoint_usage, _: 5,4
 }
 
-#[derive(Copy, Clone)]
-enum EndpointTransferType {
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+pub enum EndpointTransferType {
     Control = 0,
     Isochronous,
     Bulk,
@@ -368,6 +368,7 @@ impl From<EndpointTransferType> for u8 {
     }
 }
 
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum EndpointSynchronisationType {
     NoSynchronisation = 0,
     /// An asynchronous-isochronous endpoint derives its sample rate from an external source,
@@ -394,6 +395,7 @@ impl From<u8> for EndpointSynchronisationType {
     }
 }
 
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub enum EndpointUsageType {
     Data = 0,
     Feedback = 1,
@@ -412,12 +414,12 @@ impl From<u8> for EndpointUsageType {
 }
 
 bitfield! {
-    pub struct MaxPacketSize(u8);
+    pub struct MaxPacketSize(u16);
     impl Debug;
-    max_packet_size, _: 10,0;
+    pub max_packet_size, _: 10,0;
     /// Indicates the number of extra transaction opportunities per microframe.
     /// `self.isochronous_mult() + 1` indicates number of possible transactions per microframe.
-    isochronus_mult, _: 12,11;
+    pub isochronus_mult, _: 12,11;
 }
 
 pub trait Descriptor: Sized + Sealed {
