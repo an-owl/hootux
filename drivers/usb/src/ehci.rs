@@ -1373,24 +1373,30 @@ struct InterruptWorker {
 impl InterruptWorker {
     async fn run(self: alloc::sync::Arc<Self>) -> hootux::task::TaskResult {
         loop {
-            // This shouldn't return, the above should always do it.
-            {
-                let Some(parent) = self.parent.upgrade() else {
-                    return hootux::task::TaskResult::ExitedNormally;
-                };
-                let parent = parent.lock_arc().await;
-                let mut found_int = false;
-                for i in &parent.async_list {
-                    if i.check_state() {
-                        found_int = true
-                    }
-                }
-
-                if !found_int {
-                    log::trace!("USB spurious interrupt"); // note this is very likely on startup
+            let msg = self.queue.next().await; // unwrap() because this will never close.
+            let Some(_ctl) = self.parent.upgrade() else {
+                return hootux::task::TaskResult::ExitedNormally;
+            };
+            match msg {
+                InterruptMessage::TransactionStatus => {
+                    self.check_usb_work().await;
                 }
             }
-            self.worker_waiter.wait().await;
+        }
+    }
+
+    async fn check_usb_work(&self) {
+        let parent = self.parent.upgrade().unwrap();
+        let parent = parent.lock_arc().await;
+        let mut found_int = false;
+        for i in &parent.async_list {
+            if i.check_state() {
+                found_int = true
+            }
+        }
+
+        if !found_int {
+            log::trace!("USB spurious interrupt"); // note this is very likely on startup
         }
     }
 }
@@ -1474,6 +1480,10 @@ impl IntHandler {
             .store(false, core::sync::atomic::Ordering::Release);
         rc
     }
+}
+
+enum InterruptMessage {
+    TransactionStatus,
 }
 
 // SAFETY: auto Send is blocked by VolatilePtr<UsbSts>, but this must be (Send + Sync) to facilitate interrupts.
