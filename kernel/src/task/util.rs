@@ -2,6 +2,7 @@ mod sleep;
 
 pub use crate::time::Duration;
 use alloc::sync::Arc;
+use core::pin::Pin;
 use core::sync::atomic;
 use core::task::{Context, Poll};
 pub use sleep::Timer;
@@ -239,3 +240,67 @@ impl<T> futures_util::future::FusedFuture for MessageFuture<Receiver, T> {
 */
 unsafe impl<X: MessageDirection, T> Send for MessageFuture<X, T> where T: Send {}
 unsafe impl<X: MessageDirection, T> Sync for MessageFuture<X, T> where T: Send {}
+
+struct AsyncMessageQueueInner<T> {
+    waker: futures_util::task::AtomicWaker,
+    queue: crossbeam_queue::ArrayQueue<T>,
+}
+
+pub struct MessageQueue<T, X: MessageDirection> {
+    inner: Arc<AsyncMessageQueueInner<T>>,
+    _phantom: core::marker::PhantomData<X>,
+}
+
+impl<T> MessageQueue<T, Receiver> {
+    pub fn new(len: usize) -> Self {
+        Self {
+            inner: Arc::new(AsyncMessageQueueInner {
+                queue: crossbeam_queue::ArrayQueue::<T>::new(len),
+                waker: futures_util::task::AtomicWaker::new(),
+            }),
+            _phantom: Default::default(),
+        }
+    }
+
+    pub fn sender(&self) -> MessageQueue<T, Sender> {
+        MessageQueue {
+            inner: self.inner.clone(),
+            _phantom: Default::default(),
+        }
+    }
+
+    pub fn clear(&self) {
+        while let Some(_) = self.inner.queue.pop() {}
+    }
+
+    pub fn next(&self) -> impl Future<Output = T> + '_ {
+        Next { receiver: self }
+    }
+}
+
+struct Next<'a, T> {
+    receiver: &'a MessageQueue<T, Receiver>,
+}
+
+impl<T> Future for Next<'_, T> {
+    type Output = T;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        match self.receiver.inner.queue.pop() {
+            Some(value) => Poll::Ready(value),
+            None => {
+                // todo: Should this return Ready(None) if there are no senders?
+                self.receiver.inner.waker.register(cx.waker());
+                Poll::Pending
+            }
+        }
+    }
+}
+
+impl<T> MessageQueue<T, Sender> {
+    pub fn send(&self, data: T) -> Result<(), T> {
+        let rc = self.inner.queue.push(data);
+        self.inner.waker.wake();
+        rc
+    }
+}
