@@ -187,7 +187,7 @@ impl UsbDeviceAccessor {
     ) {
         let mut l = controller.lock().await;
 
-        let data_buff = hootux::mem::dma::DmaGuard::new(alloc::vec![0u8;8]);
+        let data_buff = hootux::mem::dma::DmaGuard::new(alloc::vec![0u8; 8]);
         let (guarded, borrowed) = data_buff.claim().unwrap();
         let ts = TransactionString::setup_transaction(
             {
@@ -214,7 +214,7 @@ impl UsbDeviceAccessor {
             .unwrap(); // Will never panic
 
         let data_buff = hootux::mem::dma::DmaGuard::new(
-            alloc::vec![0u8;size_of::<usb_cfg::descriptor::DeviceDescriptor>()],
+            alloc::vec![0u8; size_of::<usb_cfg::descriptor::DeviceDescriptor>()],
         );
         let (guarded, borrowed) = data_buff.claim().unwrap();
         let ts = TransactionString::setup_transaction(
@@ -602,6 +602,7 @@ impl Write<u8> for ConfigurationIo {
 pub mod frontend {
     use super::*;
     use alloc::sync::Arc;
+    use core::task::Poll;
     use hootux::mem::dma::DmaGuard;
 
     pub struct UsbDevCtl {
@@ -752,24 +753,78 @@ pub mod frontend {
                     .clone(),
             )
         }
-    }
 
-    impl Drop for UsbDevCtl {
-        fn drop(&mut self) {
-            // Deconfigure device
+        async fn shutdown(mut self) {
+            self.shutdown_inner().await;
+
+            for i in self.endpoints.iter_mut() {
+                i.take();
+            }
+
+            self.acc = alloc::sync::Weak::new();
+            // SAFETY: This is safe because this coerced from a reference and the remnants are forgotten.
+            unsafe { core::ptr::drop_in_place(&mut self.endpoints) };
+            core::mem::forget(self);
+        }
+
+        async fn shutdown_inner(&mut self) {
             let Some(acc) = self.acc.upgrade() else {
                 return;
             }; // If `acc` is not present then we can just drop everything dumbly.
             let command = Box::new(DmaGuard::new(Vec::from(
                 usb_cfg::CtlTransfer::set_configuration(0).to_bytes(),
             )));
-
             let ts = TransactionString::setup_transaction(command, None);
-            acc.ctl_endpoint.append_cmd_string(ts);
-            todo!("Must pass deconfiguration command to worker");
+            // fixme: This should check for errors.
+            let _ = acc.ctl_endpoint.append_cmd_string(ts).await; // deconfigure, this returns no useful information
 
-            // remove all EndpointQueues
-            todo!()
+            let Some(ctl) = acc.controller.upgrade() else {
+                return;
+            };
+            let mut ctl = ctl.lock().await;
+
+            ctl.drop_endpoints(
+                acc.endpoints
+                    .lock_arc()
+                    .await
+                    .iter()
+                    .flatten()
+                    .map(|arc| &**arc),
+            )
+            .await
+        }
+    }
+
+    impl Drop for UsbDevCtl {
+        #[track_caller]
+        fn drop(&mut self) {
+            let Some(acc) = self.acc.upgrade() else {
+                log::trace!(
+                    "{} Dropped blocking but acc was not present",
+                    core::any::type_name::<Self>()
+                );
+                return; // Default-style drop if acc is not present
+            };
+            let mut shutdown = pin!(self.shutdown_inner());
+
+            // We do this nonsense reduce the amount of time we are blocked.
+            let mut poll;
+            poll = shutdown.poll_unpin(&mut core::task::Context::from_waker(
+                core::task::Waker::noop(),
+            ));
+            log::error!("UsbDevCtl dropped at:{}", core::panic::Location::caller());
+            if Poll::Pending == poll {
+                poll = shutdown.poll_unpin(&mut core::task::Context::from_waker(
+                    core::task::Waker::noop(),
+                ));
+            }
+            log::info!(
+                "Blocking on shutdown for usb device {:?}",
+                DevID::new(acc.major_num, Into::<u8>::into(acc.address) as usize)
+            );
+            if Poll::Pending == poll {
+                hootux::block_on!(shutdown);
+            }
         }
     }
 }

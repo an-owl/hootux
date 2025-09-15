@@ -4,7 +4,9 @@ use alloc::vec::Vec;
 use bitfield::{Bit, BitMut};
 use core::alloc::Allocator;
 use core::cmp::PartialEq;
+use core::pin::Pin;
 use core::ptr::NonNull;
+use core::task::{Context, Poll};
 use derivative::Derivative;
 use ehci::frame_lists::{PeriodicFrameList, QueueElementTransferDescriptor, QueueHead};
 use ehci::operational_regs::{IntEnable, OperationalRegistersVolatileFieldAccess};
@@ -27,7 +29,7 @@ pub struct Ehci {
     operational_registers: VolatilePtr<'static, OperationalRegisters>,
     address_bmp: u128,
     ports: Box<[VolatileRef<'static, PortStatusCtl>]>,
-    async_list: Vec<alloc::sync::Arc<EndpointQueue>>, // spin is used here because the EndpointQueue should theoretically be exclusive
+    async_list: Vec<alloc::sync::Arc<EndpointQueue>>,
     // This is Option because the frame list is allocated by Self::configure() so the pointer can be set at the same time
     // At runtime callers can assume this is Some
     periodic_frame_list: Option<Box<PeriodicFrameList, DmaAlloc>>,
@@ -46,12 +48,14 @@ pub struct Ehci {
 
     // Maintained state
     port_files: alloc::collections::BTreeMap<u8, alloc::sync::Arc<device::UsbDeviceAccessor>>,
+
+    async_doorbell_mutex: async_lock::Semaphore,
+    doorbell_waker: alloc::sync::Arc<futures_util::task::AtomicWaker>,
 }
 
 // SAFETY: Ehci is not Send because `operational_registers` contains `VolatilePtr` which is not Send
 // this field is may not be explicitly accessed by other types. Methods are required to operate on these fields.
 unsafe impl Send for Ehci {}
-unsafe impl Sync for Ehci {}
 
 struct InaccessibleAddr<T: ?Sized> {
     addr: NonNull<T>,
@@ -140,6 +144,8 @@ impl Ehci {
             interrupt_worker: alloc::sync::Weak::new(),
             int_handler: None,
             port_files: alloc::collections::BTreeMap::new(),
+            async_doorbell_mutex: async_lock::Semaphore::new(1),
+            doorbell_waker: alloc::sync::Arc::new(futures_util::task::AtomicWaker::new()),
         })
     }
 
@@ -252,7 +258,7 @@ impl Ehci {
         };
         let weak = alloc::sync::Arc::downgrade(this);
         let iw = alloc::sync::Arc::new(InterruptWorker {
-            worker_waiter: Default::default(),
+            queue: hootux::task::util::MessageQueue::new(4),
             parent: weak,
         });
 
@@ -276,10 +282,11 @@ impl Ehci {
                     status_register: unsafe {
                         VolatilePtr::new(l.operational_registers.usb_status().as_raw_ptr())
                     },
-                    interrupt_worker: l.interrupt_worker.clone(),
+                    interrupt_worker: l.interrupt_worker.upgrade().unwrap().queue.sender(),
                     pnp_watchdog: l.pnp_watchdog_message.clone(),
                     poll_period: core::sync::atomic::AtomicU64::new(0),
                     polling: core::sync::atomic::AtomicBool::new(false),
+                    async_doorbell: alloc::sync::Arc::downgrade(&l.doorbell_waker),
                 };
                 let ih = alloc::sync::Arc::new(ih);
                 l.int_handler = Some(ih.clone());
@@ -396,6 +403,105 @@ impl Ehci {
         let regs = self.operational_registers;
         let cfg = volatile::map_field!(regs.usb_command);
         cfg.read().enable()
+    }
+
+    // You know the music, it's time to dance.
+    async fn drop_endpoints<'a, T: Iterator<Item = &'a EndpointQueue>>(&'a mut self, endpoints: T) {
+        let sem = self.async_doorbell_mutex.acquire().await;
+        for i in endpoints {
+            let Some(t) = self.async_list.iter().position(|e| {
+                let list_ptr: &EndpointQueue = &*e;
+                core::ptr::eq(list_ptr, i)
+            }) else {
+                panic!(
+                    "Attempted to free EndpointQueue that was not found in this controller {:?}",
+                    self.major_num
+                )
+            };
+            i.waiting_for_drop
+                .store(true, core::sync::atomic::Ordering::Release);
+
+            // locate previous and next EndpointQueues.
+            // Note that this is complicated because wee need to seek to the next not-removed queue heads
+            let prev = self.async_list[..t]
+                .iter()
+                .rev()
+                .filter(|e| {
+                    !e.waiting_for_drop
+                        .load(core::sync::atomic::Ordering::Relaxed)
+                })
+                .next()
+                .expect("This should've selected head [0]");
+            let next = self.async_list[t..]
+                .iter()
+                .filter(|e| {
+                    !e.waiting_for_drop
+                        .load(core::sync::atomic::Ordering::Relaxed)
+                })
+                .next()
+                .unwrap_or(&self.async_list[0]);
+
+            // Insert the next's address into the prev's `next` field
+            // Each lock should be dropped asap
+            let l_next = next.inner.lock();
+            let next_addr = hootux::mem::mem_map::translate_ptr(&*l_next.head)
+                .unwrap()
+                .try_into()
+                .unwrap();
+            drop(l_next);
+            let mut l_prev = prev.inner.lock();
+            l_prev.head.set_next_queue_head(next_addr);
+            drop(l_prev);
+        }
+        AsyncDoorbell::new(self, sem).await;
+        self.async_list.retain(|e| {
+            !e.waiting_for_drop
+                .load(core::sync::atomic::Ordering::Relaxed)
+        });
+    }
+}
+
+/// A future to handle waiting on the interrupt on async advance interrupt.
+/// Acquiring this sets the doorbell register, `await`ing on this will only return after the
+/// interrupt has been received.
+struct AsyncDoorbell<'a> {
+    controller: &'a Ehci,
+    ticket: async_lock::SemaphoreGuard<'a>,
+}
+
+impl<'a> AsyncDoorbell<'a> {
+    /// Sets the interrupt on async advance doorbell and returns self.
+    fn new(controller: &'a Ehci, sem: async_lock::SemaphoreGuard<'a>) -> Self {
+        controller
+            .operational_registers
+            .usb_command()
+            .update(|mut sts| {
+                sts.set_int_on_async_doorbell(true);
+                sts
+            });
+
+        AsyncDoorbell {
+            controller,
+            ticket: sem,
+        }
+    }
+}
+
+impl Future for AsyncDoorbell<'_> {
+    type Output = ();
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        if self
+            .controller
+            .operational_registers
+            .usb_command()
+            .read()
+            .get_int_on_async_doorbell()
+        {
+            self.controller.doorbell_waker.register(cx.waker());
+            Poll::Pending
+        } else {
+            Poll::Ready(())
+        }
     }
 }
 
@@ -640,9 +746,9 @@ impl EndpointQueueInner {
     }
 }
 
-#[repr(transparent)]
 pub struct EndpointQueue {
     inner: spin::Mutex<EndpointQueueInner>,
+    waiting_for_drop: core::sync::atomic::AtomicBool,
 }
 
 impl EndpointQueue {
@@ -659,12 +765,14 @@ impl EndpointQueue {
                 packet_size,
                 data_toggle_ctl,
             )),
+            waiting_for_drop: core::sync::atomic::AtomicBool::new(false),
         }
     }
 
     fn head_of_list() -> Self {
         Self {
             inner: spin::Mutex::new(EndpointQueueInner::head_of_list()),
+            waiting_for_drop: core::sync::atomic::AtomicBool::new(false),
         }
     }
 
@@ -1366,7 +1474,7 @@ impl StringCompletion {
 }
 
 struct InterruptWorker {
-    worker_waiter: WorkerWaiter,
+    queue: hootux::task::util::MessageQueue<InterruptMessage, hootux::task::util::Receiver>,
     parent: alloc::sync::Weak<async_lock::Mutex<Ehci>>,
 }
 
@@ -1407,10 +1515,12 @@ impl InterruptWorker {
 struct IntHandler {
     parent: alloc::sync::Weak<async_lock::Mutex<Ehci>>,
     status_register: VolatilePtr<'static, ehci::operational_regs::UsbStatus>,
-    interrupt_worker: alloc::sync::Weak<InterruptWorker>,
+    interrupt_worker:
+        hootux::task::util::MessageQueue<InterruptMessage, hootux::task::util::Sender>,
     pnp_watchdog: alloc::sync::Weak<WorkerWaiter>,
     poll_period: core::sync::atomic::AtomicU64,
     polling: core::sync::atomic::AtomicBool,
+    async_doorbell: alloc::sync::Weak<futures_util::task::AtomicWaker>,
 }
 
 impl IntHandler {
@@ -1422,17 +1532,11 @@ impl IntHandler {
         if let Some(_ehci) = self.parent.upgrade() {
             for i in int_status.int_only().iter() {
                 match i {
-                    UsbStatus::USB_INT => {
-                        self.status_register.write(UsbStatus::USB_INT);
-                        self.interrupt_worker
-                            .upgrade()
-                            .unwrap()
-                            .worker_waiter
-                            .wake();
-                    }
-                    UsbStatus::USB_ERROR_INT => {
-                        self.status_register.write(UsbStatus::USB_ERROR_INT);
-                        panic!("USB error")
+                    bit @ UsbStatus::USB_INT | bit @ UsbStatus::USB_ERROR_INT => {
+                        self.status_register.write(bit);
+                        let _ = self
+                            .interrupt_worker
+                            .send(InterruptMessage::TransactionStatus);
                     }
                     UsbStatus::PORT_CHANGE_DETECT => {
                         self.status_register.write(UsbStatus::PORT_CHANGE_DETECT);
@@ -1452,7 +1556,10 @@ impl IntHandler {
                     UsbStatus::INTERRUPT_ON_ASYNC_ADVANCE => {
                         self.status_register
                             .write(UsbStatus::INTERRUPT_ON_ASYNC_ADVANCE);
-                        todo!()
+                        let Some(w) = self.async_doorbell.upgrade() else {
+                            continue;
+                        };
+                        w.wake();
                     }
                     _ => unreachable!(), // All remaining bits are masked out
                 }
