@@ -530,6 +530,10 @@ impl MajorNum {
         debug_assert!(n < Self::PUBLIC_BASE);
         Self(n)
     }
+
+    pub fn get_raw(self) -> usize {
+        self.0
+    }
 }
 
 impl Display for DevID {
