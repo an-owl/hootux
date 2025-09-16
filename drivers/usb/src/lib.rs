@@ -2,8 +2,10 @@
 #![feature(allocator_api)]
 extern crate alloc;
 
+use alloc::boxed::Box;
 use core::pin::Pin;
 use futures_util::FutureExt;
+use hootux::fs::sysfs::SysfsDirectory;
 use hootux::task::TaskResult;
 
 const PAGE_SIZE: usize = 4096;
@@ -49,7 +51,7 @@ impl From<DeviceAddress> for u8 {
 }
 
 #[derive(Debug, Copy, Clone, Ord, PartialOrd, Eq, PartialEq)]
-struct Endpoint {
+pub struct Endpoint {
     num: u8,
 }
 
@@ -247,3 +249,9 @@ impl core::ops::AddAssign for UsbError {
         }
     }
 }
+
+pub trait UsbDeviceDriver: SysfsDirectory + 'static {
+    fn clone(&self) -> Box<dyn UsbDeviceDriver>;
+}
+
+pub use ehci::device::frontend::UsbDevCtl;

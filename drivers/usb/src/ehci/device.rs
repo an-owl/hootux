@@ -24,7 +24,7 @@ pub(super) struct UsbDeviceFile {
 impl UsbDeviceFile {
     async fn acquire_ctl(
         &self,
-        driver: &Box<dyn UsbDeviceDriver>,
+        driver: &Box<dyn crate::UsbDeviceDriver>,
     ) -> Result<frontend::UsbDevCtl, IoError> {
         let acc = self
             .usb_device_accessor
@@ -39,7 +39,7 @@ impl UsbDeviceFile {
             );
             return Err(IoError::AlreadyExists);
         }
-        *acc_driver = Some(UsbDeviceDriver::clone(&**driver));
+        *acc_driver = Some(crate::UsbDeviceDriver::clone(&**driver));
         Ok(frontend::UsbDevCtl {
             acc: alloc::sync::Arc::downgrade(&acc),
             endpoints,
@@ -164,19 +164,15 @@ impl SysfsDirectory for UsbDeviceFile {
 
 pub(super) struct UsbDeviceAccessor {
     major_num: MajorNum,
-    address: crate::DeviceAddress,
+    pub address: crate::DeviceAddress,
     ctl_endpoint: alloc::sync::Arc<EndpointQueue>,
     /// Contains all the optional endpoints.
     /// When configuring the device this mutex must be locked.
     endpoints: alloc::sync::Arc<async_lock::Mutex<[Option<alloc::sync::Arc<EndpointQueue>>; 15]>>, // endpoints 1..16
     controller: alloc::sync::Weak<async_lock::Mutex<super::Ehci>>,
-    usb_device_driver: async_lock::Mutex<Option<Box<dyn UsbDeviceDriver>>>,
+    usb_device_driver: async_lock::Mutex<Option<Box<dyn crate::UsbDeviceDriver>>>,
 
     configurations: u8,
-}
-
-trait UsbDeviceDriver: SysfsDirectory + 'static {
-    fn clone(&self) -> Box<dyn UsbDeviceDriver>;
 }
 
 impl UsbDeviceAccessor {
@@ -672,7 +668,7 @@ pub mod frontend {
         }
 
         /// Sets the device's configuration to the `configuration`
-        async fn set_configuration(&mut self, configuration: u8) -> Result<(), IoError> {
+        pub async fn set_configuration(&mut self, configuration: u8) -> Result<(), IoError> {
             let acc = self.acc.upgrade().ok_or(IoError::NotPresent)?;
             if acc.configurations >= configuration {
                 return Err(IoError::InvalidData);
@@ -696,7 +692,7 @@ pub mod frontend {
         /// # Safety
         ///
         /// The caller must ensure the endpoint is actually configured.
-        async unsafe fn setup_endpoint(
+        pub async unsafe fn setup_endpoint(
             &mut self,
             descriptor: &usb_cfg::descriptor::EndpointDescriptor,
         ) -> Result<Arc<EndpointQueue>, IoError> {
@@ -745,7 +741,7 @@ pub mod frontend {
             Ok(qh)
         }
 
-        fn endpoint(&self, ep: impl Into<crate::Endpoint>) -> Option<Arc<EndpointQueue>> {
+        pub fn endpoint(&self, ep: impl Into<crate::Endpoint>) -> Option<Arc<EndpointQueue>> {
             Some(
                 self.endpoints[Into::<u8>::into(ep.into()) as usize]
                     .as_ref()?
@@ -753,7 +749,9 @@ pub mod frontend {
             )
         }
 
-        async fn shutdown(mut self) {
+        /// Deconfigures the device and performs cleanup at the device driver level.
+        /// This should be called instead of [Drop::drop]
+        pub async fn shutdown(mut self) {
             self.shutdown_inner().await;
 
             for i in self.endpoints.iter_mut() {
