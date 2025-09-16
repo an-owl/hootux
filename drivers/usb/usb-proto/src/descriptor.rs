@@ -50,7 +50,7 @@ impl DeviceDescriptor {
     /// descriptor as described in the USB specification 2.0.
     // Why cant we read the whole thing with 8 bye transfers? IDK.
     pub const fn packet_size(buffer: &[u8; 8]) -> Option<u8> {
-        if buffer[1] != Self::DESCRIPTOR_TYPE as u8 {
+        if buffer[1] == Self::DESCRIPTOR_TYPE as u8 {
             Some(buffer[core::mem::offset_of!(DeviceDescriptor, max_packet_size_0)])
         } else {
             None
