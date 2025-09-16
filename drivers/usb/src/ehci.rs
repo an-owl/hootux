@@ -848,6 +848,7 @@ struct PnpWatchdog {
     controller: alloc::sync::Weak<async_lock::Mutex<Ehci>>,
     ports: Box<[VolatileRef<'static, PortStatusCtl>]>, // ports are owned by self.controller, we must upgrade the controller first.\
     work: alloc::sync::Arc<WorkerWaiter>,
+    major_num: MajorNum,
 }
 
 // SAFETY: This is safe because we never call into_inner from the mutex
