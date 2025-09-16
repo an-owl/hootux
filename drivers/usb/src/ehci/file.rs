@@ -53,7 +53,8 @@ impl EhciFileContainer {
         this.inner
             .lock_arc()
             .await
-            .start_polling(Some(NonZeroU64::new_unchecked(10)));
+            // SAFETY: Do I need to explain this?
+            .start_polling(Some(unsafe { NonZeroU64::new_unchecked(10) }));
         this
     }
 }
