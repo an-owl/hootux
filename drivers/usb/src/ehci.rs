@@ -397,12 +397,6 @@ impl Ehci {
         })
     }
 
-    fn is_enabled(&self) -> bool {
-        let regs = self.operational_registers;
-        let cfg = volatile::map_field!(regs.usb_command);
-        cfg.read().enable()
-    }
-
     // You know the music, it's time to dance.
     async fn drop_endpoints<'a, T: Iterator<Item = &'a EndpointQueue>>(&'a mut self, endpoints: T) {
         let sem = self.async_doorbell_mutex.acquire().await;
@@ -464,7 +458,7 @@ impl Ehci {
 /// interrupt has been received.
 struct AsyncDoorbell<'a> {
     controller: &'a Ehci,
-    ticket: async_lock::SemaphoreGuard<'a>,
+    _ticket: async_lock::SemaphoreGuard<'a>,
 }
 
 impl<'a> AsyncDoorbell<'a> {
@@ -480,7 +474,7 @@ impl<'a> AsyncDoorbell<'a> {
 
         AsyncDoorbell {
             controller,
-            ticket: sem,
+            _ticket: sem,
         }
     }
 }
@@ -804,7 +798,7 @@ impl EndpointQueue {
         })
     }
 
-    fn get_target(&self) -> Target {
+    pub fn get_target(&self) -> Target {
         x86_64::instructions::interrupts::without_interrupts(|| self.inner.lock().get_target())
     }
 
@@ -988,8 +982,6 @@ impl PnpWatchdog {
             drop(controller);
 
             self.work.wait().await;
-
-            controller = self.controller.upgrade().ok_or(())?;
 
             for (i, port) in self.ports.iter_mut().enumerate() {
                 let port_sts = port.as_ptr().read();
