@@ -330,14 +330,11 @@ impl Ehci {
     /// # Panics
     ///
     /// This fn will panic if `address == 0` or `address => 128` or if the address is already free
-    fn free_address(&mut self, address: u8) {
-        assert!(address < 128);
-        assert_ne!(address, 0, "Cannot free address 0");
-        assert!(
-            self.address_bmp.bit(address as usize),
-            "Attempted double free"
-        );
-        self.address_bmp.set_bit(address as usize, false)
+    fn free_address(&mut self, address: DeviceAddress) {
+        assert_ne!(address, DeviceAddress::Default, "Cannot free address 0");
+        let addr: u8 = address.into();
+        assert!(self.address_bmp.bit(addr as usize), "Attempted double free");
+        self.address_bmp.set_bit(addr as usize, false)
     }
 
     fn init_head_table(&mut self) {
