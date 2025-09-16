@@ -615,6 +615,7 @@ impl LegacySupportRegister {
             let os_sem = this
                 .byte_add(offset_of!(Self, bios_semaphore))
                 .cast::<bool>();
+            os_sem.write_volatile(true);
             while !Self::is_os_owned(this) {
                 core::hint::spin_loop();
             }
