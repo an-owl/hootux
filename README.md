@@ -102,7 +102,12 @@ achieve them.
         - Others should just mention the module name
             - Except in debug mode, do the full path
 - Move PCI into its own driver crate
-- Add USB support
+- ~~Add USB support~~
+    - Add support for periodic transactions
+        - And Isochronus transactions
+    - Unify public types to allow other controller types with the same API
+    - Fix bug where device addresses for EHCI is freed too early
+    -
 - Create tooling to parse and interpret QEMU `-d` and trace outputs
 - Swanky async optimization using union to contain future on the stack when the future is smaller than or the same sizes
   as the return type.
@@ -112,4 +117,8 @@ achieve them.
   design decisions
     - I have a half-baked almost-prototype already
 - Optimise memory initialisation, it wasn't ever very fast but legacy boot proves just how abysmally slow it really is.
-- Determine whether DmaTarget should be `where Self: 'static`
+- ~~Determine whether DmaTarget should be `where Self: 'static`~~
+    - Change DmaTarget into a struct
+        - Prevents the issue where Box<DmaBuffer<_,Vec<u8>> must be used, and complicated borrowing
+        - DmaTarget should be able to be constructed from any buffer, and cast back to generic (Box,Vec) buffers.
+        - This should allow accessing data as `&mut [T]`.
