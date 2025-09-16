@@ -777,7 +777,7 @@ impl EndpointQueue {
     fn update_transaction_len(&self, new_len: u8) -> Result<(), ()> {
         x86_64::instructions::interrupts::without_interrupts(|| {
             let mut l = self.inner.lock();
-            if l.is_terminated() || l.pid != PidCode::Control {
+            if !l.is_terminated() || l.pid != PidCode::Control {
                 return Err(());
             };
 
