@@ -186,8 +186,6 @@ impl UsbDeviceAccessor {
         controller: alloc::sync::Arc<async_lock::Mutex<super::Ehci>>,
         portnum: u8,
     ) {
-        let mut l = controller.lock().await;
-
         let data_buff = hootux::mem::dma::DmaGuard::new(alloc::vec![0u8; 8]);
         let (guarded, borrowed) = data_buff.claim().unwrap();
         let ts = TransactionString::setup_transaction(
@@ -233,6 +231,7 @@ impl UsbDeviceAccessor {
         };
         let raw_buffer = guarded.unwrap().unwrap().unwrap();
         let buff = usb_cfg::descriptor::DeviceDescriptor::from_raw(&*raw_buffer).unwrap();
+        let mut l = controller.lock().await;
 
         let mut this = Self {
             major_num: l.major_num,
