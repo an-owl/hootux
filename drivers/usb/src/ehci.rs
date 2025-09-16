@@ -21,7 +21,7 @@ use hootux::mem::dma::DmaTarget;
 use hootux::task::util::WorkerWaiter;
 use volatile::{VolatilePtr, VolatileRef};
 
-mod device;
+pub(super) mod device;
 pub(super) mod file;
 
 pub struct Ehci {
