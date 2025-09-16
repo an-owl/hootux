@@ -958,7 +958,30 @@ impl PnpWatchdog {
                             .await;
                         }
                     }
-                    Some(Work::Removed) => todo!(), // free all resources attached to the port
+                    Some(Work::Removed) => {
+                        // All we really need to do is drop the handle in the port slot.
+                        // Shutdowns will be propagated from there.
+                        let mut ctl = controller.lock().await;
+                        let file = ctl.port_files.remove(&(i as u8));
+                        match file {
+                            None => {
+                                log::warn!(
+                                    "Port {i} was not removed from {:?}, was it not configured?",
+                                    hootux::fs::file::DevID::new(self.major_num, 0)
+                                );
+                                continue 'work_loop;
+                            }
+                            Some(f) => {
+                                let t = f.address;
+                                controller.lock().await.free_address(t);
+                                // fixme: The address should be freed when the UsbDeviceAccessor is dropped
+                                // But that requires AsyncDrop
+                                // Could we move the address bitmap outside of the mutex?
+                                log::debug!("Device removed: Address freed too early");
+                            }
+                        }
+                        log::info!("usb{}: Port {i} removed", self.major_num.get_raw())
+                    }
                 }
             }
 
