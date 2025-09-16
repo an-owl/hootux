@@ -893,7 +893,7 @@ impl PnpWatchdog {
         loop {
             // This acts as a bit like a hardware mutex.
             // It ensures that the controller is still there before acting and that it will not be dropped while we are working.
-            let mut controller = self.controller.upgrade().ok_or(())?;
+            let controller = self.controller.upgrade().ok_or(())?;
 
             'work_loop: for (i, w) in work_list.iter_mut().enumerate().map(|(i, w)| (i, w.take())) {
                 match w {
