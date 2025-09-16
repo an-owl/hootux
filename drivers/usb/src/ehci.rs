@@ -46,7 +46,7 @@ pub struct Ehci {
     interrupt_worker: alloc::sync::Weak<InterruptWorker>,
     int_handler: Option<alloc::sync::Arc<IntHandler>>,
 
-    // Maintained state
+    // Maintained state. Key is the port number. Values above 15 are not allowed.
     port_files: alloc::collections::BTreeMap<u8, alloc::sync::Arc<device::UsbDeviceAccessor>>,
 
     async_doorbell_mutex: async_lock::Semaphore,
