@@ -245,6 +245,7 @@ impl Ehci {
             controller: alloc::sync::Arc::downgrade(this),
             ports: core::mem::take(&mut l.ports),
             work: alloc::sync::Arc::new(WorkerWaiter::new()),
+            major_num: l.major_num,
         };
         l.pnp_watchdog_message = alloc::sync::Arc::downgrade(&wd.work);
         // todo: Can I make this a child or something in the future?
