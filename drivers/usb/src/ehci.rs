@@ -952,6 +952,7 @@ impl PnpWatchdog {
                                 DeviceAddress::new(new_address).unwrap(),
                                 eq,
                                 controller.clone(),
+                                i as u8,
                             )
                             .await;
                         }

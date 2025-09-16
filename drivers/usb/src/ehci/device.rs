@@ -184,6 +184,7 @@ impl UsbDeviceAccessor {
         address: crate::DeviceAddress,
         ctl_endpoint: alloc::sync::Arc<EndpointQueue>,
         controller: alloc::sync::Arc<async_lock::Mutex<super::Ehci>>,
+        portnum: u8,
     ) {
         let mut l = controller.lock().await;
 
@@ -243,8 +244,7 @@ impl UsbDeviceAccessor {
             configurations: buff.num_configurations,
         };
         this.controller = alloc::sync::Arc::downgrade(&controller);
-        l.port_files
-            .insert(this.address.into(), alloc::sync::Arc::new(this));
+        l.port_files.insert(portnum, alloc::sync::Arc::new(this));
     }
 
     pub(super) fn get_file(self: &alloc::sync::Arc<Self>) -> Box<UsbDeviceFile> {
