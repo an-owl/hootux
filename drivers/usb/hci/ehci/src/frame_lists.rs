@@ -364,15 +364,12 @@ bitfield::bitfield! {
 }
 
 impl FrameListLinkPointerWithNakCount {
-    fn new() -> Self {
-        let mut this = Self(0);
-        this.set_end(true);
-        this
-    }
-
+    #[allow(dead_code)]
     fn set_address(&mut self, addr: u32) {
         self.set_ptr(addr >> 5)
     }
+
+    #[allow(dead_code)]
     fn get_address(&mut self) -> u32 {
         self.ptr() << 5
     }
@@ -662,10 +659,6 @@ trait BufferPointerRegister {
 /// The top section of this buffer contains the base address of the first page in the transfer descriptor.
 struct BufferOffset(u32);
 impl BufferOffset {
-    const fn new() -> Self {
-        Self(0)
-    }
-
     /// This sets the offset into the current buffer
     ///
     /// # Panics
@@ -678,6 +671,7 @@ impl BufferOffset {
     }
 
     /// Returns the offset into the buffer.
+    #[allow(dead_code)]
     fn get_offset(&self) -> u32 {
         self.0 & (4096 - 1)
     }
@@ -727,7 +721,6 @@ pub enum FrameListNode {
 }
 
 use core::marker::PhantomData;
-use core::mem::{MaybeUninit, offset_of};
 
 /// When the controller executes a `IsochronousTransferDescriptor` bits 2:0 are used to select
 /// the targeted transaction. During the transaction if the buffer targeted by the transaction
@@ -749,6 +742,7 @@ pub struct IsochronousTransferDescriptor {
     high_pointers: [u32; 5],
 }
 
+#[allow(unused)]
 pub struct ItdTransactionInfo {
     buffer: u8,
     offset: u16,
@@ -757,6 +751,7 @@ pub struct ItdTransactionInfo {
 }
 
 impl ItdTransactionInfo {
+    #[allow(dead_code)]
     const fn new(buffer: u8, offset: u16, len: Option<u16>, interrupt: bool) -> Self {
         assert!(buffer < 8);
         assert!(offset < 1024);
@@ -808,7 +803,7 @@ impl IsochronousTransferDescriptor {
     ///
     /// The caller must ensure that the allocated buffer is large enough to accommodate the maximum
     /// packet size and will not be overrun.
-    unsafe fn set_buffer(&mut self, buffer: u8, addr: u64) {
+    pub unsafe fn set_buffer(&mut self, buffer: u8, addr: u64) {
         assert!(buffer < 8);
         assert!(addr <= u32::MAX as u64);
         match buffer {
@@ -832,7 +827,12 @@ impl IsochronousTransferDescriptor {
     ///
     /// When `pending == true` the caller must ensure that the offset + length of the transaction does not overflow the target buffer.
     // todo improve this or wrap it
-    unsafe fn set_transaction(&mut self, transaction: u8, desc: ItdTransactionInfo, pending: bool) {
+    pub unsafe fn set_transaction(
+        &mut self,
+        transaction: u8,
+        desc: ItdTransactionInfo,
+        pending: bool,
+    ) {
         assert!(transaction < 8);
         let ItdTransactionInfo {
             buffer,
@@ -847,45 +847,6 @@ impl IsochronousTransferDescriptor {
         td.set_transaction_length(length.unwrap_or(0) as u32);
         td.interrupt_on_complete(int);
         td.set_pending(pending);
-    }
-}
-
-trait ItdExt {
-    fn get_transfer_descriptor(&self, descriptor: u8) -> IsochronousTransactionDescriptor;
-
-    // u64 to allow 64bit extension
-    fn get_buffer_ptr(&self, buffer: u8) -> u64;
-}
-
-impl ItdExt for MaybeUninit<IsochronousTransferDescriptor> {
-    fn get_transfer_descriptor(&self, descriptor: u8) -> IsochronousTransactionDescriptor {
-        assert!(descriptor < 8);
-        // SAFETY: Offset is fetched from core::mem::offset_of which guarantees we get the correct offset.
-        // ptr points to the first IsochronousTransactionDescriptor
-        let arr_ptr = unsafe {
-            self.as_ptr()
-                .byte_add(offset_of!(IsochronousTransferDescriptor, descriptors))
-                .cast::<IsochronousTransactionDescriptor>()
-        };
-        // SAFETY: Wee assert that descriptor is a valid value above
-        let tgt_ptr = unsafe { arr_ptr.offset(descriptor as usize as isize) }; // extra step to explicitly disallow sign extension
-
-        unsafe { tgt_ptr.read_volatile() }
-    }
-
-    fn get_buffer_ptr(&self, buffer: u8) -> u64 {
-        assert!(buffer < 6);
-
-        // SAFETY: Offset is fetched from core::mem::offset_of which guarantees we get the correct offset.
-        // This may technically read an illegal invariant, but all BufferPointerField<T>'s buffer address can be safely accessed via BufferPointerField
-        let arr_ptr = unsafe {
-            self.as_ptr()
-                .byte_add(offset_of!(IsochronousTransferDescriptor, buff_addr))
-                .cast::<BufferPointerField>()
-        };
-
-        // SAFETY: arr_ptr is guaranteed to be aligned
-        unsafe { arr_ptr.offset(buffer as usize as isize).read_volatile() }.get_pointer() as u64
     }
 }
 
@@ -962,6 +923,7 @@ impl<L: BufferPointerLower> BufferPointerField<L> {
     }
 
     // Note: using the bitfield macro wont work here because it will left shift the value to lsb=0
+    #[allow(dead_code)]
     fn get_pointer(&self) -> u32 {
         self.inner & !(4096 - 1) // mask lower bits
     }
@@ -988,6 +950,7 @@ impl BufferPointerLower for AddressLower {}
 
 impl BufferPointerField<AddressLower> {
     /// Returns the device address and the endpoint that this field describes
+    #[allow(dead_code)]
     fn get_tgt(&self) -> Target {
         let addr = self.inner & !((1 << 6) - 1);
         let endpoint = (self.inner >> 8) & !((1 << 4) - 1);
@@ -1021,16 +984,12 @@ impl BufferPointerLower for TransactionDescription {}
 impl BufferPointerField<TransactionDescription> {
     const DIRECTION_BIT: u32 = 1 << 11;
 
-    /// Returns the maximum packet size allowed for this
-    // todo make non-primitive
-    fn get_packet_size(&self) -> u16 {
-        (self.inner & ((1 << 10) - 1)) as u16
-    }
-
+    #[allow(dead_code)]
     fn set_packet_size(&mut self, size: u16) {
         self.inner = size as u32;
     }
 
+    #[allow(dead_code)]
     fn set_direction(&mut self, direction: TransactionDirection) {
         if direction.into() {
             self.inner |= Self::DIRECTION_BIT;
@@ -1039,6 +998,7 @@ impl BufferPointerField<TransactionDescription> {
         }
     }
 
+    #[allow(dead_code)]
     fn get_direction(&self) -> TransactionDirection {
         (self.inner & Self::DIRECTION_BIT != 0).into()
     }
@@ -1049,6 +1009,7 @@ struct MultiTransactionField;
 impl BufferPointerLower for MultiTransactionField {}
 
 impl BufferPointerField<MultiTransactionField> {
+    #[allow(dead_code)]
     fn get_multi_transaction(&self) -> TransactionCount {
         ((self.inner & 3) as u8).try_into().unwrap() // `0` is an illegal invariant
     }

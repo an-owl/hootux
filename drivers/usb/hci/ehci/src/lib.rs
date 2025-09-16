@@ -3,7 +3,6 @@
 
 extern crate alloc;
 
-use bitfield::{Bit, BitMut};
 use core::mem::offset_of;
 
 pub mod frame_lists;
@@ -126,7 +125,7 @@ pub mod cap_regs {
     }
 
     // properly define this
-    pub struct CompanionPortRoute(u64);
+    pub struct CompanionPortRoute(pub u64);
 }
 
 pub mod operational_regs {
@@ -400,7 +399,7 @@ pub mod operational_regs {
     // fixme I didnt really understand the description of this register
     // Only bits 13:0 are readable.
     // This is only writable when the controller is halted and the least 3 significant bits must never be set to `111` or `000`
-    pub struct FrameIndex(u32);
+    pub struct FrameIndex(pub u32);
 
     #[repr(u32)]
     #[derive(Debug, Copy, Clone, PartialEq, Eq)]
