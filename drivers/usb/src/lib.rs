@@ -22,7 +22,7 @@ pub mod ehci;
 ///
 /// The address `0` is the default address which must be responded to.
 #[derive(Debug, Copy, Clone, Ord, PartialOrd, Eq, PartialEq)]
-enum DeviceAddress {
+pub enum DeviceAddress {
     Default,
     Address(core::num::NonZeroU8),
 }
@@ -81,7 +81,7 @@ impl From<&usb_cfg::descriptor::EndpointDescriptor> for Endpoint {
 }
 
 #[derive(Debug, Copy, Clone, Ord, PartialOrd, Eq, PartialEq)]
-struct Target {
+pub struct Target {
     pub dev: DeviceAddress,
     pub endpoint: Endpoint,
 }
