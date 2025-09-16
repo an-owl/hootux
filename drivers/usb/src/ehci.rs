@@ -1147,6 +1147,8 @@ impl TransactionString {
         }
     }
 
+    // Disabled
+    /*
     /// Aborts execution of this transaction string by clearing all active bits in the QTDs.
     /// This causes the controller to iterate over them until either the last QTD is reached or
     /// a QTD in another `TransactionString` is reached.
@@ -1156,6 +1158,8 @@ impl TransactionString {
             i.set_active(false);
         }
     }
+
+     */
 
     /// Evaluates the state up-to and including the QTD at the address `last_qtd`.
     /// Also emits a bool indicating whether execution has stopped here.
