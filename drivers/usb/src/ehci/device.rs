@@ -68,7 +68,7 @@ impl File for UsbDeviceFile {
         self.address as u64
     }
 
-    fn len(&self) -> IoResult<u64> {
+    fn len(&self) -> IoResult<'_, u64> {
         async { Ok(hootux::fs::sysfs::SysfsDirectory::entries(self) as u64) }.boxed()
     }
 
