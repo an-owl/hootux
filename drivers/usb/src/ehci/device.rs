@@ -273,13 +273,13 @@ macro_rules! impl_file_for_util {
                 self.address as u64
             }
 
-            fn len(&self) -> IoResult<u64> {
+            fn len(&self) -> IoResult<'_, u64> {
                 async { Ok(8) }.boxed()
             }
         }
 
         impl NormalFile for $name {
-            fn len_chars(&self) -> IoResult<u64> {
+            fn len_chars(&self) -> IoResult<'_, u64> {
                 self.len()
             }
 
@@ -289,7 +289,7 @@ macro_rules! impl_file_for_util {
                 async { Err((IoError::NotSupported, self as Box<dyn NormalFile<u8>>)) }.boxed()
             }
 
-            unsafe fn unlock_unsafe(&self) -> IoResult<()> {
+            unsafe fn unlock_unsafe(&self) -> IoResult<'_, ()> {
                 async { Err(IoError::Exclusive) }.boxed() // indicates the file is not locked
             }
         }

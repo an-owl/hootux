@@ -81,7 +81,7 @@ impl File for EhciFileContainer {
         self.device().as_int().1 as u64
     }
 
-    fn len(&self) -> IoResult<u64> {
+    fn len(&self) -> IoResult<'_, u64> {
         async { Ok(SysfsDirectory::entries(self) as u64) }.boxed()
     }
 }

@@ -58,7 +58,7 @@ impl CmdList {
     }
 
     /// Returns a reference to the command table if one exists.
-    pub(super) fn table(&self, idx: u8) -> Option<CommandTable> {
+    pub(super) fn table(&self, idx: u8) -> Option<CommandTable<'_>> {
         Some(CommandTable {
             table: self.list[idx as usize]
                 .as_ref()?

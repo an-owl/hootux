@@ -297,7 +297,7 @@ impl Port {
 
     /// Returns the device identity information. This may require fetching it from the device if it
     /// is not currently present.
-    pub fn get_identity(&self) -> futures::future::BoxFuture<DevIdentity> {
+    pub fn get_identity(&self) -> futures::future::BoxFuture<'_, DevIdentity> {
         use futures::FutureExt;
         async {
             // using if let here does not free the mutex until after the if/else returns

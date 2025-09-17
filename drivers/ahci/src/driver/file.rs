@@ -107,7 +107,7 @@ impl File for ControllerDir {
         0
     }
 
-    fn len(&self) -> IoResult<u64> {
+    fn len(&self) -> IoResult<'_, u64> {
         async { Ok(SysfsDirectory::entries(self) as u64) }.boxed()
     }
 }
@@ -267,7 +267,7 @@ impl File for AhciCharDevice {
         self.id.as_int().1 as u64
     }
 
-    fn len(&self) -> IoResult<u64> {
+    fn len(&self) -> IoResult<'_, u64> {
         async {
             // This can panic if the
             let id = self.port.get_identity().await;
@@ -278,7 +278,7 @@ impl File for AhciCharDevice {
 }
 
 impl NormalFile for AhciCharDevice {
-    fn len_chars(&self) -> IoResult<u64> {
+    fn len_chars(&self) -> IoResult<'_, u64> {
         File::len(self)
     }
 
@@ -296,7 +296,7 @@ impl NormalFile for AhciCharDevice {
         .boxed()
     }
 
-    unsafe fn unlock_unsafe(&self) -> IoResult<()> {
+    unsafe fn unlock_unsafe(&self) -> IoResult<'_, ()> {
         async {
             self.locked.clear();
             Ok(())
