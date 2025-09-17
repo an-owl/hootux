@@ -381,7 +381,7 @@ impl<'a, 'b> core::future::Future for ReadFut<'a, 'b> {
                 Poll::Ready(Ok(unsafe { &mut *l.take().unwrap().0 }))
             } else if real.rx_idle.load(atomic::Ordering::Relaxed) && *i > 0 {
                 let len = *i;
-                Poll::Ready(Ok(unsafe { &mut (*l.take().unwrap().0)[..len] }))
+                Poll::Ready(Ok(unsafe { &mut (&mut (*l.take().unwrap().0))[..len] }))
             } else {
                 self.dispatch.inner.stream.register(cx.waker());
                 Poll::Pending
