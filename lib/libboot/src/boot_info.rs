@@ -203,7 +203,7 @@ impl MemoryMap {
     /// # Safety
     ///
     /// Some variants have safety requirements which must be upheld.
-    pub unsafe fn iter(&self) -> MapIter {
+    pub unsafe fn iter(&self) -> MapIter<'_> {
         match self {
             #[cfg(feature = "uefi")]
             Self::Uefi(u) => MapIter::Uefi(u.entries()),
@@ -356,7 +356,7 @@ pub struct Multiboot2PmMemoryState {
 
 #[cfg(feature = "multiboot2")]
 impl Multiboot2PmMemoryState {
-    fn iter(&self) -> Multiboot2PmMemoryStateIter {
+    fn iter(&self) -> Multiboot2PmMemoryStateIter<'_> {
         Multiboot2PmMemoryStateIter {
             parent: self,
             next_addr: 0,
