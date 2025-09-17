@@ -779,7 +779,7 @@ pub(crate) mod file {
             }
         }
 
-        fn len(&self) -> IoResult<u64> {
+        fn len(&self) -> IoResult<'_, u64> {
             async { Ok(8) }.boxed()
         }
     }
