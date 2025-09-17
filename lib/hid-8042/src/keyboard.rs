@@ -96,7 +96,7 @@ impl Command {
     }
 
     /// Returns a command iter which iterates over each byte in the command.
-    pub fn raw_iter(&self) -> CommandIter {
+    pub fn raw_iter(&self) -> CommandIter<'_> {
         CommandIter {
             index: 0,
             command: self,
