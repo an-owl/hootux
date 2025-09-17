@@ -10,7 +10,7 @@ pub mod acpi_pm_timer;
 pub(crate) type TimerResult = Result<(), TimerError>;
 
 static SYSTEM_TIME: SystemTime = SystemTime::new();
-static SYSTEM_TIMEKEEPER: spin::RwLock<Option<alloc::boxed::Box<(dyn TimeKeeper + Sync + Send)>>> =
+static SYSTEM_TIMEKEEPER: spin::RwLock<Option<alloc::boxed::Box<dyn TimeKeeper + Sync + Send>>> =
     spin::RwLock::new(None);
 
 /// This enums variants reflect the error status of a function.
@@ -174,7 +174,7 @@ pub(crate) fn update_timer() {
     SYSTEM_TIME.update();
 }
 
-pub fn kernel_init_timer(timer: alloc::boxed::Box<(impl TimeKeeper + Sync + Send + 'static)>) {
+pub fn kernel_init_timer(timer: alloc::boxed::Box<impl TimeKeeper + Sync + Send + 'static>) {
     // This takes ownership but does not compile without 'static. WHY?
     *SYSTEM_TIMEKEEPER.write() = Some(timer);
     SYSTEM_TIME.init();

@@ -170,7 +170,7 @@ impl<T> Directory for T
 where
     T: SysfsDirectory + File,
 {
-    fn entries(&self) -> IoResult<usize> {
+    fn entries(&self) -> IoResult<'_, usize> {
         async { Ok(SysfsDirectory::entries(self)) }.boxed()
     }
 
@@ -205,7 +205,7 @@ where
         async { SysfsDirectory::get_file(self, name).map(|f| f.dyn_upcast()) }.boxed()
     }
 
-    fn file_list(&self) -> IoResult<Vec<String>> {
+    fn file_list(&self) -> IoResult<'_, Vec<String>> {
         async { Ok(SysfsDirectory::file_list(self)) }.boxed()
     }
 
@@ -263,7 +263,7 @@ impl File for EventFile {
         u64::MAX
     }
 
-    fn len(&self) -> IoResult<u64> {
+    fn len(&self) -> IoResult<'_, u64> {
         async { Ok(0) }.boxed()
     }
 
@@ -279,7 +279,7 @@ impl File for EventFile {
 impl SysfsFile for EventFile {}
 
 impl NormalFile for EventFile {
-    fn len_chars(&self) -> IoResult<u64> {
+    fn len_chars(&self) -> IoResult<'_, u64> {
         async { Ok(0) }.boxed()
     }
 
@@ -289,7 +289,7 @@ impl NormalFile for EventFile {
         async { Err((IoError::NotSupported, self as Box<dyn NormalFile<u8>>)) }.boxed()
     }
 
-    unsafe fn unlock_unsafe(&self) -> IoResult<()> {
+    unsafe fn unlock_unsafe(&self) -> IoResult<'_, ()> {
         async { Err(IoError::Exclusive) }.boxed()
     }
 }
@@ -397,7 +397,7 @@ impl File for BindingFile {
     fn id(&self) -> u64 {
         self.acc.serial as u64
     }
-    fn len(&self) -> IoResult<u64> {
+    fn len(&self) -> IoResult<'_, u64> {
         async { Ok(0) }.boxed()
     }
 }
@@ -423,7 +423,7 @@ impl Write<u8> for BindingFile {
 }
 
 impl NormalFile for BindingFile {
-    fn len_chars(&self) -> IoResult<u64> {
+    fn len_chars(&self) -> IoResult<'_, u64> {
         self.len()
     }
 
@@ -442,7 +442,7 @@ impl NormalFile for BindingFile {
         .boxed()
     }
 
-    unsafe fn unlock_unsafe(&self) -> IoResult<()> {
+    unsafe fn unlock_unsafe(&self) -> IoResult<'_, ()> {
         async {
             self.acc.bound.clear();
             Ok(())

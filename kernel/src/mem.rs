@@ -298,6 +298,7 @@ unsafe impl FrameAllocator<Size4KiB> for VeryUnsafeFrameAllocator {
 }
 
 #[derive(Clone, Copy)]
+#[allow(unused)]
 struct PageIterator {
     pub start: Page,
     pub end: Page,
@@ -305,6 +306,7 @@ struct PageIterator {
 
 impl PageIterator {
     /// skips to the next l2 index pretending that next() was never called
+    #[allow(dead_code)]
     fn skip_l2(&mut self) {
         let mut n = self.start;
 
@@ -323,6 +325,7 @@ impl PageIterator {
         }
     }
 
+    #[allow(dead_code)]
     fn skip_l3(&mut self) {
         let mut n = self.start;
 
@@ -341,6 +344,7 @@ impl PageIterator {
         }
     }
 
+    #[allow(dead_code)]
     fn skip_l4(&mut self) {
         let mut n = self.start;
 
@@ -358,6 +362,8 @@ impl PageIterator {
             self.start = n
         }
     }
+
+    #[allow(dead_code)]
     fn step_back(&mut self) {
         let n = self.start;
         let n = Page::containing_address(n.start_address() - 0x1000u64);

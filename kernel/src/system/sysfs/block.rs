@@ -145,7 +145,7 @@ impl core::fmt::Display for BlockDeviceId {
 pub trait BlockDev: Sync + Send {
     /// Reads `size` blocks from from the device starting at the `seek` block. Implementations may
     /// return `Err(BlockDevIoErr::GeomError)` if `size` is not aligned to `self.geom().block_size`
-    fn read(&self, seek: BlockDevGeomIntegral, size: usize) -> IoFut<Box<[u8]>>;
+    fn read(&self, seek: BlockDevGeomIntegral, size: usize) -> IoFut<'_, Box<[u8]>>;
 
     /// Writes the given buffer onto the device. The buffer size should be aligned to the devices
     /// block size, this fn may return Err(_) if it is not. A reference to the buffer is returned on completion.
@@ -158,7 +158,7 @@ pub trait BlockDev: Sync + Send {
     /// complete outside of the current task.
     /// If `core::mem::forget(self.write(_).poll(_))` is called the buffer will be leaked onto memory
     /// and the DMA will be completed.
-    fn write(&self, seek: BlockDevGeomIntegral, buff: IoBuffer) -> IoFut<IoBuffer>;
+    fn write(&self, seek: BlockDevGeomIntegral, buff: IoBuffer) -> IoFut<'_, IoBuffer>;
 
     /// Returns a struct containing the geometry of the device.
     /// The device geometry must include the block size of the device and the number of blocks in
@@ -169,7 +169,7 @@ pub trait BlockDev: Sync + Send {
     /// fn's to block.
     ///
     /// If this fn returns `Err(_)` the hardware device can be considered failed.
-    fn geom(&self) -> IoFut<BlockDevGeom>;
+    fn geom(&self) -> IoFut<'_, BlockDevGeom>;
 
     fn as_any(&self) -> &dyn core::any::Any;
 

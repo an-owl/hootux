@@ -359,6 +359,7 @@ pub mod apic_types {
     }
 
     #[derive(Copy, Clone, Debug, PartialEq)]
+    #[allow(dead_code)]
     enum TriggerMode {
         EdgeSensitive,
         LevelSensitive,

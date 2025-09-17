@@ -1,3 +1,4 @@
+#![allow(unused_parens)] // due to modular_bitfield
 use super::apic_structures::{apic_types::*, registers::*};
 use super::{Apic, InterruptType, IpiTarget};
 use crate::device_check::{DeviceCheck, MaybeExists};

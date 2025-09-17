@@ -18,7 +18,7 @@ impl<T> Mutex<T> {
     }
 
     #[inline]
-    pub fn lock(&self) -> MutexGuard<T> {
+    pub fn lock(&self) -> MutexGuard<'_, T> {
         loop {
             match self.try_lock() {
                 Some(t) => {
@@ -30,7 +30,7 @@ impl<T> Mutex<T> {
     }
 
     #[inline]
-    pub fn try_lock(&self) -> Option<MutexGuard<T>> {
+    pub fn try_lock(&self) -> Option<MutexGuard<'_, T>> {
         if let Ok(_) =
             self.lock
                 .compare_exchange_weak(false, true, Ordering::Acquire, Ordering::Relaxed)
@@ -47,7 +47,7 @@ impl<T> Mutex<T> {
     ///
     /// This function is unsafe because it generates a reference to `self` regardless of whether
     /// self is locked. The programmer must ensure that `self` is locked before this fn is run
-    unsafe fn make_guard(&self) -> MutexGuard<T> {
+    unsafe fn make_guard(&self) -> MutexGuard<'_, T> {
         unsafe {
             MutexGuard {
                 lock: &self.lock,
@@ -136,7 +136,7 @@ impl<'a, T> ReentrantMutex<T> {
 
     /// Attempts to lock control bit returns None if control bit is locked.
     #[inline]
-    pub fn try_lock_inner(&self) -> Option<ReentrantMutexGuard<T>> {
+    pub fn try_lock_inner(&self) -> Option<ReentrantMutexGuard<'_, T>> {
         self.try_control(|| match self.owner.load(Ordering::Relaxed) {
             None => {
                 self.owner.store(Some(crate::who_am_i()), Ordering::Acquire);
@@ -183,7 +183,7 @@ impl<'a, T> ReentrantMutex<T> {
     /// This fn is different from [Self::try_lock_inner] because it will spin while waiting for the
     /// control bit, and exits if the mutex is already locked.
     #[inline]
-    pub fn try_lock(&self) -> Option<ReentrantMutexGuard<T>> {
+    pub fn try_lock(&self) -> Option<ReentrantMutexGuard<'_, T>> {
         loop {
             match self.try_lock_inner() {
                 Some(t) => {
@@ -197,7 +197,7 @@ impl<'a, T> ReentrantMutex<T> {
     }
 
     #[inline]
-    pub fn lock(&self) -> ReentrantMutexGuard<T> {
+    pub fn lock(&self) -> ReentrantMutexGuard<'_, T> {
         loop {
             match self.try_lock() {
                 Some(t) => {
@@ -214,7 +214,7 @@ impl<'a, T> ReentrantMutex<T> {
     /// This differs from [self.lock] because that will acquire `self` if the owner is the calling CPU.
     ///
     /// This is intended for use with interrupts. However
-    pub fn try_lock_pedantic(&self) -> Option<ReentrantMutexGuard<T>> {
+    pub fn try_lock_pedantic(&self) -> Option<ReentrantMutexGuard<'_, T>> {
         loop {
             match self.try_control(|| match self.owner.load(Ordering::Relaxed) {
                 None => {
@@ -322,7 +322,7 @@ impl<T> MentallyUnstableMutex<T> {
     /// # Safety
     ///
     /// In release mode this is not safe.
-    pub fn lock(&self) -> impl MutexGuardTrait<T> {
+    pub fn lock(&self) -> impl MutexGuardTrait<'_, T> {
         #[cfg(debug_assertions)]
         {
             if let Some(_) =

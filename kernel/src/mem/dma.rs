@@ -338,7 +338,7 @@ pub unsafe trait DmaTarget: Send {
     ///
     /// This takes `self` as `&mut` but does not actually mutate `self` this is to prevent all
     /// accesses to `self` while the PRD is alive.
-    fn prd(&mut self) -> PhysicalRegionDescriber {
+    fn prd(&mut self) -> PhysicalRegionDescriber<'_> {
         PhysicalRegionDescriber {
             data: self.data_ptr(),
             next: 0,

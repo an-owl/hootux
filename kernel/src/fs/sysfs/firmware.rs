@@ -55,7 +55,7 @@ impl File for FirmwareContainer {
         2
     }
 
-    fn len(&self) -> IoResult<u64> {
+    fn len(&self) -> IoResult<'_, u64> {
         async { Ok(super::SysfsDirectory::entries(self) as u64) }.boxed()
     }
 }

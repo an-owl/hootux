@@ -384,6 +384,7 @@ pub unsafe fn eoi() {
 }
 
 /// Indicates how the interrupt is received or handled by the CPU.
+#[allow(dead_code)]
 enum DeliveryMode {
     /// Fixed vector, normal interrupt mode.
     Fixed,

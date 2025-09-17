@@ -140,7 +140,7 @@ impl<'a> super::Capability<'a> for MessageSigInt<'a> {
         CapabilityId::Msi
     }
 
-    fn boxed(self) -> alloc::boxed::Box<(dyn Any + 'a)> {
+    fn boxed(self) -> alloc::boxed::Box<dyn Any + 'a> {
         alloc::boxed::Box::new(self)
     }
 
@@ -290,7 +290,7 @@ impl<'a> super::Capability<'a> for MessageSignaledIntX<'a> {
         CapabilityId::MsiX
     }
 
-    fn boxed(self) -> alloc::boxed::Box<(dyn Any + 'a)> {
+    fn boxed(self) -> alloc::boxed::Box<dyn Any + 'a> {
         alloc::boxed::Box::new(self)
     }
 
@@ -331,11 +331,11 @@ pub struct MsiXVectorTable<'a> {
 }
 
 impl<'a> MsiXVectorTable<'a> {
-    pub fn iter(&self) -> core::slice::Iter<MsiXVectorEntry> {
+    pub fn iter(&self) -> core::slice::Iter<'_, MsiXVectorEntry> {
         self.table.iter()
     }
 
-    pub fn iter_mut(&mut self) -> core::slice::IterMut<MsiXVectorEntry> {
+    pub fn iter_mut(&mut self) -> core::slice::IterMut<'_, MsiXVectorEntry> {
         self.table.iter_mut()
     }
 }
@@ -360,7 +360,7 @@ impl<'a> MessageSignaledIntX<'a> {
     }
 
     /// Returns a slice to the functions MSI-X Vector Table
-    pub fn get_vec_table(&self) -> MsiXVectorTable {
+    pub fn get_vec_table(&self) -> MsiXVectorTable<'_> {
         let t = self.parent.bar[self.table_bar as usize]
             .as_ref()
             .expect("PCI device did not implement BAR specified for MSI-X table");
@@ -397,7 +397,7 @@ impl<'a> MessageSignaledIntX<'a> {
     ///
     /// Technically this fn is unsafe because it breaks rusts aliasing rules however the aliasing
     /// rules are broken by the PBA regardless of whether this fn is called or not.  
-    pub fn get_pba(&self) -> PendingBitArray {
+    pub fn get_pba(&self) -> PendingBitArray<'_> {
         let size = self.control.table_size();
 
         let bar = self.parent.bar[self.pba_bar as usize]

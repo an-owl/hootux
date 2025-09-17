@@ -40,9 +40,3 @@ impl SysFsRoot {
 pub fn get_sysfs() -> &'static SysFsRoot {
     &SYSFS_ROOT
 }
-
-struct AcpiRoot(acpi::AcpiTables<super::acpi::AcpiGrabber>);
-
-// SAFETY: fixme I'm not actually sure if this is safe. Just dont allow mutable access to it I guess.
-unsafe impl Sync for AcpiRoot {}
-unsafe impl Send for AcpiRoot {}

@@ -26,7 +26,7 @@ impl<T> KernelStatic<T> {
         *l = Some(new);
     }
 
-    pub fn get(&self) -> Ref<T> {
+    pub fn get(&self) -> Ref<'_, T> {
         let lock = self.inner.lock();
         if let Some(_) = *lock {
             Ref::new(lock)
@@ -50,7 +50,7 @@ impl<T> KernelStatic<T> {
     /// #Panics
     ///
     /// This fn will panic if if `self` is uninitialized
-    pub fn try_get_mut(&self) -> Option<Ref<T>> {
+    pub fn try_get_mut(&self) -> Option<Ref<'_, T>> {
         match self.inner.try_lock() {
             Some(guard) => {
                 if let Some(_) = guard.as_ref() {

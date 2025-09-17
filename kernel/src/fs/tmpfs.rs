@@ -167,7 +167,7 @@ impl File for TmpFsRoot {
         0
     }
 
-    fn len(&self) -> IoResult<u64> {
+    fn len(&self) -> IoResult<'_, u64> {
         async {
             let t = self.inner.fetch(0).unwrap(); // 0 is always present
             t.len().await
@@ -278,7 +278,7 @@ impl File for Dir {
         self.serial
     }
 
-    fn len(&self) -> IoResult<u64> {
+    fn len(&self) -> IoResult<'_, u64> {
         async {
             let b = self.accessor.map.read();
             Ok(b.len() as u64)
@@ -288,7 +288,7 @@ impl File for Dir {
 }
 
 impl Directory for Dir {
-    fn entries(&self) -> IoResult<usize> {
+    fn entries(&self) -> IoResult<'_, usize> {
         async {
             let l = self.accessor.map.read();
             Ok(l.len())
@@ -426,7 +426,7 @@ impl Directory for Dir {
         .boxed()
     }
 
-    fn file_list(&self) -> IoResult<Vec<String>> {
+    fn file_list(&self) -> IoResult<'_, Vec<String>> {
         async { Ok(self.accessor.map.read().keys().map(|s| s.clone()).collect()) }.boxed()
     }
 
@@ -493,7 +493,7 @@ struct TmpFsNormalFile {
 }
 
 impl NormalFile<u8> for TmpFsNormalFile {
-    fn len_chars(&self) -> IoResult<u64> {
+    fn len_chars(&self) -> IoResult<'_, u64> {
         async { Ok(self.accessor.data.read().await.len() as u64) }.boxed()
     }
 
@@ -513,7 +513,7 @@ impl NormalFile<u8> for TmpFsNormalFile {
         .boxed()
     }
 
-    unsafe fn unlock_unsafe(&self) -> IoResult<()> {
+    unsafe fn unlock_unsafe(&self) -> IoResult<'_, ()> {
         async { Ok(self.accessor.lock.lock().clear()) }.boxed()
     }
 }
@@ -539,7 +539,7 @@ impl File for TmpFsNormalFile {
         self.serial
     }
 
-    fn len(&self) -> IoResult<u64> {
+    fn len(&self) -> IoResult<'_, u64> {
         async {
             let l = self.accessor.data.read().await;
             Ok(l.len() as u64)

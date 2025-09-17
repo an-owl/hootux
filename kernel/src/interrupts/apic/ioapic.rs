@@ -1,3 +1,4 @@
+#![allow(unused_parens)] // due to modular_bitfield
 use modular_bitfield::{BitfieldSpecifier, bitfield, specifiers::*};
 
 pub(crate) struct IoApic {
@@ -191,7 +192,6 @@ const _ASSERT: () =
 #[bitfield]
 #[derive(Debug, Copy, Clone)]
 pub struct RedirectionTableEntry {
-    ///
     /// The target vector for the interrupt.
     pub vector: u8,
     pub delivery_mode: DeliveryMode,

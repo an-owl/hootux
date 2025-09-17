@@ -3,7 +3,7 @@ pub mod msi;
 pub trait Capability<'a> {
     fn id(&self) -> CapabilityId;
 
-    fn boxed(self) -> alloc::boxed::Box<(dyn core::any::Any + 'a)>;
+    fn boxed(self) -> alloc::boxed::Box<dyn core::any::Any + 'a>;
 
     fn any_mut(&'a mut self) -> &'a mut (dyn core::any::Any + 'a);
 }

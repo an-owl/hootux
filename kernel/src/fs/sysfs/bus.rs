@@ -116,7 +116,7 @@ impl File for SysfsBus {
         1
     }
 
-    fn len(&self) -> IoResult<u64> {
+    fn len(&self) -> IoResult<'_, u64> {
         async { Ok(self.files.read().len() as u64) }.boxed()
     }
 }
@@ -189,7 +189,7 @@ impl File for UniqueBus {
     fn id(&self) -> u64 {
         self.serial
     }
-    fn len(&self) -> IoResult<u64> {
+    fn len(&self) -> IoResult<'_, u64> {
         async { Ok(self.devices.len() as u64) }.boxed()
     }
 }

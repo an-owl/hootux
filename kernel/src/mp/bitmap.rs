@@ -61,7 +61,7 @@ impl CpuBMap {
         }
     }
 
-    pub const fn iter(&self) -> CpuBitmapIterator {
+    pub const fn iter(&self) -> CpuBitmapIterator<'_> {
         CpuBitmapIterator {
             map: self,
             last: None,

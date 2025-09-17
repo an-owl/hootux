@@ -119,7 +119,7 @@ pub trait File:
     /// - If `self` is a [Directory] then this should return the number of directories contained within self.
     /// - If `self` is any other type then this fn should hint the number of characters expected to be read.
     /// - If the implementation cannot provide any hint then this may return any non-zero value.
-    fn len(&self) -> IoResult<u64>;
+    fn len(&self) -> IoResult<'_, u64>;
 
     /// Returns a B-side file if one exists with the given arguments.
     /// All valid IDs should be documented in the implementation documentation.
@@ -199,7 +199,7 @@ pub trait NormalFile<T = u8>: Read<T> + Write<T> + File + Send + Sync {
     /// Returns the size of the file in chars
     ///
     /// Using `core::mem::size_of::<T>() * NormalFile::len(file)` as usize will return the size in bytes
-    fn len_chars(&self) -> IoResult<u64>;
+    fn len_chars(&self) -> IoResult<'_, u64>;
 
     /// Exclusively locks the file, any read or write calls must return [IoError::Exclusive]
     ///
@@ -233,7 +233,7 @@ pub trait NormalFile<T = u8>: Read<T> + Write<T> + File + Send + Sync {
     /// This function will return [IoError::Exclusive] when `self` is not locked.
     ///
     /// Note: The file may not be deleted from the filesystem while it is locked.
-    unsafe fn unlock_unsafe(&self) -> IoResult<()>;
+    unsafe fn unlock_unsafe(&self) -> IoResult<'_, ()>;
 }
 
 /// This trait's methods may have side effects. Any side effects should be documented at the implementation level.
@@ -293,7 +293,7 @@ self::file_derive_debug!(Directory);
 pub trait Directory: File {
     /// Returns the number of entries in this directory.
     /// Because `self` may be aliased this may change without warning.
-    fn entries(&self) -> IoResult<usize>;
+    fn entries(&self) -> IoResult<'_, usize>;
 
     /// Adds a new file entry into `self`.
     ///
@@ -397,7 +397,7 @@ pub trait Directory: File {
     // this may as well be a vec because we need to allocate space for the strings too
     // In theory the FS should cache the dir, but it may not so thi needs to be a future
     // todo optimize this to return a single buffer
-    fn file_list(&self) -> IoResult<alloc::vec::Vec<alloc::string::String>>;
+    fn file_list(&self) -> IoResult<'_, alloc::vec::Vec<alloc::string::String>>;
 
     /// Removes the file `name` from the directory.
     ///

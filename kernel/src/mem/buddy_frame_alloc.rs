@@ -38,14 +38,19 @@ impl PreInitFrameAlloc {
         let mut mem_32_n = None;
         let mut mem_64_n = None;
 
-        for i in regions.iter() {
+        // SAFETY: No current safety requirements
+        for i in unsafe { regions.iter() } {
             crate::serial_println!("{:x?}", i);
         }
+
         macro_rules! usable_regions {
             ($regions:ident) => {
-                $regions
-                    .iter()
-                    .filter(|p| p.ty == hatcher::boot_info::MemoryRegionType::Usable)
+                // SAFETY: Explained above.
+                unsafe {
+                    $regions
+                        .iter()
+                        .filter(|p| p.ty == hatcher::boot_info::MemoryRegionType::Usable)
+                }
             };
         }
 
@@ -915,7 +920,7 @@ impl BuddyFrameAlloc {
 
     /// Creates a FrameAllocRef for using with the [FrameAllocator] trait
     /// FrameAllocator cannot be implemented on BuddyFrameAlloc because its methods take a &mut self
-    pub fn get(&self) -> FrameAllocRef {
+    pub fn get(&self) -> FrameAllocRef<'_> {
         FrameAllocRef { frame_alloc: &self }
     }
 }

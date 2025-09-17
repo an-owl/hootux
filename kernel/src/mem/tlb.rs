@@ -238,7 +238,7 @@ impl ShootdownListMutex {
             data: core::cell::UnsafeCell::new(ShootdownContent::None),
         }
     }
-    fn set(&self, data: ShootdownContent) -> ShootdownMutexMasterGuard {
+    fn set(&self, data: ShootdownContent) -> ShootdownMutexMasterGuard<'_> {
         while let Err(_) = self.master.compare_exchange_weak(
             false,
             true,
@@ -252,7 +252,7 @@ impl ShootdownListMutex {
         ShootdownMutexMasterGuard { parent: self }
     }
 
-    fn visit(&self) -> Option<ShootdownVisitorGuard> {
+    fn visit(&self) -> Option<ShootdownVisitorGuard<'_>> {
         if self.master.load(atomic::Ordering::Acquire) {
             // Either data is bing dropped or initialized if visitors is 0.
             // Loop until it is >1

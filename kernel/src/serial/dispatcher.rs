@@ -187,7 +187,7 @@ impl File for SerialDispatcher {
         0
     }
 
-    fn len(&self) -> crate::fs::IoResult<u64> {
+    fn len(&self) -> crate::fs::IoResult<'_, u64> {
         // We make no expectation that any data is present
         async { Ok(0) }.boxed()
     }
@@ -468,13 +468,13 @@ impl File for FrameCtlBFile {
         0
     }
 
-    fn len(&self) -> IoResult<u64> {
+    fn len(&self) -> IoResult<'_, u64> {
         async { Ok(crate::mem::PAGE_SIZE as u64) }.boxed()
     }
 }
 
 impl NormalFile for FrameCtlBFile {
-    fn len_chars(&self) -> IoResult<u64> {
+    fn len_chars(&self) -> IoResult<'_, u64> {
         async { Ok(crate::mem::PAGE_SIZE as u64) }.boxed()
     }
 
@@ -484,7 +484,7 @@ impl NormalFile for FrameCtlBFile {
         async { Err((IoError::NotSupported, self as Box<dyn NormalFile>)) }.boxed()
     }
 
-    unsafe fn unlock_unsafe(&self) -> IoResult<()> {
+    unsafe fn unlock_unsafe(&self) -> IoResult<'_, ()> {
         async { Err(IoError::NotSupported) }.boxed()
     }
 }

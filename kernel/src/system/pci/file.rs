@@ -75,7 +75,7 @@ impl File for FuncDir {
         self.accessor.addr.as_int_joined()
     }
 
-    fn len(&self) -> IoResult<u64> {
+    fn len(&self) -> IoResult<'_, u64> {
         async { Ok(SysfsDirectory::entries(self) as u64) }.boxed()
     }
 }
@@ -163,13 +163,13 @@ impl File for Class {
         1
     }
 
-    fn len(&self) -> IoResult<u64> {
+    fn len(&self) -> IoResult<'_, u64> {
         async { Ok(3) }.boxed()
     }
 }
 
 impl NormalFile for Class {
-    fn len_chars(&self) -> IoResult<u64> {
+    fn len_chars(&self) -> IoResult<'_, u64> {
         File::len(self)
     }
 
@@ -179,7 +179,7 @@ impl NormalFile for Class {
         async { Err((IoError::NotSupported, self as _)) }.boxed()
     }
 
-    unsafe fn unlock_unsafe(&self) -> IoResult<()> {
+    unsafe fn unlock_unsafe(&self) -> IoResult<'_, ()> {
         async { Err(IoError::NotSupported) }.boxed()
     }
 }
@@ -246,7 +246,7 @@ impl File for ConfigRegionFile {
         2
     }
 
-    fn len(&self) -> IoResult<u64> {
+    fn len(&self) -> IoResult<'_, u64> {
         async { Ok(4096) }.boxed()
     }
 
@@ -260,7 +260,7 @@ impl File for ConfigRegionFile {
 }
 
 impl NormalFile for ConfigRegionFile {
-    fn len_chars(&self) -> IoResult<u64> {
+    fn len_chars(&self) -> IoResult<'_, u64> {
         File::len(self)
     }
 
@@ -270,7 +270,7 @@ impl NormalFile for ConfigRegionFile {
         async { Err((IoError::NotSupported, self as _)) }.boxed()
     }
 
-    unsafe fn unlock_unsafe(&self) -> IoResult<()> {
+    unsafe fn unlock_unsafe(&self) -> IoResult<'_, ()> {
         async { Err(IoError::Exclusive) }.boxed()
     }
 }

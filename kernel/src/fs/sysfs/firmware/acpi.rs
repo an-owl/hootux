@@ -56,7 +56,7 @@ impl File for Tables {
         ACPI_INODE_ID
     }
 
-    fn len(&self) -> IoResult<u64> {
+    fn len(&self) -> IoResult<'_, u64> {
         async { Ok(SysfsDirectory::entries(self) as u64) }.boxed()
     }
 }
@@ -170,7 +170,7 @@ impl<T: acpi::AcpiTable + 'static> File for SdtFile<T> {
         bytes << 32 | ACPI_INODE_ID
     }
 
-    fn len(&self) -> IoResult<u64> {
+    fn len(&self) -> IoResult<'_, u64> {
         async { Ok(self.table.region_length() as u64) }.boxed()
     }
 }

@@ -178,7 +178,7 @@ impl<T> WcWrap<T> {
 
     /// Returns a struct which can be used to write to the inner value.
     /// When the guard is dropped the WC buffer will be dumped into system memory.
-    pub fn write(&mut self) -> WcWrapGuard<T> {
+    pub fn write(&mut self) -> WcWrapGuard<'_, T> {
         WcWrapGuard { data: self }
     }
 

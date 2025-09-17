@@ -1,3 +1,4 @@
+#![allow(unused_parens)] // due to modular_bitfield
 //! This module handles UART devices (obviously). It handles it in 2 modes "deaf & dumb" and async.
 //!
 //! - Deaf & dumb does not attempt to actually check that a UART device exists ad is intended for
