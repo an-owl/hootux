@@ -1,8 +1,11 @@
 use alloc::boxed::Box;
 use alloc::vec::Vec;
-use core::alloc::Allocator;
+use core::alloc::{AllocError, Allocator, Layout};
+use core::any::Any;
+use core::fmt::Debug;
 use core::marker::PhantomData;
 use core::ops::DerefMut;
+use core::ptr::NonNull;
 
 pub type DmaBuff<'a> = Box<dyn DmaTarget + 'a>;
 
@@ -427,6 +430,236 @@ unsafe impl DmaTarget for BogusBuffer {
     fn data_ptr(&mut self) -> *mut [u8] {
         // SAFETY: Always empty
         &mut [] as *mut [u8]
+    }
+}
+
+/// This represents a region of memory which can be used for a DMA operation.
+/// DmaBuffer can be constructed from a `Box<[u8]` or `Vec<u8>`.
+///
+/// Functions that intend to perform DMA **must** take a `DmaBuffer` by value.
+/// See [embedonomicon](https://docs.rust-embedded.org/embedonomicon/dma.html) for more info.
+///
+/// DmaBuffer acts as as a smart pointer and will free data when dropped.
+/// However because DmaBuffer must be used in object safe traits we cannot store the allocator type as a trait,
+/// so it is stored as a trait object. This means that constructing a DmaBuffer may require
+///
+/// When constructing DmaBuffer from a Vec this will note the capacity to prevent leaks but the len
+/// will be used as len of the returned DmaBuffer.
+///
+/// ```
+/// #use hootux::mem::dma::*;
+///
+/// let v = Vec::with_capacity(64);
+/// let b: DmaBuffer = v.into();
+/// assert_eq!(b,0);
+///
+///
+/// ```
+pub struct DmaBuffer {
+    ptr: NonNull<u8>,
+    len: usize,
+    capacity: usize,
+    alloc: Box<dyn CastableAllocator>, // We must erase they type to ensure this can be used in dyn compatible traits.
+}
+
+impl DmaBuffer {
+    pub fn to_box<A: CastableAllocator>(mut self) -> Result<Box<[u8], A>, FromDmaBufferError> {
+        if self.alloc.ty_eq::<A>() {
+            let ptr = self.ptr;
+            let capacity = self.capacity;
+            let alloc = core::mem::replace(&mut self.alloc, Box::new(DummyAllocator));
+
+            // SAFETY: `self` must be constructed from a Box/Vec and metadata may mot be modified by `self`
+            let rc = unsafe {
+                Ok(Box::from_raw_in(
+                    core::slice::from_raw_parts_mut(ptr.as_ptr(), capacity),
+                    *alloc.as_any().downcast().unwrap(),
+                ))
+            };
+
+            rc
+        } else {
+            Err(FromDmaBufferError::IncorrectAllocator(self))
+        }
+    }
+
+    /// Returns a mutable raw slice into the target buffer for setting up DMA operations.
+    ///
+    /// # Safety
+    ///
+    /// Drivers must not use [core::ops::Deref] ot [DerefMut] to set up DMA operations.
+    pub fn data_mut(&mut self) -> *mut [u8] {
+        &mut **self
+    }
+
+    #[allow(unused_mut)]
+    pub fn prd(&mut self) -> PhysicalRegionDescriber<'_> {
+        PhysicalRegionDescriber {
+            data: self.data_mut(),
+            next: 0,
+            phantom: Default::default(),
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        self.len
+    }
+
+    /// Returns a bogus buffer with a size of `0`
+    // I cant make this const :(
+    pub fn bogus() -> Self {
+        Self {
+            ptr: NonNull::dangling(),
+            len: 0,
+            capacity: 0,
+            alloc: Box::new(alloc::alloc::Global), // This is a ZST
+        }
+    }
+}
+
+impl Debug for DmaBuffer {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("DmaBuffer")
+            .field("ptr", &self.ptr)
+            .field("len", &self.len)
+            .field("capacity", &self.capacity)
+            .field("alloc", &self.alloc.ty_name())
+            .finish()
+    }
+}
+
+impl Drop for DmaBuffer {
+    fn drop(&mut self) {
+        // SAFETY:
+        // - from_size_align_unchecked: align is 1 so it will not overflow. `align` is not `0` and is 2^0
+        // - deallocate: We are the sole owner of the memory referenced by the pointer.
+        // The layout accurately describes the memory region because self.capacity is fetched
+        // from the smart pointer that was used to initially construct `self`.
+        unsafe {
+            self.alloc.deallocate(
+                self.ptr,
+                Layout::from_size_align_unchecked(self.capacity, 1),
+            )
+        }
+    }
+}
+
+impl core::ops::Deref for DmaBuffer {
+    type Target = [u8];
+    fn deref(&self) -> &Self::Target {
+        // SAFETY: See Drop impl
+        unsafe { core::slice::from_raw_parts(self.ptr.as_ptr(), self.len) }
+    }
+}
+
+impl core::ops::DerefMut for DmaBuffer {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        unsafe { core::slice::from_raw_parts_mut(self.ptr.as_ptr(), self.len) }
+    }
+}
+
+impl<A: CastableAllocator + Clone> From<Vec<u8, A>> for DmaBuffer {
+    fn from(value: Vec<u8, A>) -> Self {
+        let alloc = Box::new(value.allocator().clone());
+        let capacity = value.capacity();
+        let len = value.len();
+
+        Self {
+            ptr: NonNull::from_mut(Vec::leak(value)).cast(),
+            len,
+            capacity,
+            alloc,
+        }
+    }
+}
+
+impl<A: CastableAllocator + Clone> From<Box<[u8], A>> for DmaBuffer {
+    fn from(value: Box<[u8], A>) -> Self {
+        let alloc = Box::new(Box::allocator(&value).clone());
+        let len = value.len();
+
+        Self {
+            ptr: NonNull::from_mut(Box::leak(value)).cast(),
+            len,
+            capacity: len,
+            alloc,
+        }
+    }
+}
+
+impl<A: CastableAllocator> TryFrom<DmaBuffer> for Vec<u8, A> {
+    type Error = FromDmaBufferError;
+    fn try_from(mut value: DmaBuffer) -> Result<Self, Self::Error> {
+        if value.alloc.ty_eq::<A>() {
+            let DmaBuffer {
+                ptr, len, capacity, ..
+            } = value;
+            let alloc = core::mem::replace(&mut value.alloc, Box::new(DummyAllocator));
+            core::mem::forget(value);
+            unsafe {
+                Ok(Vec::from_raw_parts_in(
+                    ptr.as_ptr(),
+                    len,
+                    capacity,
+                    *alloc.as_any().downcast().unwrap(),
+                ))
+            }
+        } else {
+            Err(FromDmaBufferError::IncorrectAllocator(value))
+        }
+    }
+}
+
+#[doc(hidden)]
+pub trait CastableAllocator: Allocator + Any + 'static {
+    fn ty_name(&self) -> &'static str;
+
+    fn as_any(self: Box<Self>) -> Box<dyn Any>;
+
+    fn ty_id(&self) -> core::any::TypeId;
+}
+
+impl<T> CastableAllocator for T
+where
+    T: Allocator + Any + 'static,
+{
+    fn ty_name(&self) -> &'static str {
+        core::any::type_name::<T>()
+    }
+
+    fn as_any(self: Box<Self>) -> Box<dyn Any> {
+        self
+    }
+
+    fn ty_id(&self) -> core::any::TypeId {
+        core::any::TypeId::of::<T>()
+    }
+}
+
+impl dyn CastableAllocator {
+    fn ty_eq<T: Any>(&self) -> bool {
+        self.ty_id() == core::any::TypeId::of::<T>()
+    }
+}
+
+#[derive(Debug)]
+pub enum FromDmaBufferError {
+    IncorrectAllocator(DmaBuffer),
+}
+
+/// This exists for the sole purpose of being able to swap out the allocator of a [DmaBuffer]
+/// while guaranteeing a ZST.
+#[derive(Copy, Clone)]
+#[doc(hidden)]
+struct DummyAllocator;
+
+unsafe impl Allocator for DummyAllocator {
+    fn allocate(&self, _layout: Layout) -> Result<NonNull<[u8]>, AllocError> {
+        unimplemented!()
+    }
+
+    unsafe fn deallocate(&self, _ptr: NonNull<u8>, _layout: Layout) {
+        unimplemented!()
     }
 }
 
