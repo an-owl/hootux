@@ -4,7 +4,7 @@
 //! it's not intended to be present in a proper environment.
 
 use crate::fs::{IoError, get_vfs};
-use crate::mem::dma::{DmaClaimable, DmaGuard};
+use crate::mem::dma::DmaBuff;
 use crate::println;
 use crate::task::TaskResult;
 use alloc::boxed::Box;
@@ -43,22 +43,17 @@ impl KernelShell {
     }
 
     pub async fn run(mut self) -> hootux::task::TaskResult {
-        let mut buffer = vec![0u8; Self::BUFER_SIZE];
+        let mut buffer = DmaBuff::from(vec![0u8; Self::BUFER_SIZE]);
         loop {
             if self.buffered.is_empty() {
                 crate::print!("\nKSHELL# ")
             }
-            //buffer[..].fill(0);
-            let dma = DmaGuard::new(buffer);
-            let (claimed, buff) = dma.claim().unwrap();
-            match self.in_fo.read(0, buff).await {
+            match self.in_fo.read(0, buffer).await {
                 Ok((returned, len)) => {
-                    drop(returned); // drop borrowed we can now reclaim the buffer
-                    let t = claimed.unwrap().ok().unwrap().unwrap();
                     // echo
                     // Note: this allocates a string if `t` is not utf8
-                    crate::print!("{}", String::from_utf8_lossy(&t[..len]));
-                    buffer = t;
+                    crate::print!("{}", String::from_utf8_lossy(&returned[..len]));
+                    buffer = returned;
 
                     match len {
                         0 => {} // ???
@@ -103,8 +98,7 @@ impl KernelShell {
                     }
                 }
                 Err((IoError::EndOfFile, out, ..)) => {
-                    drop(out);
-                    buffer = claimed.unwrap().ok().unwrap().unwrap();
+                    buffer = out;
                     continue;
                 }
                 Err((err, _, _)) => {
@@ -230,13 +224,10 @@ impl Command for BuiltinCommands {
                     let mut partial = Vec::new();
                     const PARTIAL_SIZE: usize = 4096;
                     partial.resize(PARTIAL_SIZE, 0u8);
-                    let guard = DmaGuard::new(partial);
-                    let (guard, borrow) = guard.claim().unwrap();
-                    match f.read(count, borrow).await {
+                    let buffer = DmaBuff::from(partial);
+                    match f.read(count, buffer).await {
                         Ok((buff, len)) => {
-                            drop(buff);
-                            let t = guard.unwrap().ok().unwrap().unwrap();
-                            full_buff.extend_from_slice(&t[..len]);
+                            full_buff.extend_from_slice(&buff[..len]);
                             count += len as u64;
                             if len != PARTIAL_SIZE {
                                 break;
@@ -292,15 +283,13 @@ impl Command for BuiltinCommands {
                 else {
                     return CommandResult::Err;
                 };
-                let dma = DmaGuard::new(buffer);
-                let (dma, borrow) = dma.claim().unwrap();
-                match file.read(pos, borrow).await {
-                    Ok((buff, read_len)) => {
-                        drop(buff);
+                let dma = DmaBuff::from(buffer);
+                match file.read(pos, dma).await {
+                    Ok((dma, read_len)) => {
                         if read_len != len {
                             log::warn!("Read {read_len} bytes expected {len}");
                         }
-                        let buff = dma.unwrap().unwrap().unwrap();
+                        let buff = dma;
                         match str::from_utf8(&buff[..read_len]) {
                             Ok(s) => {
                                 println!("{}", s)
@@ -308,7 +297,7 @@ impl Command for BuiltinCommands {
                             Err(_) => {
                                 use core::fmt::Write as _;
                                 let mut s = String::new();
-                                for i in buff {
+                                for i in &*buff {
                                     core::write!(s, "{:#x} ", i).unwrap();
                                 }
                                 println!("{s}");

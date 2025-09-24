@@ -2,10 +2,10 @@ use super::file::*;
 use super::vfs::*;
 use super::*;
 use crate::fs::IoError::NotPresent;
-use crate::mem::dma::{DmaBuff, DmaClaimable, DmaTarget};
+use crate::mem::dma::DmaBuff;
 use alloc::string::ToString;
 use alloc::vec::Vec;
-use alloc::{boxed::Box, collections::BTreeMap, string::String, sync::Arc, sync::Weak};
+use alloc::{boxed::Box, collections::BTreeMap, string::String, sync::Arc, sync::Weak, vec};
 use cast_trait_object::DynCastExt;
 use core::any::TypeId;
 use futures_util::FutureExt;
@@ -310,25 +310,16 @@ impl Directory for Dir {
                 if let Some(file) = file {
                     let len = file.len_chars().await.map_err(|e| (None, Some(e)))?;
                     // fixme if another file appends to the file before reading then we do not capture the entire file.
-                    let mut vec = Vec::with_capacity(len.try_into().unwrap());
 
-                    // Extends the buffer without initializing memory
-                    // SAFETY: This is safe because we set the size above & u8 is always valid to read.
-                    unsafe { vec.set_len(len.try_into().unwrap()) };
-                    let dbuff = crate::mem::dma::DmaGuard::from(vec);
-                    let (dbuff, claimed) = dbuff.claim().unwrap(); // cannot fail
-
-                    let (_, read_len) = file
-                        .read(0, claimed)
+                    let mut buffer = DmaBuff::from(vec![0; len.try_into().unwrap()]);
+                    let (b, read_len) = file
+                        .read(0, buffer)
                         .await
                         .map_err(|(e, _, _)| (None, Some(e)))?; // drop claimed buffer after completion
-                    let Ok(dbuff) = dbuff.unwrap() else {
-                        unreachable!()
-                    };
-                    let mut vec = dbuff.unwrap();
+                    buffer = b;
 
-                    vec.truncate(read_len); // If the file shrinks between getting len and reading then we truncate garbage data.
-
+                    let mut vec: Vec<_> = buffer.try_into().unwrap();
+                    vec.shrink_to(read_len);
                     *new_file.data.write().await = vec;
                 }
                 entry.insert(new_file.serial);
@@ -549,13 +540,13 @@ impl File for TmpFsNormalFile {
 }
 
 impl Read<u8> for TmpFsNormalFile {
-    fn read<'f, 'a: 'f, 'b: 'f>(
-        &'a self,
+    fn read(
+        &self,
         pos: u64,
-        mut dbuff: DmaBuff<'b>,
-    ) -> BoxFuture<'f, Result<(DmaBuff<'b>, usize), (IoError, DmaBuff<'b>, usize)>> {
+        mut dbuff: DmaBuff,
+    ) -> BoxFuture<Result<(DmaBuff, usize), (IoError, DmaBuff, usize)>> {
         async move {
-            let buff = unsafe { &mut *DmaTarget::data_ptr(&mut *dbuff) };
+            let buff = &mut *dbuff;
             if !self.accessor.lock.lock().cmp_t(self) {
                 return Err((IoError::Exclusive, dbuff, 0));
             }
@@ -572,13 +563,13 @@ impl Read<u8> for TmpFsNormalFile {
 }
 
 impl Write<u8> for TmpFsNormalFile {
-    fn write<'f, 'a: 'f, 'b: 'f>(
-        &'a self,
+    fn write(
+        &self,
         pos: u64,
-        mut dbuff: DmaBuff<'b>,
-    ) -> BoxFuture<'f, Result<(DmaBuff<'b>, usize), (IoError, DmaBuff<'b>, usize)>> {
+        mut dbuff: DmaBuff,
+    ) -> BoxFuture<Result<(DmaBuff, usize), (IoError, DmaBuff, usize)>> {
         async move {
-            let buff = unsafe { &mut *DmaTarget::data_ptr(&mut *dbuff) };
+            let buff = &mut *dbuff;
             if !self.accessor.lock.lock().cmp_t(self) {
                 return Err((IoError::Exclusive, dbuff, 0));
             }
@@ -591,7 +582,8 @@ impl Write<u8> for TmpFsNormalFile {
             }
             file[pos as usize..pos as usize + buff.len()].copy_from_slice(buff);
 
-            Ok((dbuff, buff.len()))
+            let len = dbuff.len();
+            Ok((dbuff, len))
         }
         .boxed()
     }

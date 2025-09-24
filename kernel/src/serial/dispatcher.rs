@@ -126,30 +126,9 @@ impl SerialDispatcher {
     /// Don't use this if you can avoid it.
     /// It will push data to the serial buffer regardless of the quota always prefer to use the sink.
     /// This may break the ordering of the output.
-    ///
-    /// Has a limit of 128 characters.
     pub fn write_sync(&self, data: core::fmt::Arguments) -> Result<(), (IoError, usize)> {
-        use crate::util::WriteableBuffer;
-        let mut self_mut = self.clone();
-        let mut st = [0u8; 128];
-
-        let mut stw = st.writable();
-        let _ = core::write!(stw, "{}", data); // idc if this fails
-        self_mut.open(OpenMode::Write).map_err(|e| (e, 0))?;
-        let len = stw.cursor();
-        drop(stw);
-
-        // SAFETY: This thread will block waiting for this operation to complete
-        let mut dma_buff = unsafe { crate::mem::dma::StackDmaGuard::new(&mut st[..len]) };
-
-        // SAFETY: This is unsafe because this may attempt to call deallocate() on &dma_buff. Box::leak() is called below
-        let stack_box = unsafe { Box::from_raw(&mut dma_buff) };
-        // pos=0: `pos` ignored by this module
-        let (Ok((stack_box, _)) | Err((_, stack_box, _))) =
-            crate::task::util::block_on!(self_mut.write(0, stack_box));
-        // SAFETY: This must be called because of Box::from_raw above.
-        let _ = Box::leak(stack_box);
-
+        hootux::block_on!(self.write(0, data.to_string().into()))
+            .map_err(|(e, _, len)| (e, len))?;
         Ok(())
     }
 
@@ -285,11 +264,11 @@ impl crate::fs::device::Fifo<u8> for SerialDispatcher {
 ///
 /// Note: At the time of writing timers are only accurate to 4ms.
 impl Read<u8> for SerialDispatcher {
-    fn read<'f, 'a: 'f, 'b: 'f>(
-        &'a self,
+    fn read(
+        &self,
         _: u64,
-        mut dbuff: DmaBuff<'b>,
-    ) -> BoxFuture<'f, Result<(DmaBuff<'b>, usize), (IoError, DmaBuff<'b>, usize)>> {
+        mut dbuff: DmaBuff,
+    ) -> BoxFuture<Result<(DmaBuff, usize), (IoError, DmaBuff, usize)>> {
         async {
             if self.fifo_lock.is_read() {
                 // cant use ok_or(_) here because of use after free on `dbuff`
@@ -298,8 +277,7 @@ impl Read<u8> for SerialDispatcher {
                     None => return Err((IoError::MediaError, dbuff, 0)),
                 };
 
-                // SAFETY: This is safe because as_mut guarantees that this can be cast safely.
-                let buff = unsafe { &mut *crate::mem::dma::DmaTarget::data_ptr(&mut *dbuff) };
+                let buff = &mut *dbuff;
 
                 // Interrupts must be blocked here to prevent deadlocks.
                 // returning Some(_) here indicates early completion.
@@ -391,18 +369,18 @@ impl<'a, 'b> core::future::Future for ReadFut<'a, 'b> {
 }
 
 impl Write<u8> for SerialDispatcher {
-    fn write<'f, 'a: 'f, 'b: 'f>(
-        &'a self,
+    fn write(
+        &self,
         _: u64,
-        mut dbuff: DmaBuff<'b>,
-    ) -> BoxFuture<'f, Result<(DmaBuff<'b>, usize), (IoError, DmaBuff<'b>, usize)>> {
+        mut dbuff: DmaBuff,
+    ) -> BoxFuture<Result<(DmaBuff, usize), (IoError, DmaBuff, usize)>> {
         async {
             if self.fifo_lock.is_write() {
-                // SAFETY: as_mut guarantees that this is safe.
-                let buff = unsafe { &mut *crate::mem::dma::DmaTarget::data_ptr(&mut *dbuff) };
+                let buff = &mut *dbuff;
                 // Returning here indicates that the driver has closed the controller.
-                let real =
-                    ok_or_lazy!(self.inner.real.upgrade() => Err((IoError::MediaError, dbuff, 0)));
+                let Some(real) = self.inner.real.upgrade() else {
+                    return Err((IoError::MediaError, dbuff, 0));
+                };
                 let run = real.run.swap(true, atomic::Ordering::Acquire);
                 let mut write_buff = real.write_buff.lock();
                 let push = write_buff.push(buff);
@@ -416,8 +394,8 @@ impl Write<u8> for SerialDispatcher {
                     });
                 }
                 push.await;
-
-                Ok((dbuff, buff.len()))
+                let blen = buff.len();
+                Ok((dbuff, blen))
             } else {
                 Err((IoError::NotReady, dbuff, 0))
             }
@@ -490,15 +468,18 @@ impl NormalFile for FrameCtlBFile {
 }
 
 impl Read<u8> for FrameCtlBFile {
-    fn read<'f, 'a: 'f, 'b: 'f>(
-        &'a self,
+    fn read(
+        &self,
         _: u64,
-        mut dbuff: DmaBuff<'b>,
-    ) -> BoxFuture<'f, Result<(DmaBuff<'b>, usize), (IoError, DmaBuff<'b>, usize)>> {
+        mut dbuff: DmaBuff,
+    ) -> BoxFuture<Result<(DmaBuff, usize), (IoError, DmaBuff, usize)>> {
         async {
-            let buff = unsafe { &mut *crate::mem::dma::DmaTarget::data_ptr(&mut *dbuff) };
-            let real = ok_or_lazy!(self.dispatch.inner.real.upgrade() => Err((IoError::MediaError, dbuff, 0)));
-            let b_rate = 115200f32/(real.divisor.load(atomic::Ordering::Relaxed) as f32); // use emulated float for conversion to baud-rate
+            let buff = &mut *dbuff;
+            let Some(real) = self.dispatch.inner.real.upgrade() else {
+                return Err((IoError::MediaError, dbuff, 0));
+            };
+
+            let b_rate = 115200f32 / (real.divisor.load(atomic::Ordering::Relaxed) as f32); // use emulated float for conversion to baud-rate
             let data_bits: u8 = real.bits.load(atomic::Ordering::Relaxed).into();
             let parity: char = real.parity.load(atomic::Ordering::Relaxed).into();
             let stop = real.stop.load(atomic::Ordering::Relaxed) as u8 + 1;
@@ -507,31 +488,34 @@ impl Read<u8> for FrameCtlBFile {
             // also moves buff[0..10] into L1D
             let end = buff.len().min(10);
             buff[..end].fill(0);
-            let err = write!(buff.writable(),"{b_rate:.0}-{data_bits}{parity}{stop}").is_err();
+            let err = write!(buff.writable(), "{b_rate:.0}-{data_bits}{parity}{stop}").is_err();
+            let blen = buff.len();
             if err {
-                return Err((IoError::EndOfFile, dbuff, buff.len()))
+                return Err((IoError::EndOfFile, dbuff, blen));
             }
 
             let len = buff[..10].iter().position(|c| *c == 0).unwrap_or(10);
-            Ok((dbuff,len))
-        }.boxed()
+            Ok((dbuff, len))
+        }
+        .boxed()
     }
 }
 
 impl Write<u8> for FrameCtlBFile {
-    fn write<'f, 'a: 'f, 'b: 'f>(
-        &'a self,
+    fn write(
+        &self,
         _: u64,
-        mut dbuff: DmaBuff<'b>,
-    ) -> BoxFuture<'f, Result<(DmaBuff<'b>, usize), (IoError, DmaBuff<'b>, usize)>> {
+        mut dbuff: DmaBuff,
+    ) -> BoxFuture<Result<(DmaBuff, usize), (IoError, DmaBuff, usize)>> {
         async {
-            let buff = unsafe { &mut *crate::mem::dma::DmaTarget::data_ptr(&mut *dbuff) };
+            let buff = &mut *dbuff;
             let s = match core::str::from_utf8(buff) {
                 Ok(s) => s,
                 Err(_) => return Err((IoError::InvalidData, dbuff, 0)),
             };
 
-            let (baud_rate, frame) = s.split_at( ok_or_lazy!(s.find('-') => Err((IoError::InvalidData, dbuff, 0))));
+            let Some(split) = s.find('-') else {return Err((IoError::InvalidData, dbuff, 0))};
+            let (baud_rate, frame) = s.split_at(split);
 
             let baud_rate: u32 =
                 match baud_rate.parse() {
@@ -599,7 +583,8 @@ impl Write<u8> for FrameCtlBFile {
             let real = ok_or_lazy!(self.dispatch.inner.real.upgrade()  => Err((IoError::MediaError, dbuff,0)));
             real.set_char_mode(data_bits,parity,stop_bits);
             real.set_divisor(divisor);
-            Ok((dbuff, buff.len()))
+            let blen = dbuff.len();
+            Ok((dbuff, blen))
         }.boxed()
     }
 }

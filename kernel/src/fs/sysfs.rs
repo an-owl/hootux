@@ -295,21 +295,21 @@ impl NormalFile for EventFile {
 }
 
 impl Write<u8> for EventFile {
-    fn write<'f, 'a: 'f, 'b: 'f>(
-        &'a self,
+    fn write(
+        &self,
         _: u64,
-        buff: DmaBuff<'b>,
-    ) -> BoxFuture<'f, Result<(DmaBuff<'b>, usize), (IoError, DmaBuff<'b>, usize)>> {
+        buff: DmaBuff,
+    ) -> BoxFuture<Result<(DmaBuff, usize), (IoError, DmaBuff, usize)>> {
         self.read(0, buff) // read will yield the same return value as write
     }
 }
 
 impl Read<u8> for EventFile {
-    fn read<'f, 'a: 'f, 'b: 'f>(
-        &'a self,
+    fn read(
+        &self,
         _: u64,
-        buff: DmaBuff<'b>,
-    ) -> BoxFuture<'f, Result<(DmaBuff<'b>, usize), (IoError, DmaBuff<'b>, usize)>> {
+        buff: DmaBuff,
+    ) -> BoxFuture<Result<(DmaBuff, usize), (IoError, DmaBuff, usize)>> {
         async {
             let event_fut = alloc::sync::Arc::new(EventWait::new());
             self.slaves.lock().push(event_fut.clone());
@@ -403,21 +403,21 @@ impl File for BindingFile {
 }
 
 impl Read<u8> for BindingFile {
-    fn read<'f, 'a: 'f, 'b: 'f>(
-        &'a self,
+    fn read(
+        &self,
         _pos: u64,
-        buff: DmaBuff<'b>,
-    ) -> BoxFuture<'f, Result<(DmaBuff<'b>, usize), (IoError, DmaBuff<'b>, usize)>> {
+        buff: DmaBuff,
+    ) -> BoxFuture<Result<(DmaBuff, usize), (IoError, DmaBuff, usize)>> {
         async { Ok((buff, 0)) }.boxed()
     }
 }
 
 impl Write<u8> for BindingFile {
-    fn write<'f, 'a: 'f, 'b: 'f>(
-        &'a self,
+    fn write(
+        &self,
         _pos: u64,
-        buff: DmaBuff<'b>,
-    ) -> BoxFuture<'f, Result<(DmaBuff<'b>, usize), (IoError, DmaBuff<'b>, usize)>> {
+        buff: DmaBuff,
+    ) -> BoxFuture<Result<(DmaBuff, usize), (IoError, DmaBuff, usize)>> {
         async { Ok((buff, 0)) }.boxed()
     }
 }

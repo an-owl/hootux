@@ -249,14 +249,11 @@ pub trait Read<T> {
     /// If this fn returns `Err(_)` it will return the number of characters read before it encountered an error.
     ///
     /// [IoError::NotPresent] - Will be returned when the file no longer exists.
-    fn read<'f, 'a: 'f, 'b: 'f>(
-        &'a self,
+    fn read(
+        &self,
         pos: u64,
-        buff: DmaBuff<'b>,
-    ) -> futures_util::future::BoxFuture<
-        'f,
-        Result<(DmaBuff<'b>, usize), (IoError, DmaBuff<'b>, usize)>,
-    >;
+        buff: DmaBuff,
+    ) -> futures_util::future::BoxFuture<Result<(DmaBuff, usize), (IoError, DmaBuff, usize)>>;
 }
 
 /// This trait's methods may have side effects. Any side effects should be documented at the implementation level.
@@ -267,14 +264,11 @@ pub trait Write<T> {
     /// The data contained in `buff` may not be modified during this operation.
     ///
     /// We can return a `usize` here because a single op cannot reasonably write more than `usize::MAX` bytes
-    fn write<'f, 'a: 'f, 'b: 'f>(
-        &'a self,
+    fn write(
+        &self,
         pos: u64,
-        buff: DmaBuff<'b>,
-    ) -> futures_util::future::BoxFuture<
-        'f,
-        Result<(DmaBuff<'b>, usize), (IoError, DmaBuff<'b>, usize)>,
-    >;
+        buff: DmaBuff,
+    ) -> futures_util::future::BoxFuture<Result<(DmaBuff, usize), (IoError, DmaBuff, usize)>>;
 }
 
 self::file_derive_debug!(Directory);

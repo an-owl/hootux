@@ -7,7 +7,7 @@ use core::marker::PhantomData;
 use core::ops::DerefMut;
 use core::ptr::NonNull;
 
-pub type DmaBuff<'a> = Box<dyn DmaTarget + 'a>;
+pub type DmaBuff = DmaBuffer;
 
 pub struct DmaGuard<T, C> {
     inner: core::mem::ManuallyDrop<C>,

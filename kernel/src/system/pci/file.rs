@@ -187,16 +187,17 @@ impl NormalFile for Class {
 impl SysfsFile for Class {}
 
 impl Read<u8> for Class {
-    fn read<'f, 'a: 'f, 'b: 'f>(
-        &'a self,
+    fn read(
+        &self,
         _: u64,
-        mut buff: DmaBuff<'b>,
-    ) -> BoxFuture<'f, Result<(DmaBuff<'b>, usize), (IoError, DmaBuff<'b>, usize)>> {
+        mut buff: DmaBuff,
+    ) -> BoxFuture<Result<(DmaBuff, usize), (IoError, DmaBuff, usize)>> {
         async {
-            let b = unsafe { &mut *buff.data_ptr() };
-            let class = self.accessor.ctl.lock().await.class;
-            let len = b.len().min(class.len());
-            b[..len].copy_from_slice(&class[..len]);
+            let blen = buff.len().max(3);
+            let tgt = &mut buff[0..blen];
+            let len = tgt.len();
+            tgt.copy_from_slice(&self.accessor.ctl.lock().await.class[..len]);
+
             Ok((buff, len))
         }
         .boxed()
@@ -204,11 +205,11 @@ impl Read<u8> for Class {
 }
 
 impl Write<u8> for Class {
-    fn write<'f, 'a: 'f, 'b: 'f>(
-        &'a self,
+    fn write(
+        &self,
         _: u64,
-        buff: DmaBuff<'b>,
-    ) -> BoxFuture<'f, Result<(DmaBuff<'b>, usize), (IoError, DmaBuff<'b>, usize)>> {
+        buff: DmaBuff,
+    ) -> BoxFuture<Result<(DmaBuff, usize), (IoError, DmaBuff, usize)>> {
         async { Err((IoError::ReadOnly, buff, 0)) }.boxed()
     }
 }
@@ -278,16 +279,18 @@ impl NormalFile for ConfigRegionFile {
 impl SysfsFile for ConfigRegionFile {}
 
 impl Read<u8> for ConfigRegionFile {
-    fn read<'f, 'a: 'f, 'b: 'f>(
-        &'a self,
+    fn read(
+        &self,
         pos: u64,
-        mut buff: DmaBuff<'b>,
-    ) -> BoxFuture<'f, Result<(DmaBuff<'b>, usize), (IoError, DmaBuff<'b>, usize)>> {
+        mut buff: DmaBuff,
+    ) -> BoxFuture<Result<(DmaBuff, usize), (IoError, DmaBuff, usize)>> {
         async move {
-            let tgt: &[u8] = &self.accessor.ctl.lock().await.cfg_region[pos as usize..];
-            let b = unsafe { &mut *buff.data_ptr() };
-            let len = tgt.len().min(buff.len());
-            b[..len].copy_from_slice(&tgt[..len]);
+            let Ok(pos) = pos.try_into() else {
+                return Err((IoError::EndOfFile, buff, 0));
+            };
+            let cfg_region = &self.accessor.ctl.lock().await.cfg_region[pos..];
+            let len = buff.len().max(cfg_region.len());
+            buff[..len].copy_from_slice(&cfg_region[..len]);
             Ok((buff, len))
         }
         .boxed()
@@ -295,11 +298,11 @@ impl Read<u8> for ConfigRegionFile {
 }
 
 impl Write<u8> for ConfigRegionFile {
-    fn write<'f, 'a: 'f, 'b: 'f>(
-        &'a self,
+    fn write(
+        &self,
         _: u64,
-        buff: DmaBuff<'b>,
-    ) -> BoxFuture<'f, Result<(DmaBuff<'b>, usize), (IoError, DmaBuff<'b>, usize)>> {
+        buff: DmaBuff,
+    ) -> BoxFuture<Result<(DmaBuff, usize), (IoError, DmaBuff, usize)>> {
         async {
             log::debug!(
                 "Called write on {}, which currently does not allow writing",
