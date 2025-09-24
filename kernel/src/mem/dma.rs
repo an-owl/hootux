@@ -616,6 +616,11 @@ impl<A: CastableAllocator> TryFrom<DmaBuffer> for Vec<u8, A> {
     }
 }
 
+// SAFETY: Not really sure what to write here.
+// This is DmaBuffer is effectively a Box<u8>.
+unsafe impl Send for DmaBuffer {}
+unsafe impl Sync for DmaBuffer {}
+
 #[doc(hidden)]
 pub trait CastableAllocator: Allocator + Any + 'static {
     fn ty_name(&self) -> &'static str;
