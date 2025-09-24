@@ -587,6 +587,12 @@ impl<A: CastableAllocator + Clone> From<Box<[u8], A>> for DmaBuffer {
     }
 }
 
+impl From<alloc::string::String> for DmaBuffer {
+    fn from(value: alloc::string::String) -> Self {
+        value.into_boxed_str().into_boxed_bytes().into()
+    }
+}
+
 impl<A: CastableAllocator> TryFrom<DmaBuffer> for Vec<u8, A> {
     type Error = FromDmaBufferError;
     fn try_from(mut value: DmaBuffer) -> Result<Self, Self::Error> {
