@@ -696,7 +696,7 @@ pub(crate) mod file {
     use hootux::fs::sysfs::SysfsFile;
     use hootux::fs::vfs::MajorNum;
     use hootux::fs::{IoError, IoResult, device::*, file::*};
-    use hootux::mem::dma::{DmaBuff, DmaTarget};
+    use hootux::mem::dma::DmaBuff;
 
     #[derive(Debug, Copy, Clone)]
     pub enum PortNum {
@@ -848,21 +848,21 @@ pub(crate) mod file {
     }
 
     impl hootux::fs::file::Write<u8> for PortFileObject {
-        fn write<'f, 'a: 'f, 'b: 'f>(
-            &'a self,
+        fn write(
+            &self,
             _pos: u64,
-            buff: DmaBuff<'b>,
-        ) -> BoxFuture<'f, Result<(DmaBuff<'b>, usize), (IoError, DmaBuff<'b>, usize)>> {
+            buff: DmaBuff,
+        ) -> BoxFuture<'_, Result<(DmaBuff, usize), (IoError, DmaBuff, usize)>> {
             async { Err((IoError::NotSupported, buff, 0)) }.boxed()
         }
     }
 
     impl hootux::fs::file::Read<u8> for PortFileObject {
-        fn read<'f, 'a: 'f, 'b: 'f>(
-            &'a self,
+        fn read(
+            &self,
             pos: u64,
-            mut buff: DmaBuff<'b>,
-        ) -> BoxFuture<'f, Result<(DmaBuff<'b>, usize), (IoError, DmaBuff<'b>, usize)>> {
+            mut buff: DmaBuff,
+        ) -> BoxFuture<'_, Result<(DmaBuff, usize), (IoError, DmaBuff, usize)>> {
             async move {
                 if !self.mode.is_read() {
                     return Err((IoError::DeviceError, buff, 0));
@@ -880,7 +880,7 @@ pub(crate) mod file {
                         };
 
                         let (mut b, len) = IoFuture::new(lock, buff, self.port).await;
-                        let b_ref = unsafe { &mut *DmaTarget::data_ptr(&mut *b) };
+                        let b_ref = &mut *b;
 
                         let mut decoder = pc_keyboard::EventDecoder::new(
                             pc_keyboard::layouts::Us104Key,
@@ -929,8 +929,7 @@ pub(crate) mod file {
                     }
                     2 => {
                         let ctl = self.ctl.lock().await;
-                        let t = DmaTarget::data_ptr(&mut *buff);
-                        let mut b = unsafe { hootux::ToWritableBuffer::writable(&mut *t) };
+                        let mut b = hootux::ToWritableBuffer::writable(&mut *buff);
 
                         let port = match self.port {
                             PortNum::One => &ctl.port_1,
@@ -938,8 +937,16 @@ pub(crate) mod file {
                         };
 
                         match write!(b, "{:?}", port.state()) {
-                            Ok(()) => Ok((buff, b.cursor())),
-                            Err(_) => Err((IoError::EndOfFile, buff, b.cursor())),
+                            Ok(()) => {
+                                let b_len = b.cursor();
+                                drop(b);
+                                Ok((buff, b_len))
+                            }
+                            Err(_) => {
+                                let b_len = b.cursor();
+                                drop(b);
+                                Err((IoError::EndOfFile, buff, b_len))
+                            }
                         }
                     }
                     _ => Err((IoError::EndOfFile, buff, 0)),
@@ -949,28 +956,26 @@ pub(crate) mod file {
         }
     }
 
-    struct IoFuture<'a, 'b> {
+    struct IoFuture<'a> {
         ctl: Option<async_lock::MutexGuard<'a, super::Controller>>,
-        buff: Option<Box<dyn DmaTarget + 'b>>,
+        buff: Option<DmaBuff>,
         tgt: alloc::sync::Arc<(*mut [u8], core::sync::atomic::AtomicUsize)>,
         port_num: PortNum,
     }
 
     // SAFETY: Required because IoFuture contains *mut [u8]
     // The pointer points to data which IoFuture contains exclusive access to.
-    unsafe impl Sync for IoFuture<'_, '_> {}
-    unsafe impl Send for IoFuture<'_, '_> {}
+    unsafe impl Sync for IoFuture<'_> {}
+    unsafe impl Send for IoFuture<'_> {}
 
-    impl<'a, 'b> IoFuture<'a, 'b> {
+    impl<'a> IoFuture<'a> {
         fn new(
             ctl: async_lock::MutexGuard<'a, super::Controller>,
-            mut buff: Box<dyn DmaTarget + 'b>,
+            mut buff: DmaBuff,
             port_num: PortNum,
         ) -> Self {
-            let tgt = alloc::sync::Arc::new((
-                DmaTarget::data_ptr(&mut *buff),
-                core::sync::atomic::AtomicUsize::new(0),
-            ));
+            let tgt =
+                alloc::sync::Arc::new((&raw mut *buff, core::sync::atomic::AtomicUsize::new(0)));
 
             Self {
                 ctl: Some(ctl),
@@ -980,8 +985,8 @@ pub(crate) mod file {
             }
         }
     }
-    impl<'a, 'b> Future for IoFuture<'a, 'b> {
-        type Output = (Box<dyn DmaTarget + 'b>, usize);
+    impl<'a> Future for IoFuture<'a> {
+        type Output = (DmaBuff, usize);
 
         /// Inserts `self.tgt` into the [super::PortComplex], and waits for data to be present.
         ///
