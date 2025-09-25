@@ -310,7 +310,7 @@ impl Read<u8> for AhciCharDevice {
         &self,
         pos: u64,
         buff: DmaBuff,
-    ) -> BoxFuture<Result<(DmaBuff, usize), (IoError, DmaBuff, usize)>> {
+    ) -> BoxFuture<'_, Result<(DmaBuff, usize), (IoError, DmaBuff, usize)>> {
         async move {
             let sector_size = self.get_ident().await;
             let len = match self.op_sanity_check(pos, buff.len()).await {
@@ -344,7 +344,7 @@ impl Write<u8> for AhciCharDevice {
         &self,
         pos: u64,
         buff: DmaBuff,
-    ) -> BoxFuture<Result<(DmaBuff, usize), (IoError, DmaBuff, usize)>> {
+    ) -> BoxFuture<'_, Result<(DmaBuff, usize), (IoError, DmaBuff, usize)>> {
         async move {
             let sector_size = self.get_ident().await;
             let len = match self.op_sanity_check(pos, buff.len()).await {

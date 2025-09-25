@@ -1,4 +1,5 @@
 use crate::hba::command::{CommandHeader, CommandTableRaw, PhysicalRegionDescription};
+use hootux::mem::dma::DmaBuff;
 
 /// This is used to store a table that is not used to send commands and has a constant location in
 /// physical memory.
@@ -101,7 +102,7 @@ impl<'a> CommandTable<'a> {
     pub fn send_fis(
         &mut self,
         fis: crate::hba::command::frame_information_structure::RegisterHostToDevFis,
-        buff: Option<&mut (dyn hootux::mem::dma::DmaTarget + 'static)>,
+        buff: Option<&mut DmaBuff>,
     ) -> Result<(), CommandError> {
         // See Note above
         unsafe { self.table.send_fis(fis, buff) }?;
@@ -165,15 +166,12 @@ impl UnboundCommandTable {
     /// When this fn returns `Err(CommandError::BuffTooLong(n))` the PRDT has been built for `n` bytes.
     /// A second command will be required to fill the remaining buffer.
     // todo: region should ideally use a raw pointer. This is ok for not but watch "raw_slice_len" https://github.com/rust-lang/rust/issues/71146
-    pub(crate) unsafe fn build_prdt(
-        &mut self,
-        region: &mut dyn hootux::mem::dma::DmaTarget,
-    ) -> Result<(), CommandError> {
+    pub(crate) unsafe fn build_prdt(&mut self, region: &mut DmaBuff) -> Result<(), CommandError> {
         if region.len() & 1 != 0 {
             log::error!("Buffer has odd length");
             return Err(CommandError::BadBuffer);
         }
-        if region.data_ptr().cast::<u8>() as usize & 1 != 0 {
+        if (&raw const region as usize) & 1 != 0 {
             log::error!("Buffer pointer is odd");
             return Err(CommandError::BadBuffer);
         }
@@ -227,7 +225,7 @@ impl UnboundCommandTable {
     pub(super) unsafe fn send_fis(
         &mut self,
         cmd: crate::hba::command::frame_information_structure::RegisterHostToDevFis,
-        buff: Option<&mut (dyn hootux::mem::dma::DmaTarget + 'static)>,
+        buff: Option<&mut DmaBuff>,
     ) -> Result<(), CommandError> {
         unsafe {
             if let Some(buff) = buff {

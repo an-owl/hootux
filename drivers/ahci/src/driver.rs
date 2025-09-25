@@ -7,7 +7,6 @@ use core::pin::Pin;
 use core::task::{Context, Poll};
 use hootux::alloc_interface::MmioAlloc;
 use hootux::fs::sysfs::SysfsDirectory;
-use hootux::mem::dma::DmaClaimable;
 use hootux::task::TaskResult;
 
 //pub mod block;
@@ -43,16 +42,14 @@ pub(super) async fn init_async() -> TaskResult {
                         .ok()
                         .unwrap(); // This may trigger in the future if the class file is changed
 
-                    let mut stack_buff = [0u8; 3];
                     // SAFETY: The callee will only use synchronous writes
-                    let guard =
-                        unsafe { hootux::mem::dma::StackDmaGuard::new(&mut stack_buff[..]) };
-                    let Ok(_) = class.read(0, alloc::boxed::Box::new(guard)).await else {
+                    let guard = hootux::mem::dma::DmaBuff::from(alloc::vec![0;3]);
+                    let Ok((buff, 3)) = class.read(0, guard).await else {
                         log::debug!("Failed to read sys/bus/pci/{name}/class");
                         continue 'files;
                     };
 
-                    if stack_buff != ACPI_PCI_ID {
+                    if &*buff != &ACPI_PCI_ID {
                         continue 'files;
                     } // no match try next file
 
@@ -79,9 +76,7 @@ pub(super) async fn init_async() -> TaskResult {
         // Wait for event and try again.
         // Unfortunately this causes the driver to ake on *all* events even the ones that have nothing to do with us.
         let event = cast_file!(NormalFile: SysfsDirectory::get_file(&bus, "event").unwrap() as alloc::boxed::Box<dyn File>).unwrap(); // we can always open this file and it is always a NormalFile
-        let _ = event
-            .read(0, alloc::boxed::Box::new(hootux::mem::dma::BogusBuffer))
-            .await;
+        let _ = event.read(0, hootux::mem::dma::DmaBuff::bogus()).await;
     }
 }
 
@@ -309,25 +304,26 @@ impl Port {
             } else {
                 // min alignment for alloc is 8. This should be u16
                 let buffer = alloc::boxed::Box::new([0u8; 512]);
-                let Some((buffer, borrow)) = hootux::mem::dma::DmaGuard::new(buffer).claim() else {
-                    core::unreachable!()
-                };
+                let buffer = hootux::mem::dma::DmaBuff::from(buffer);
 
                 // SAFETY: IdentifyDevice returns a 512 byte buff
-                unsafe {
-                    let ret = self
-                        .issue_cmd(
-                            ata::command::constructor::NoArgCmd::IdentifyDevice.compose(),
-                            Some(borrow),
-                        )
-                        .await
-                        .ok()
-                        .unwrap(); // todo handle this
-                    drop(ret); // explicit drop
-                }
+                let ident_raw = unsafe {
+                    self.issue_cmd(
+                        ata::command::constructor::NoArgCmd::IdentifyDevice.compose(),
+                        Some(buffer),
+                    )
+                    .await
+                    .ok()
+                    .unwrap() // todo handle this
+                };
 
+                let as_box: alloc::boxed::Box<[u8]> = ident_raw.unwrap().to_box().unwrap();
+                let box_arr: alloc::boxed::Box<[u8; 512]> = as_box.try_into().unwrap();
+
+                // SAFETY: Im not entirely sure this is safe
+                // todo assert soundness
                 let id_raw: alloc::boxed::Box<ata::structures::identification::DeviceIdentity> =
-                    unsafe { core::mem::transmute(buffer.unwrap().unwrap().unwrap()) };
+                    unsafe { core::mem::transmute(box_arr) };
 
                 let id = DevIdentity::from(*id_raw);
 
@@ -353,11 +349,9 @@ impl Port {
     pub async unsafe fn issue_cmd<'a, 'b>(
         &'a self,
         cmd: ata::command::constructor::ComposedCommand,
-        buff: Option<hootux::mem::dma::DmaBuff<'b>>,
-    ) -> Result<
-        Option<hootux::mem::dma::DmaBuff<'b>>,
-        (Option<hootux::mem::dma::DmaBuff<'b>>, CmdErr),
-    > {
+        buff: Option<hootux::mem::dma::DmaBuff>,
+    ) -> Result<Option<hootux::mem::dma::DmaBuff>, (Option<hootux::mem::dma::DmaBuff>, CmdErr)>
+    {
         unsafe {
             // SAFETY: This is guaranteed to be safe by DmaTarget
             let fut = self.construct_future(cmd, core::mem::transmute(buff));
@@ -405,7 +399,7 @@ impl Port {
             // map(): coerces Option(&mut Box<dyn DmaGuard>) to Option<&mut dyn DmaGuard>
             // fixme errors here should be handled
             table
-                .send_fis(fis, b.as_mut().map(|this| &mut **this))
+                .send_fis(fis, b.as_mut().map(|this| &mut *this))
                 .expect("fixme");
             *self.active_cmd_fut[slot as usize].lock() = Some(cmd.clone());
 
@@ -552,7 +546,7 @@ impl Port {
     fn construct_future(
         &self,
         cmd: ata::command::constructor::ComposedCommand,
-        buff: Option<hootux::mem::dma::DmaBuff<'static>>,
+        buff: Option<hootux::mem::dma::DmaBuff>,
     ) -> CmdFuture {
         CmdFuture {
             data: alloc::sync::Arc::new(CmdDataInner {
@@ -634,8 +628,8 @@ impl Port {
     pub async fn read<'a, 'b>(
         &'a self,
         lba: SectorAddress,
-        mut buff: hootux::mem::dma::DmaBuff<'b>,
-    ) -> Result<hootux::mem::dma::DmaBuff<'b>, (hootux::mem::dma::DmaBuff<'b>, CmdErr)> {
+        buff: hootux::mem::dma::DmaBuff,
+    ) -> Result<hootux::mem::dma::DmaBuff, (hootux::mem::dma::DmaBuff, CmdErr)> {
         use ata::command::constructor;
         let id = self.get_identity().await;
         let Ok(raw_count) = (buff.len() as u64 / id.lba_size).try_into() else {
@@ -673,8 +667,8 @@ impl Port {
     pub async fn write<'a, 'b>(
         &'a self,
         lba: SectorAddress,
-        mut buff: hootux::mem::dma::DmaBuff<'b>,
-    ) -> Result<hootux::mem::dma::DmaBuff<'b>, (hootux::mem::dma::DmaBuff<'b>, CmdErr)> {
+        buff: hootux::mem::dma::DmaBuff,
+    ) -> Result<hootux::mem::dma::DmaBuff, (hootux::mem::dma::DmaBuff, CmdErr)> {
         use ata::command::constructor;
 
         let id = self.get_identity().await;
@@ -1030,14 +1024,14 @@ impl CmdLock {
 struct CmdDataInner {
     cmd: ata::command::constructor::ComposedCommand,
     state: atomic::Atomic<CmdState>,
-    buff: spin::mutex::Mutex<Option<hootux::mem::dma::DmaBuff<'static>>>,
+    buff: spin::mutex::Mutex<Option<hootux::mem::dma::DmaBuff>>,
     waker: futures::task::AtomicWaker,
     // contains whether this command used NQC. This is here exclusively for error checking
     nqc: atomic::Atomic<bool>,
 }
 
 impl CmdDataInner {
-    fn take_buff(&self) -> Option<hootux::mem::dma::DmaBuff<'static>> {
+    fn take_buff(&self) -> Option<hootux::mem::dma::DmaBuff> {
         // should be non locking due to non-zero optimization
         self.buff.lock().take()
     }
@@ -1096,10 +1090,8 @@ impl CmdFuture {
 }
 
 impl core::future::Future for CmdFuture {
-    type Output = Result<
-        Option<hootux::mem::dma::DmaBuff<'static>>,
-        (Option<hootux::mem::dma::DmaBuff<'static>>, CmdErr),
-    >;
+    type Output =
+        Result<Option<hootux::mem::dma::DmaBuff>, (Option<hootux::mem::dma::DmaBuff>, CmdErr)>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         match self.data.state.load(atomic::Ordering::Relaxed) {
