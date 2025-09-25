@@ -17,7 +17,7 @@ use ehci::{
 use futures_util::FutureExt;
 use hootux::alloc_interface::DmaAlloc;
 use hootux::fs::vfs::MajorNum;
-use hootux::mem::dma::DmaTarget;
+use hootux::mem::dma::DmaBuff;
 use hootux::task::util::WorkerWaiter;
 use volatile::{VolatilePtr, VolatileRef};
 
@@ -614,7 +614,7 @@ impl EndpointQueueInner {
 
     fn new_string(
         &mut self,
-        payload: Box<dyn hootux::mem::dma::DmaTarget>,
+        payload: DmaBuff,
         int_mode: StringInterruptConfiguration,
     ) -> impl Future<Output = StringCompletion> + use<> {
         let mut st = TransactionString::new(payload, self.packet_size, int_mode);
@@ -790,7 +790,7 @@ impl EndpointQueue {
 
     pub fn new_string(
         &self,
-        payload: Box<dyn DmaTarget>,
+        payload: DmaBuff,
         int_cfg: StringInterruptConfiguration,
     ) -> impl Future<Output = StringCompletion> + use<> {
         x86_64::instructions::interrupts::without_interrupts(|| {
@@ -916,11 +916,11 @@ impl PnpWatchdog {
                         let new_address = ctl_lock.alloc_address();
                         drop(ctl_lock);
 
-                        let command = hootux::mem::dma::DmaGuard::new({
+                        let command = hootux::mem::dma::DmaBuff::from({
                             Vec::from(usb_cfg::CtlTransfer::set_address(new_address).to_bytes())
                         });
 
-                        let ts = TransactionString::setup_transaction(Box::new(command), None);
+                        let ts = TransactionString::setup_transaction(command, None);
                         if !default_table.append_cmd_string(ts).await.is_ok() {
                             panic!("Failed to set address for device");
                         }
@@ -1015,8 +1015,8 @@ struct TransactionString {
     str: Box<[Box<QueueElementTransferDescriptor, DmaAlloc>]>,
     send: hootux::task::util::MessageFuture<hootux::task::util::Sender, StringCompletion>,
     recv: Option<hootux::task::util::MessageFuture<hootux::task::util::Receiver, StringCompletion>>,
-    command_buffer: Option<Box<dyn DmaTarget>>,
-    data_buffer: Box<dyn DmaTarget>,
+    command_buffer: Option<DmaBuff>,
+    data_buffer: DmaBuff,
 }
 
 /// Defines how the [TransactionString] should processed on completion.
@@ -1029,12 +1029,12 @@ enum TransactionStringMetadata {
 
 impl TransactionString {
     fn new(
-        mut payload: Box<dyn DmaTarget>,
+        mut payload: DmaBuff,
         transaction_len: u32,
         interrupt: StringInterruptConfiguration,
     ) -> Self {
         let len = payload.len();
-        let offset_into_initial = payload.data_ptr().cast::<u8>() as usize & PAGE_SIZE - 1;
+        let offset_into_initial = (&raw const payload[0]) as usize & PAGE_SIZE - 1;
 
         let mut prd = payload
             .prd()
@@ -1113,7 +1113,7 @@ impl TransactionString {
             send: tx,
             recv: Some(rx),
             command_buffer: None,
-            data_buffer: Box::new(hootux::mem::dma::DmaGuard::from(Box::new(payload))),
+            data_buffer: payload,
         }
     }
 
@@ -1225,7 +1225,7 @@ impl TransactionString {
         last.set_int_on_complete()
     }
 
-    fn complete(mut self) {
+    fn complete(self) {
         let comp = match self.meta {
             TransactionStringMetadata::Control => {
                 // Control always has 3 QTDs only the middle one gets counted.
@@ -1314,7 +1314,7 @@ impl TransactionString {
             send: tx,
             recv: Some(rx),
             command_buffer: None,
-            data_buffer: Box::new(hootux::mem::dma::BogusBuffer),
+            data_buffer: DmaBuff::bogus(),
         }
     }
 
@@ -1332,12 +1332,12 @@ impl TransactionString {
     ///
     /// The caller must ensure that `payload` is not dropped before or while the controller
     /// performs DMA to `payload`.
-    unsafe fn append_qtd<'a, 'b>(
-        &'a mut self,
-        payload: &'b mut dyn DmaTarget,
+    unsafe fn append_qtd(
+        &mut self,
+        payload: &mut DmaBuff,
         pid: super::PidCode,
         data_toggle: bool,
-    ) -> &'a mut Self {
+    ) -> &mut Self {
         let str = core::mem::take(&mut self.str);
         let mut c = str.into_vec();
         let mut qtd = QueueElementTransferDescriptor::new();
@@ -1409,10 +1409,7 @@ impl TransactionString {
     }
 
     /// Setup as in the PID not we are setting up a transaction.
-    fn setup_transaction(
-        mut setup: Box<dyn DmaTarget + 'static>,
-        data: Option<(Box<dyn DmaTarget + 'static>, PidCode)>,
-    ) -> Self {
+    fn setup_transaction(mut setup: DmaBuff, data: Option<(DmaBuff, PidCode)>) -> Self {
         let mut this = Self::empty();
         assert_eq!(
             setup.len(),
@@ -1420,7 +1417,7 @@ impl TransactionString {
             "Setup transactions must always contain 8 bytes"
         );
         // SAFETY: We guarantee that `setup` owns this address.
-        let len = unsafe { *setup.data_ptr().cast::<u16>().byte_add(6) } as usize;
+        let len = u16::from_le_bytes(setup[6..7].try_into().unwrap()) as usize;
         // Determines the status PID from `data`
         let status_pid = data
             .as_ref()
@@ -1434,7 +1431,7 @@ impl TransactionString {
             .unwrap_or(PidCode::In);
 
         unsafe {
-            this.append_qtd(&mut *setup, PidCode::Control, false);
+            this.append_qtd(&mut setup, PidCode::Control, false);
             this.command_buffer = Some(setup);
             if let Some((mut payload, pid)) = data {
                 assert_ne!(
@@ -1442,12 +1439,12 @@ impl TransactionString {
                     "Setup did not expect a data phase but one was specified anyway"
                 );
                 assert_ne!(pid, PidCode::Control, "Data PID may not be \"Control\"");
-                this.append_qtd(&mut *payload, pid, true);
+                this.append_qtd(&mut payload, pid, true);
                 this.data_buffer = payload;
             }
             // A transaction is used to indicate the setup-command is completed.
             // No data is expected.
-            this.append_qtd(&mut hootux::mem::dma::BogusBuffer, status_pid, true);
+            this.append_qtd(&mut DmaBuff::bogus(), status_pid, true);
         };
 
         this.set_tail_interrupt();
@@ -1471,14 +1468,14 @@ pub enum StringInterruptConfiguration {
 // todo: maybe elevate to crate level.
 #[must_use]
 pub struct StringCompletion {
-    dma_payload: Box<dyn DmaTarget>,
-    command: Option<Box<dyn DmaTarget>>,
+    dma_payload: DmaBuff,
+    command: Option<DmaBuff>,
     len: usize,
     state: Result<crate::UsbError, ()>,
 }
 
 impl StringCompletion {
-    pub fn complete(self) -> (Box<dyn DmaTarget>, usize, Result<crate::UsbError, ()>) {
+    pub fn complete(self) -> (DmaBuff, usize, Result<crate::UsbError, ()>) {
         (self.dma_payload, self.len, self.state)
     }
 
@@ -1487,7 +1484,7 @@ impl StringCompletion {
     }
 
     #[allow(dead_code)]
-    fn get_cmd_buffer(&mut self) -> Option<Box<dyn DmaTarget>> {
+    fn get_cmd_buffer(&mut self) -> Option<DmaBuff> {
         self.command.take()
     }
 }

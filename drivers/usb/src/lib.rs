@@ -145,11 +145,11 @@ async fn init_async() -> TaskResult {
     loop {
         let event_file = cast_file!(NormalFile: SysfsDirectory::get_file(&mut SysFsRoot::new().bus,"event").unwrap()
             .dyn_upcast()).unwrap();
-        let mut event = event_file.read(0, hootux::mem::dma::BogusBuffer::boxed());
+        let mut event = event_file.read(0, hootux::mem::dma::DmaBuffer::bogus());
         // Poll event to mark to setup wake event, to prevent missed events while we are working
         {
             while let Poll::Ready(_) = hootux::poll_once!(Pin::new(&mut event)) {
-                event = event_file.read(0, hootux::mem::dma::BogusBuffer::boxed());
+                event = event_file.read(0, hootux::mem::dma::DmaBuffer::bogus());
             }
         }
 
@@ -165,21 +165,14 @@ async fn init_async() -> TaskResult {
             let class =
                 cast_file!(NormalFile: SysfsDirectory::get_file(&*function,"class").unwrap().dyn_upcast())
                     .unwrap();
-            let mut buffer = [0u8, 0, 0];
 
-            // SAFETY: sys/bus/pci/*/class is always synchronous PIO and can never be DMA.
-            unsafe {
-                class
-                    .read(
-                        0,
-                        alloc::boxed::Box::new(hootux::mem::dma::StackDmaGuard::new(&mut buffer)),
-                    )
-                    .await
-            }
-            .ok()
-            .unwrap(); // This will not return an error
+            let (buffer, _) = class
+                .read(0, hootux::mem::dma::DmaBuff::from(alloc::vec![0; 3]))
+                .await
+                .ok()
+                .unwrap();
 
-            match buffer {
+            match (&*buffer).try_into().unwrap() {
                 UHCI_PCI_CLASS => log::info!("UHCI device found but no driver is implemented {i}"),
                 OHCI_PCI_CLASS => log::info!("OHCI device found but no driver is implemented {i}"),
                 EHCI_PCI_CLASS => {

@@ -306,11 +306,11 @@ impl NormalFile for AhciCharDevice {
 }
 
 impl Read<u8> for AhciCharDevice {
-    fn read<'f, 'a: 'f, 'b: 'f>(
-        &'a self,
+    fn read(
+        &self,
         pos: u64,
-        mut buff: DmaBuff<'b>,
-    ) -> BoxFuture<'f, Result<(DmaBuff<'b>, usize), (IoError, DmaBuff<'b>, usize)>> {
+        buff: DmaBuff,
+    ) -> BoxFuture<Result<(DmaBuff, usize), (IoError, DmaBuff, usize)>> {
         async move {
             let sector_size = self.get_ident().await;
             let len = match self.op_sanity_check(pos, buff.len()).await {
@@ -340,11 +340,11 @@ impl Read<u8> for AhciCharDevice {
 }
 
 impl Write<u8> for AhciCharDevice {
-    fn write<'f, 'a: 'f, 'b: 'f>(
-        &'a self,
+    fn write(
+        &self,
         pos: u64,
-        mut buff: DmaBuff<'b>,
-    ) -> BoxFuture<'f, Result<(DmaBuff<'b>, usize), (IoError, DmaBuff<'b>, usize)>> {
+        buff: DmaBuff,
+    ) -> BoxFuture<Result<(DmaBuff, usize), (IoError, DmaBuff, usize)>> {
         async move {
             let sector_size = self.get_ident().await;
             let len = match self.op_sanity_check(pos, buff.len()).await {

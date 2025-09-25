@@ -10,7 +10,7 @@ use hootux::fs::file::*;
 use hootux::fs::sysfs::{SysfsDirectory, SysfsFile};
 use hootux::fs::vfs::MajorNum;
 use hootux::fs::{IoError, IoResult};
-use hootux::mem::dma::{DmaBuff, DmaClaimable};
+use hootux::mem::dma::DmaBuff;
 use usb_cfg::descriptor::Descriptor;
 
 #[derive(Clone)]
@@ -182,25 +182,22 @@ impl UsbDeviceAccessor {
         controller: alloc::sync::Arc<async_lock::Mutex<super::Ehci>>,
         portnum: u8,
     ) {
-        let data_buff = hootux::mem::dma::DmaGuard::new(alloc::vec![0u8; 8]);
-        let (guarded, borrowed) = data_buff.claim().unwrap();
+        // Get head of Device descriptor so we can set the transaction size
+        let data_buff = hootux::mem::dma::DmaBuff::from(alloc::vec![0u8; 8]);
         let ts = TransactionString::setup_transaction(
             {
                 let descriptor = usb_cfg::CtlTransfer::get_descriptor::<
                     usb_cfg::descriptor::DeviceDescriptor,
                 >(0, Some(8));
                 log::debug!("{descriptor:?} : {:?}", descriptor.to_bytes());
-                Box::new(hootux::mem::dma::DmaGuard::new(Vec::from(
-                    descriptor.to_bytes(),
-                )))
+                DmaBuff::from(Vec::from(descriptor.to_bytes()))
             },
-            Some((borrowed, crate::PidCode::In)),
+            Some((data_buff, crate::PidCode::In)),
         );
 
-        let (_, 8, Ok(_)) = ctl_endpoint.append_cmd_string(ts).await.complete() else {
+        let (buffer, 8, Ok(_)) = ctl_endpoint.append_cmd_string(ts).await.complete() else {
             panic!("USB device threw error on initialisation")
         };
-        let buffer = guarded.unwrap().unwrap().unwrap();
         ctl_endpoint
             .update_transaction_len(
                 usb_cfg::descriptor::DeviceDescriptor::packet_size((&*buffer).try_into().unwrap())
@@ -208,24 +205,22 @@ impl UsbDeviceAccessor {
             )
             .unwrap(); // Will never panic
 
-        let data_buff = hootux::mem::dma::DmaGuard::new(
+        let data_buff = hootux::mem::dma::DmaBuff::from(
             alloc::vec![0u8; size_of::<usb_cfg::descriptor::DeviceDescriptor>()],
         );
-        let (guarded, borrowed) = data_buff.claim().unwrap();
         let ts = TransactionString::setup_transaction(
-            Box::new(hootux::mem::dma::DmaGuard::new(Vec::from(
+            hootux::mem::dma::DmaBuff::from(Vec::from(
                 usb_cfg::CtlTransfer::get_descriptor::<usb_cfg::descriptor::DeviceDescriptor>(
                     0,
                     Some(size_of::<usb_cfg::descriptor::DeviceDescriptor>() as u16),
                 )
                 .to_bytes(),
-            ))),
-            Some((borrowed, crate::PidCode::In)),
+            )),
+            Some((data_buff, crate::PidCode::In)),
         );
-        let (_, _, Ok(_)) = ctl_endpoint.append_cmd_string(ts).await.complete() else {
+        let (raw_buffer, _, Ok(_)) = ctl_endpoint.append_cmd_string(ts).await.complete() else {
             panic!("USB device threw error on initialisation")
         };
-        let raw_buffer = guarded.unwrap().unwrap().unwrap();
         let buff = usb_cfg::descriptor::DeviceDescriptor::from_raw(&*raw_buffer).unwrap();
         let mut l = controller.lock().await;
 
@@ -339,11 +334,11 @@ impl Read<u8> for ClassFinderFle {
     /// * The first byte will indicate which configuration the class was found in (0 if device).
     /// * The second byte indicates what descriptor the class was found in.
     /// * If the class is not found, no data will be written to the buffer and the returned data length will be `0`
-    fn read<'f, 'a: 'f, 'b: 'f>(
-        &'a self,
+    fn read(
+        &self,
         pos: u64,
-        mut buff: DmaBuff<'b>,
-    ) -> BoxFuture<'f, Result<(DmaBuff<'b>, usize), (IoError, DmaBuff<'b>, usize)>> {
+        mut buff: DmaBuff,
+    ) -> BoxFuture<'_, Result<(DmaBuff, usize), (IoError, DmaBuff, usize)>> {
         async move {
             let (class, descriptors) = match pos.to_le_bytes() {
                 [_, _, _, descriptors_bitmap, ..]
@@ -371,20 +366,19 @@ impl Read<u8> for ClassFinderFle {
 
                 ($descriptor:ty,$index:expr) => {
                     {
-                        let guarded = hootux::mem::dma::DmaGuard::new(alloc::vec![0u8;255]);
-                        let (guarded,borrow) = guarded.claim().unwrap();
-                        let command = usb_cfg::CtlTransfer::get_descriptor::<$descriptor>($index,Some(255));
-                        let cmd_raw = Vec::from(command.to_bytes());
+                        let buffer = hootux::mem::dma::DmaBuff::from(alloc::vec![0u8;255]);
 
-                        let command = hootux::mem::dma::DmaGuard::new(cmd_raw);
-                        let ts = TransactionString::setup_transaction(Box::new(command),Some((borrow,crate::PidCode::In)));
+                        let command = usb_cfg::CtlTransfer::get_descriptor::<$descriptor>($index,Some(255));
+                        let cmd_raw = DmaBuff::from(Vec::from(command.to_bytes()));
+
+                        let ts = TransactionString::setup_transaction(cmd_raw,Some((buffer,crate::PidCode::In)));
 
                         let ctl: &alloc::sync::Arc<EndpointQueue> = &acc.ctl_endpoint;
                         let rc = ctl.append_cmd_string(ts).await;
-                        let (_,len,Ok(_)) = rc.complete() else {
+                        let (ret_buff,len,Ok(_)) = rc.complete() else {
                             return Err((IoError::MediaError,buff,0))
                         };
-                        let mut g = guarded.unwrap().unwrap().unwrap();
+                        let mut g: Vec<_> = ret_buff.try_into().unwrap();
                         g.truncate(len);
                         g
                     }
@@ -398,7 +392,7 @@ impl Read<u8> for ClassFinderFle {
             };
             if dev_descriptor.class() == class && descriptors.contains(DescriptorBitmap::DEVICE) {
                 // SAFETY: This is safe because `DmaTarget::data_ptr()` must be writable.
-                unsafe { (&mut *buff.data_ptr())[0..2].copy_from_slice(&[0, 1]) }
+                (&mut *buff)[0..2].copy_from_slice(&[0, 1]);
                 return Ok((buff, 2));
             }
 
@@ -413,7 +407,7 @@ impl Read<u8> for ClassFinderFle {
                 // SAFETY: We fetch the max size for a descriptor, so we definitely have the whole thing & it has not been modified.
                 for interface_desc in unsafe { cfg_descriptor.iter() } {
                     if descriptors.contains(DescriptorBitmap::INTERFACE) && interface_desc.class() == class {
-                        unsafe { (&mut *buff.data_ptr())[0..2].copy_from_slice(&[configuration, DescriptorBitmap::INTERFACE.bits()]) };
+                        (&mut *buff)[0..2].copy_from_slice(&[configuration, DescriptorBitmap::INTERFACE.bits()]);
                         return Ok((buff, 2));
                     }
                 }
@@ -426,11 +420,11 @@ impl Read<u8> for ClassFinderFle {
 }
 
 impl Write<u8> for ClassFinderFle {
-    fn write<'f, 'a: 'f, 'b: 'f>(
-        &'a self,
+    fn write(
+        &self,
         _pos: u64,
-        buff: DmaBuff<'b>,
-    ) -> BoxFuture<'f, Result<(DmaBuff<'b>, usize), (IoError, DmaBuff<'b>, usize)>> {
+        buff: DmaBuff,
+    ) -> BoxFuture<'_, Result<(DmaBuff, usize), (IoError, DmaBuff, usize)>> {
         async { Err((IoError::ReadOnly, buff, 0)) }.boxed()
     }
 }
@@ -458,11 +452,11 @@ impl Read<u8> for ConfigurationIo {
     /// The format for `pos` is defined as the "wValue" field in the "GET_DESCRIPTOR" command in
     /// the USB specification 2.0 section 9.4.3.
     /// This fn will attempt to read `buffer.len().max(255)` bytes.
-    fn read<'f, 'a: 'f, 'b: 'f>(
-        &'a self,
+    fn read(
+        &self,
         pos: u64,
-        mut buff: DmaBuff<'b>,
-    ) -> BoxFuture<'f, Result<(DmaBuff<'b>, usize), (IoError, DmaBuff<'b>, usize)>> {
+        buff: DmaBuff,
+    ) -> BoxFuture<'_, Result<(DmaBuff, usize), (IoError, DmaBuff, usize)>> {
         async move {
             let Some(acc) = self.usb_device_accessor.upgrade() else {
                 return Err((IoError::NotPresent, buff, 0));
@@ -514,11 +508,11 @@ impl Read<u8> for ConfigurationIo {
                 _ => return Err((IoError::EndOfFile, buff, 0)),
             };
 
-            let command = hootux::mem::dma::DmaGuard::new(command);
+            let command = hootux::mem::dma::DmaBuff::from(command);
             // SAFETY: Unsafe
             // todo: I must change DmaBuffer to be `+ 'static`
             let ts = TransactionString::setup_transaction(
-                Box::new(command),
+                command,
                 Some((unsafe { core::mem::transmute(buff) }, crate::PidCode::In)),
             );
 
@@ -540,8 +534,8 @@ impl Read<u8> for ConfigurationIo {
 }
 
 impl Write<u8> for ConfigurationIo {
-    fn write<'f, 'a: 'f, 'b: 'f>(
-        &'a self,
+    fn write(
+        &self,
         _: u64,
         mut buff: DmaBuff<'b>,
     ) -> BoxFuture<'f, Result<(DmaBuff<'b>, usize), (IoError, DmaBuff<'b>, usize)>> {
@@ -598,7 +592,6 @@ pub mod frontend {
     use super::*;
     use alloc::sync::Arc;
     use core::task::Poll;
-    use hootux::mem::dma::DmaGuard;
 
     pub struct UsbDevCtl {
         pub(super) acc: alloc::sync::Weak<UsbDeviceAccessor>,
@@ -627,39 +620,42 @@ pub mod frontend {
             };
             let base_len = size_of::<T>();
             let buffer = alloc::vec![0u8; base_len];
-            let command = Box::new(DmaGuard::new(Vec::from(
+            let command = DmaBuff::from(Vec::from(
                 usb_cfg::CtlTransfer::get_descriptor::<T>(index, Some(buffer.len() as u16))
                     .to_bytes(),
-            )));
+            ));
 
-            let (guarded, borrow) = DmaGuard::new(buffer).claim().unwrap();
             let acc = self.acc.upgrade().ok_or(IoError::NotPresent)?;
-            let ts =
-                TransactionString::setup_transaction(command, Some((borrow, crate::PidCode::In)));
-            let (_, _, Ok(_)) = acc.ctl_endpoint.append_cmd_string(ts).await.complete() else {
+            let ts = TransactionString::setup_transaction(
+                command,
+                Some((DmaBuff::from(buffer), crate::PidCode::In)),
+            );
+            let (mut b, _, Ok(_)) = acc.ctl_endpoint.append_cmd_string(ts).await.complete() else {
                 return Err(IoError::MediaError);
             };
 
-            let mut b = guarded.unwrap().unwrap().unwrap();
             if is_device {
                 let op_len = u16::from_le_bytes((&b[2..3]).try_into().unwrap());
-                b.resize(op_len as usize, 0);
-                let (guarded, borrow) = DmaGuard::new(b).claim().unwrap();
+
+                let mut buffer: Vec<u8> = b.try_into().unwrap(); // Uses global, wont panic
+                buffer.resize(op_len as usize, 0);
+                let buffer = DmaBuff::from(buffer);
                 let ts = TransactionString::setup_transaction(
-                    Box::new(DmaGuard::new(Vec::from(
+                    DmaBuff::from(Vec::from(
                         usb_cfg::CtlTransfer::get_descriptor::<T>(index, Some(op_len)).to_bytes(),
-                    ))),
-                    Some((borrow, crate::PidCode::In)),
+                    )),
+                    Some((buffer, crate::PidCode::In)),
                 );
-                let (_, _, Ok(_)) = acc.ctl_endpoint.append_cmd_string(ts).await.complete() else {
+                let (rc, _, Ok(_)) = acc.ctl_endpoint.append_cmd_string(ts).await.complete() else {
                     return Err(IoError::MediaError);
                 };
-                b = guarded.unwrap().unwrap().unwrap();
+                b = rc;
             }
 
             if b[1] == T::DESCRIPTOR_TYPE as u8 {
-                b.shrink_to_fit();
-                let ptr = (&raw mut *b.leak()).cast::<T>();
+                let mut v: Vec<u8> = b.try_into().unwrap();
+                v.shrink_to_fit();
+                let ptr = (&raw mut *v.leak()).cast::<T>();
                 // SAFETY: We have checked that this is T and that it is the correct size for T
                 Ok(unsafe { Box::from_raw(ptr) })
             } else {
@@ -677,7 +673,7 @@ pub mod frontend {
                 Vec::from(usb_cfg::CtlTransfer::set_configuration(configuration).to_bytes());
             acc.ctl_endpoint
                 .append_cmd_string(TransactionString::setup_transaction(
-                    Box::new(DmaGuard::new(command)),
+                    DmaBuff::from(command),
                     None,
                 ))
                 .await
@@ -768,9 +764,9 @@ pub mod frontend {
             let Some(acc) = self.acc.upgrade() else {
                 return;
             }; // If `acc` is not present then we can just drop everything dumbly.
-            let command = Box::new(DmaGuard::new(Vec::from(
+            let command = DmaBuff::from(Vec::from(
                 usb_cfg::CtlTransfer::set_configuration(0).to_bytes(),
-            )));
+            ));
             let ts = TransactionString::setup_transaction(command, None);
             // fixme: This should check for errors.
             let _ = acc.ctl_endpoint.append_cmd_string(ts).await; // deconfigure, this returns no useful information
