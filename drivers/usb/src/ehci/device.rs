@@ -537,54 +537,9 @@ impl Write<u8> for ConfigurationIo {
     fn write(
         &self,
         _: u64,
-        mut buff: DmaBuff<'b>,
-    ) -> BoxFuture<'f, Result<(DmaBuff<'b>, usize), (IoError, DmaBuff<'b>, usize)>> {
-        async {
-            use hootux::mem::dma::DmaClaimable as _;
-
-            let Some(acc) = self.usb_device_accessor.upgrade() else {
-                return Err((IoError::NotPresent, buff, 0));
-            };
-            // Prevents operations being inserted out of order
-            let ports = acc.endpoints.lock().await;
-
-            // If we are configuring the device then we must ensure the device isn't already configured.
-            // Deconfiguring can be done without checking
-            // SAFETY: buff.data_ptr() must be accessible
-            let target_config: u8 = unsafe { (&*buff.data_ptr())[0] };
-            match target_config {
-                0 => {} // no check required to clear configuration
-                _ => {
-                    // Determine if the device is already configured
-                    let dma = hootux::mem::dma::DmaGuard::new(alloc::vec![0u8; 2]);
-                    let Some((base, borrow)) = dma.claim() else {
-                        unreachable!()
-                    };
-                    let (_, _) = self.read(0, borrow).await?;
-                    let current_cfg = base.unwrap().unwrap().unwrap();
-                    match current_cfg[0..=1] {
-                        [0, 0] => {}
-                        _ => return Err((IoError::Busy, buff, 1)),
-                    }
-                }
-            }
-
-            let command = hootux::mem::dma::DmaGuard::new(Vec::from(
-                usb_cfg::CtlTransfer::set_configuration(target_config).to_bytes(),
-            ));
-            // SAFETY: `command` is stack allocated and will not be dropped before the operation is completed.
-            let ts = TransactionString::setup_transaction(Box::new(command), None);
-            // no data stage here
-            let sc: super::StringCompletion = acc.ctl_endpoint.append_cmd_string(ts).await;
-
-            drop(ports);
-            let (buff, len, ok) = sc.complete();
-            match ok {
-                Ok(_) => Ok((buff, len)),
-                Err(_) => Err((IoError::MediaError, buff, len)),
-            }
-        }
-        .boxed()
+        buff: DmaBuff,
+    ) -> BoxFuture<'_, Result<(DmaBuff, usize), (IoError, DmaBuff, usize)>> {
+        async { Err((IoError::ReadOnly, buff, 0)) }.boxed()
     }
 }
 
