@@ -191,7 +191,7 @@ impl Read<u8> for Class {
         &self,
         _: u64,
         mut buff: DmaBuff,
-    ) -> BoxFuture<Result<(DmaBuff, usize), (IoError, DmaBuff, usize)>> {
+    ) -> BoxFuture<'_, Result<(DmaBuff, usize), (IoError, DmaBuff, usize)>> {
         async {
             let blen = buff.len().max(3);
             let tgt = &mut buff[0..blen];
@@ -209,7 +209,7 @@ impl Write<u8> for Class {
         &self,
         _: u64,
         buff: DmaBuff,
-    ) -> BoxFuture<Result<(DmaBuff, usize), (IoError, DmaBuff, usize)>> {
+    ) -> BoxFuture<'_, Result<(DmaBuff, usize), (IoError, DmaBuff, usize)>> {
         async { Err((IoError::ReadOnly, buff, 0)) }.boxed()
     }
 }
@@ -283,7 +283,7 @@ impl Read<u8> for ConfigRegionFile {
         &self,
         pos: u64,
         mut buff: DmaBuff,
-    ) -> BoxFuture<Result<(DmaBuff, usize), (IoError, DmaBuff, usize)>> {
+    ) -> BoxFuture<'_, Result<(DmaBuff, usize), (IoError, DmaBuff, usize)>> {
         async move {
             let Ok(pos) = pos.try_into() else {
                 return Err((IoError::EndOfFile, buff, 0));
@@ -302,7 +302,7 @@ impl Write<u8> for ConfigRegionFile {
         &self,
         _: u64,
         buff: DmaBuff,
-    ) -> BoxFuture<Result<(DmaBuff, usize), (IoError, DmaBuff, usize)>> {
+    ) -> BoxFuture<'_, Result<(DmaBuff, usize), (IoError, DmaBuff, usize)>> {
         async {
             log::debug!(
                 "Called write on {}, which currently does not allow writing",

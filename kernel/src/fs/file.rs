@@ -253,7 +253,7 @@ pub trait Read<T> {
         &self,
         pos: u64,
         buff: DmaBuff,
-    ) -> futures_util::future::BoxFuture<Result<(DmaBuff, usize), (IoError, DmaBuff, usize)>>;
+    ) -> futures_util::future::BoxFuture<'_, Result<(DmaBuff, usize), (IoError, DmaBuff, usize)>>;
 }
 
 /// This trait's methods may have side effects. Any side effects should be documented at the implementation level.
@@ -268,7 +268,7 @@ pub trait Write<T> {
         &self,
         pos: u64,
         buff: DmaBuff,
-    ) -> futures_util::future::BoxFuture<Result<(DmaBuff, usize), (IoError, DmaBuff, usize)>>;
+    ) -> futures_util::future::BoxFuture<'_, Result<(DmaBuff, usize), (IoError, DmaBuff, usize)>>;
 }
 
 self::file_derive_debug!(Directory);

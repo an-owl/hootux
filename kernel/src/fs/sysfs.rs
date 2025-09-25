@@ -299,7 +299,7 @@ impl Write<u8> for EventFile {
         &self,
         _: u64,
         buff: DmaBuff,
-    ) -> BoxFuture<Result<(DmaBuff, usize), (IoError, DmaBuff, usize)>> {
+    ) -> BoxFuture<'_, Result<(DmaBuff, usize), (IoError, DmaBuff, usize)>> {
         self.read(0, buff) // read will yield the same return value as write
     }
 }
@@ -309,7 +309,7 @@ impl Read<u8> for EventFile {
         &self,
         _: u64,
         buff: DmaBuff,
-    ) -> BoxFuture<Result<(DmaBuff, usize), (IoError, DmaBuff, usize)>> {
+    ) -> BoxFuture<'_, Result<(DmaBuff, usize), (IoError, DmaBuff, usize)>> {
         async {
             let event_fut = alloc::sync::Arc::new(EventWait::new());
             self.slaves.lock().push(event_fut.clone());
@@ -407,7 +407,7 @@ impl Read<u8> for BindingFile {
         &self,
         _pos: u64,
         buff: DmaBuff,
-    ) -> BoxFuture<Result<(DmaBuff, usize), (IoError, DmaBuff, usize)>> {
+    ) -> BoxFuture<'_, Result<(DmaBuff, usize), (IoError, DmaBuff, usize)>> {
         async { Ok((buff, 0)) }.boxed()
     }
 }
@@ -417,7 +417,7 @@ impl Write<u8> for BindingFile {
         &self,
         _pos: u64,
         buff: DmaBuff,
-    ) -> BoxFuture<Result<(DmaBuff, usize), (IoError, DmaBuff, usize)>> {
+    ) -> BoxFuture<'_, Result<(DmaBuff, usize), (IoError, DmaBuff, usize)>> {
         async { Ok((buff, 0)) }.boxed()
     }
 }

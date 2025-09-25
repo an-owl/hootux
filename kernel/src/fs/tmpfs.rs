@@ -544,7 +544,7 @@ impl Read<u8> for TmpFsNormalFile {
         &self,
         pos: u64,
         mut dbuff: DmaBuff,
-    ) -> BoxFuture<Result<(DmaBuff, usize), (IoError, DmaBuff, usize)>> {
+    ) -> BoxFuture<'_, Result<(DmaBuff, usize), (IoError, DmaBuff, usize)>> {
         async move {
             let buff = &mut *dbuff;
             if !self.accessor.lock.lock().cmp_t(self) {
@@ -567,7 +567,7 @@ impl Write<u8> for TmpFsNormalFile {
         &self,
         pos: u64,
         mut dbuff: DmaBuff,
-    ) -> BoxFuture<Result<(DmaBuff, usize), (IoError, DmaBuff, usize)>> {
+    ) -> BoxFuture<'_, Result<(DmaBuff, usize), (IoError, DmaBuff, usize)>> {
         async move {
             let buff = &mut *dbuff;
             if !self.accessor.lock.lock().cmp_t(self) {

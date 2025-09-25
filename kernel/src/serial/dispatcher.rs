@@ -268,7 +268,7 @@ impl Read<u8> for SerialDispatcher {
         &self,
         _: u64,
         mut dbuff: DmaBuff,
-    ) -> BoxFuture<Result<(DmaBuff, usize), (IoError, DmaBuff, usize)>> {
+    ) -> BoxFuture<'_, Result<(DmaBuff, usize), (IoError, DmaBuff, usize)>> {
         async {
             if self.fifo_lock.is_read() {
                 // cant use ok_or(_) here because of use after free on `dbuff`
@@ -373,7 +373,7 @@ impl Write<u8> for SerialDispatcher {
         &self,
         _: u64,
         mut dbuff: DmaBuff,
-    ) -> BoxFuture<Result<(DmaBuff, usize), (IoError, DmaBuff, usize)>> {
+    ) -> BoxFuture<'_, Result<(DmaBuff, usize), (IoError, DmaBuff, usize)>> {
         async {
             if self.fifo_lock.is_write() {
                 let buff = &mut *dbuff;
@@ -472,7 +472,7 @@ impl Read<u8> for FrameCtlBFile {
         &self,
         _: u64,
         mut dbuff: DmaBuff,
-    ) -> BoxFuture<Result<(DmaBuff, usize), (IoError, DmaBuff, usize)>> {
+    ) -> BoxFuture<'_, Result<(DmaBuff, usize), (IoError, DmaBuff, usize)>> {
         async {
             let buff = &mut *dbuff;
             let Some(real) = self.dispatch.inner.real.upgrade() else {
@@ -506,7 +506,7 @@ impl Write<u8> for FrameCtlBFile {
         &self,
         _: u64,
         mut dbuff: DmaBuff,
-    ) -> BoxFuture<Result<(DmaBuff, usize), (IoError, DmaBuff, usize)>> {
+    ) -> BoxFuture<'_, Result<(DmaBuff, usize), (IoError, DmaBuff, usize)>> {
         async {
             let buff = &mut *dbuff;
             let s = match core::str::from_utf8(buff) {
