@@ -587,6 +587,19 @@ impl<A: CastableAllocator + Clone> From<Box<[u8], A>> for DmaBuffer {
     }
 }
 
+impl<const LEN: usize, A: CastableAllocator + Clone> From<Box<[u8; LEN], A>> for DmaBuffer {
+    fn from(value: Box<[u8; LEN], A>) -> Self {
+        let alloc = Box::new(Box::allocator(&value).clone());
+        let data = Box::leak(value);
+        Self {
+            ptr: NonNull::from_mut(data).cast(),
+            len: LEN,
+            capacity: LEN,
+            alloc,
+        }
+    }
+}
+
 impl From<alloc::string::String> for DmaBuffer {
     fn from(value: alloc::string::String) -> Self {
         value.into_boxed_str().into_boxed_bytes().into()
