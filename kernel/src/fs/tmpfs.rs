@@ -120,15 +120,15 @@ pub struct TmpFsRoot {
 }
 
 impl TmpFsRoot {
-    pub fn new() -> Box<dyn device::FileSystem> {
-        let this = Box::new(Self {
+    pub fn new() -> Self {
+        let this = Self {
             inner: Arc::new(TmpFsRootInner {
                 f_map: spin::RwLock::new(BTreeMap::new()),
                 fs_opts: spin::RwLock::new(FsOpts::new(true, true)),
                 dev_id: DevID::new(*DRIVER_MAJOR, MINOR.fetch_add(1, atomic::Ordering::Relaxed)),
                 serial_count: atomic::Atomic::new(1), // this file is 0
             }),
-        });
+        };
         let mut l = this.inner.f_map.write();
         let root = DirAccessor::new(0, 0); // special exception parent of root has itself as parent
         l.insert(0, Arc::new(root));

@@ -123,7 +123,7 @@ fn kernel_main(b: *mut hatcher::boot_info::BootInfo) -> ! {
 
     {
         let tmpfs = fs::tmpfs::TmpFsRoot::new();
-        fs::init_fs(tmpfs);
+        fs::init_fs(Box::new(tmpfs));
         fs::sysfs::init();
         fs::sysfs::SysFsRoot::new().firmware.load_acpi(acpi_tables);
     }
