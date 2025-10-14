@@ -484,6 +484,7 @@ dependencies = [
  "spin 0.9.8",
  "suffix",
  "uart_16550",
+ "ustar",
  "volatile 0.4.6",
  "x86_64",
  "x86_msr",
@@ -1225,6 +1226,14 @@ version = "0.1.0"
 dependencies = [
  "bitfield",
  "bitflags 2.9.1",
+]
+
+[[package]]
+name = "ustar"
+version = "0.1.0"
+source = "git+https://github.com/an-owl/ustar#073d3fbe7a22e53f1ab12979b9aa478849d08562"
+dependencies = [
+ "log",
 ]
 
 [[package]]

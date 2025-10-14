@@ -214,6 +214,51 @@ impl device::FileSystem for TmpFsRoot {
     }
 }
 
+impl TryFrom<ustar::UnmappedTarball> for TmpFsRoot {
+    type Error = IoError;
+
+    fn try_from(tar: ustar::UnmappedTarball) -> Result<Self, Self::Error> {
+        let root = TmpFsRoot::new();
+
+        let traverse_to = |path: &str| {
+            let partial_path = path.split_at(path.rfind('/').unwrap_or(0)).0;
+            let mut cd = root.root();
+
+            for i in partial_path.split(partial_path).filter(|p| !p.is_empty()) {
+                // This is always synchronous.
+                match crate::block_on!(cd.get_file(i)) {
+                    Ok(f) => cd = f,
+                    Err(NotPresent) => {
+                        // I'm pretty sure this cant throw an error.
+                        cd = crate::block_on!(cd.new_dir(i)).inspect_err(|e| {
+                            log::error!(
+                                "Got {e:?} when trying to load tarball after NotPresent error"
+                            )
+                        })?;
+                    }
+                    Err(e) => return Err(e),
+                }
+            }
+            Ok(cd)
+        };
+
+        log::info!("Constructing tmpfs from tarball currently drops metadata");
+        for file in tar
+            .iter()
+            .filter(|f| f.file_type() == ustar::TypeFlag::NormalFile)
+        {
+            let parent = traverse_to(&file.file_path())?;
+            let _ = crate::block_on!(parent.new_file(file.file_name(), None))
+                .map_err(|(_, e)| e.unwrap())?; // The second error must always be present.
+            let p = cast_file!(NormalFile: crate::block_on!(parent.get_file(file.file_name()))?)
+                .unwrap();
+            crate::block_on!(p.write(0, Box::from(file.data()).into())).map_err(|(e, ..)| e)?;
+        }
+
+        Some(root)
+    }
+}
+
 struct DirAccessor {
     map: spin::RwLock<BTreeMap<String, u64>>,
     parent: u64,
