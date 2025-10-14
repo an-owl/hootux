@@ -214,10 +214,11 @@ impl device::FileSystem for TmpFsRoot {
     }
 }
 
-impl TryFrom<ustar::UnmappedTarball> for TmpFsRoot {
+impl TryFrom<ustar::UnmappedTarball<'_>> for TmpFsRoot {
     type Error = IoError;
 
     fn try_from(tar: ustar::UnmappedTarball) -> Result<Self, Self::Error> {
+        use crate::fs::device::FileSystem;
         let root = TmpFsRoot::new();
 
         let traverse_to = |path: &str| {
@@ -227,7 +228,7 @@ impl TryFrom<ustar::UnmappedTarball> for TmpFsRoot {
             for i in partial_path.split(partial_path).filter(|p| !p.is_empty()) {
                 // This is always synchronous.
                 match crate::block_on!(cd.get_file(i)) {
-                    Ok(f) => cd = f,
+                    Ok(f) => cd = f.dyn_cast().map_err(|_| IoError::AlreadyExists)?,
                     Err(NotPresent) => {
                         // I'm pretty sure this cant throw an error.
                         cd = crate::block_on!(cd.new_dir(i)).inspect_err(|e| {
@@ -252,10 +253,11 @@ impl TryFrom<ustar::UnmappedTarball> for TmpFsRoot {
                 .map_err(|(_, e)| e.unwrap())?; // The second error must always be present.
             let p = cast_file!(NormalFile: crate::block_on!(parent.get_file(file.file_name()))?)
                 .unwrap();
-            crate::block_on!(p.write(0, Box::from(file.data()).into())).map_err(|(e, ..)| e)?;
+            let dma = Vec::from(file.data());
+            crate::block_on!(p.write(0, dma.into())).map_err(|(e, ..)| e)?;
         }
 
-        Some(root)
+        Ok(root)
     }
 }
 
