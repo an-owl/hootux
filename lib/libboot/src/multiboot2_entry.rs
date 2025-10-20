@@ -670,9 +670,8 @@ pub(crate) mod pm {
         };
 
         let mut alloc = BasicPhysAllocator::new(&mbi);
-        let knl_l4 = unsafe {
-            &mut *(alloc.alloc_mem(&mapper).start_address().as_u64() as usize as *mut PageTable)
-        };
+        let knl_l4 =
+            unsafe { &mut *(alloc.alloc().start_address().as_u64() as usize as *mut PageTable) };
         // zero the table
         // Note we cant use write(PageTable::new()) due to the limited size of the stack
         for i in knl_l4.iter_mut() {
@@ -684,25 +683,22 @@ pub(crate) mod pm {
 
         map_kernel(
             &mut alloc,
-            &mapper,
             &mut kernel_context_mapper,
             pb_unwrap(mbi.elf_sections_tag()),
         );
-        let stack = setup_stack(&mut alloc, &mapper, &mut kernel_context_mapper);
+        let stack = setup_stack(&mut alloc, &mut kernel_context_mapper);
         map_phys_offset(
             &mut alloc,
-            &mapper,
             &mut kernel_context_mapper,
             &pb_unwrap(mbi.memory_map_tag()),
         );
-        let graphic = map_framebuffer(&mut alloc, &mapper, &mut kernel_context_mapper, &mbi);
+        let graphic = map_framebuffer(&mut alloc, &mut kernel_context_mapper, &mbi);
 
         // SAFETY: The caller must ensure that the MBI is not modified.
         // `transmute` relies on above assurance
         let bi = unsafe {
             setup_boot_info(
                 core::mem::transmute(alloc),
-                &mapper,
                 &mut kernel_context_mapper,
                 mbi,
                 graphic,
@@ -713,8 +709,7 @@ pub(crate) mod pm {
     }
 
     fn setup_stack(
-        mut alloc: &mut BasicPhysAllocator,
-        mapper: &OffsetPageTable,
+        alloc: &mut BasicPhysAllocator,
         knl_cx_mapper: &mut OffsetPageTable,
     ) -> crate::common::StackPointer {
         // top of stack
@@ -737,9 +732,9 @@ pub(crate) mod pm {
             unsafe {
                 pb_unwrapr(knl_cx_mapper.map_to(
                     page,
-                    alloc.alloc_mem(&mapper),
+                    alloc.alloc(),
                     Flags::PRESENT | Flags::WRITABLE | Flags::NO_EXECUTE,
-                    &mut FrameAllocator::new(&mut alloc, &mapper),
+                    alloc,
                 ))
                 .ignore();
             }
@@ -755,7 +750,6 @@ pub(crate) mod pm {
 
     fn map_phys_offset(
         alloc: &mut BasicPhysAllocator,
-        mapper: &OffsetPageTable,
         knl_cx_mapper: &mut OffsetPageTable,
         mem_map: &multiboot2::MemoryMapTag,
     ) {
@@ -795,7 +789,7 @@ pub(crate) mod pm {
                     tgt_page + i as u64,
                     frame,
                     Flags::PRESENT | Flags::WRITABLE | Flags::NO_EXECUTE | Flags::HUGE_PAGE,
-                    &mut FrameAllocator::new(alloc, mapper),
+                    alloc,
                 )
             })
             .ignore();
@@ -804,7 +798,6 @@ pub(crate) mod pm {
 
     fn map_kernel(
         alloc: &mut BasicPhysAllocator,
-        mapper: &OffsetPageTable,
         knl_cx_mapper: &mut OffsetPageTable,
         elf_sections: &multiboot2::ElfSectionsTag,
     ) {
@@ -830,11 +823,7 @@ pub(crate) mod pm {
 
             'page: for page in pages {
                 unsafe {
-                    match knl_cx_mapper.identity_map(
-                        page,
-                        flags,
-                        &mut FrameAllocator::new(alloc, mapper),
-                    ) {
+                    match knl_cx_mapper.identity_map(page, flags, alloc) {
                         Ok(flush) => flush.ignore(),
                         Err(x86_64::structures::paging::mapper::MapToError::PageAlreadyMapped(
                             _,
@@ -852,8 +841,7 @@ pub(crate) mod pm {
     ///
     /// If the "graphic info" field is present in [BootInfo] then it will be mapped.
     fn map_framebuffer(
-        mut alloc: &mut BasicPhysAllocator,
-        mapper: &OffsetPageTable,
+        alloc: &mut BasicPhysAllocator,
         knl_cx_mapper: &mut OffsetPageTable,
         mbi: &multiboot2::BootInformation,
     ) -> Option<GraphicInfo> {
@@ -875,7 +863,7 @@ pub(crate) mod pm {
                         knl_cx_mapper.identity_map(
                             i,
                             Flags::PRESENT | Flags::WRITABLE | Flags::NO_CACHE,
-                            &mut FrameAllocator::new(&mut alloc, &mapper),
+                            alloc,
                         )
                     })
                     .ignore();
@@ -966,7 +954,6 @@ pub(crate) mod pm {
     /// The caller must ensure the MBI is not modified.
     unsafe fn setup_boot_info(
         mut alloc: BasicPhysAllocator<'static>,
-        mapper: &OffsetPageTable,
         knl_cx_mapper: &mut OffsetPageTable,
         mbi: multiboot2::BootInformation<'static>,
         graphic_info: Option<GraphicInfo>,
@@ -990,13 +977,7 @@ pub(crate) mod pm {
             let iter = x86_64::structures::paging::frame::PhysFrameRangeInclusive { start, end };
             for i in iter {
                 // SAFETY: This is safe because this does not represent  the current context so cannot alias memory.
-                match unsafe {
-                    knl_cx_mapper.identity_map(
-                        i,
-                        Flags::PRESENT,
-                        &mut FrameAllocator::new(&mut alloc, &mapper),
-                    )
-                } {
+                match unsafe { knl_cx_mapper.identity_map(i, Flags::PRESENT, &mut alloc) } {
                     Ok(flush) => {
                         flush.ignore();
                     }
@@ -1010,14 +991,14 @@ pub(crate) mod pm {
             }
         }
 
-        let frame = alloc.alloc_mem(&mapper);
+        let frame = alloc.alloc();
 
         unsafe {
             pb_unwrapr(knl_cx_mapper.map_to(
                 base,
                 frame,
                 Flags::PRESENT | Flags::WRITABLE | Flags::NO_EXECUTE,
-                &mut FrameAllocator::new(&mut alloc, mapper),
+                &mut alloc,
             ))
             .ignore();
         };
@@ -1042,119 +1023,141 @@ pub(crate) mod pm {
                 },
             })
         }
-        bootinfo
+        // Note that this is not accessible until `knl_cx_mapper` is loaded.
+        BOOT_INFO_ADDR as *mut BootInfo
     }
 
     struct BasicPhysAllocator<'a> {
         mbi_region: core::ops::Range<u64>,
-        elf_sections: &'a multiboot2::ElfSectionsTag,
-        mem_map: &'a multiboot2::MemoryMapTag,
-        curr_state: u64,
+        boot_info: &'a multiboot2::BootInformation<'a>,
+        index: usize, // Indicates the index into the memory map that the last page was returned from.
+        last_address: u64, // Indicates the last address that was returned.
+
+        region_cached: Option<multiboot2::MemoryArea>,
     }
 
     impl<'a> BasicPhysAllocator<'a> {
         fn new(mbi: &'a multiboot2::BootInformation) -> Self {
-            // SAFETY: This is safe, we cast to a raw slice to describe the region not the data within that region.
-
             let mbi_region = x86_64::align_down(mbi.start_address() as u64, metric!(4Ki))
                 ..x86_64::align_up(mbi.end_address() as u64, metric!(4Ki));
+            // Assert critical tags present
+            pb_unwrap(mbi.elf_sections_tag());
+            let mem_map = pb_unwrap(mbi.memory_map_tag());
+
+            // Panic: How the fuck?
+            let (index, cached) = pb_unwrap(
+                mem_map
+                    .memory_areas()
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, m)| m.typ() == multiboot2::MemoryAreaType::Available)
+                    .next(),
+            );
 
             Self {
                 mbi_region,
-                elf_sections: pb_unwrap(mbi.get_tag()),
-                mem_map: pb_unwrap(mbi.get_tag()),
-                curr_state: 0x1000,
+                boot_info: mbi,
+                index,
+                last_address: 0x1000, // Must skip page 0, to prevent issues with nullptr's.
+                region_cached: Some(*cached),
             }
         }
 
-        /// Fetches an address from the memory map to be allocated.
-        /// This address may be already occupied,
-        /// the caller must ensure that the memory is not occupied before writing to it.
-        fn fetch_address(&mut self) -> u64 {
-            // iterator which only contains free regions and iterates regions until the region with the next iteration is found
-            let mem_iter = self.mem_map.memory_areas();
-            let mem_iter = mem_iter
-                .iter()
-                .filter(|area| area.typ() == multiboot2::MemoryAreaType::Available);
+        /// Inner alloc function to determine which address to try to allocate next.
+        /// Returned addresses must be checked against used memory to determine if this address is currently in use.
+        fn locate_addr(&mut self) -> Result<u64, AllocError> {
+            let region = self.get_region();
 
-            let mut hit_state = false;
-            for i in mem_iter {
-                // Skips all iterations before self.curr_state
-                if !hit_state {
-                    if (i.start_address()..i.end_address()).contains(&self.curr_state) {
-                        hit_state = true;
-                    } else {
-                        continue;
-                    }
-                }
-
-                let aligned_base = x86_64::align_up(i.start_address(), suffix::bin!(4Ki));
-                let aligned_top = x86_64::align_down(i.end_address(), suffix::bin!(4Ki));
-
-                // Some "free" regions may be <4K if so we cant use them
-                if aligned_base == aligned_top {
-                    continue;
-                }
-
-                if self.curr_state + suffix::bin!(4Ki) >= aligned_top {
-                    // use next region
-                    continue;
-                } else {
-                    // If area contains curr_state then add 1 page to curr_state and return the old value
-                    // If it doesnt then this area is untouched and cna return the first address and increment the curr state
-                    return if (aligned_base..aligned_top).contains(&self.curr_state) {
-                        let r = self.curr_state;
-                        self.curr_state = self.curr_state + suffix::bin!(4Ki);
-                        r
-                    } else {
-                        let r = i.start_address();
-                        self.curr_state = r + suffix::bin!(4Ki);
-                        r
-                    };
-                }
+            if region.end_address() == self.last_address {
+                Err(AllocError::RegionExhausted)
+            } else if (region.start_address()..region.end_address()).contains(&self.last_address) {
+                self.last_address += crate::boot_info::PAGE_SIZE as u64;
+                Ok(self.last_address)
+            } else {
+                // If last_address is disjoint, that means the last op was incrementing the block. Next address must come from the start of this block.
+                self.last_address = region.start_address();
+                Ok(self.last_address)
             }
-            pb_panic() // OOM, no other options so shit pant
         }
 
-        fn alloc_mem(&mut self, mapper: &OffsetPageTable) -> PhysFrame {
-            fn page_range(page_addr: u64, addr: u64) -> bool {
-                let r = page_addr..page_addr + suffix::bin!(4Ki);
-                r.contains(&addr)
+        /// Determines whether `addr` is in use by the boot data.
+        fn cmp_addr(&self, addr: u64) -> bool {
+            if self.mbi_region.contains(&addr) {
+                return false;
             }
+            for i in self.boot_info.module_tags() {
+                let start = x86_64::align_down(
+                    i.start_address() as u64,
+                    crate::boot_info::PAGE_SIZE as u64,
+                );
+                let end =
+                    x86_64::align_up(i.end_address() as u64, crate::boot_info::PAGE_SIZE as u64);
+                let mod_range = start..end;
+                if mod_range.contains(&addr) {
+                    return false;
+                }
+            }
+            let elf_sections = pb_unwrap(self.boot_info.elf_sections_tag());
 
+            for i in elf_sections.sections() {
+                let start =
+                    x86_64::align_down(i.start_address(), crate::boot_info::PAGE_SIZE as u64);
+                let end = x86_64::align_up(i.end_address(), crate::boot_info::PAGE_SIZE as u64);
+                let section_range = start..end;
+                if section_range.contains(&addr) {
+                    return false;
+                }
+            }
+            true
+        }
+
+        fn alloc_as_u64(&mut self) -> u64 {
             loop {
-                let addr = self.fetch_address();
-
-                let sp: u64;
-                #[cfg(target_arch = "x86_64")]
-                // SAFETY: Just reads `rsp`
-                // I don't think this can be marked `pure`
-                unsafe {
-                    core::arch::asm!("mov {},rsp", out(reg) sp, options(nomem))
-                }
-                let l4_addr = mapper.level_4_table() as *const _ as usize as u64;
-                let l3_addr = mapper.level_4_table()[0].addr().as_u64();
-                if page_range(x86_64::align_down(sp, metric!(4Ki)), addr)
-                    | page_range(l4_addr, addr)
-                    | page_range(l3_addr, addr)
-                    | self.mbi_region.contains(&addr)
-                    | (addr >= metric!(512Gi))
-                // we cannot access memory above 512GiB, that shouldn't be a problem, but we're still going to check
-                {
-                    continue;
-                }
-
-                for i in self.elf_sections.sections() {
-                    let align_start = x86_64::align_down(i.start_address(), suffix::bin!(4Ki));
-                    let align_end = x86_64::align_up(i.end_address(), suffix::bin!(4Ki));
-
-                    if (align_start..align_end).contains(&addr) {
-                        continue;
+                match self.locate_addr() {
+                    Ok(addr) => {
+                        if self.cmp_addr(addr) {
+                            break addr;
+                        }
                     }
+                    Err(AllocError::RegionExhausted) => pb_unwrapr(self.increment_index()),
                 }
-
-                return unsafe { PhysFrame::from_start_address_unchecked(PhysAddr::new(addr)) }; // addresses are guaranteed to be page aligned.
             }
+        }
+
+        fn alloc(&mut self) -> PhysFrame {
+            pb_unwrapr(PhysFrame::from_start_address(PhysAddr::new(
+                self.alloc_as_u64(),
+            )))
+        }
+
+        /// Attempts to load the cached memory map region. If there is no cached region then it will
+        /// be fetched from the multiboot information and cached.
+        fn get_region(&mut self) -> multiboot2::MemoryArea {
+            if let Some(cached) = self.region_cached {
+                cached
+            } else {
+                let mem_map = pb_unwrap(self.boot_info.memory_map_tag());
+                let region = mem_map.memory_areas()[self.index];
+                self.region_cached = Some(region);
+                region
+            }
+        }
+
+        /// Attempts to locate the next free region of memory in the memory map.
+        fn increment_index(&mut self) -> Result<(), ()> {
+            let mem_map = pb_unwrap(self.boot_info.memory_map_tag());
+            // Iterate over remaining regions until a "free" one is found.
+            let (increment, _) = mem_map
+                .memory_areas()
+                .iter()
+                .enumerate()
+                .skip(self.index + 1)
+                .filter(|(_, m)| m.typ() == multiboot2::MemoryAreaType::Available)
+                .next()
+                .ok_or(())?;
+            self.index = increment;
+            self.region_cached = None;
+            Ok(())
         }
 
         /// Casts self into a [crate::boot_info::Multiboot2PmMemoryState] which is used by the kernel
@@ -1164,12 +1167,14 @@ pub(crate) mod pm {
         ///
         /// This fn casts `'a` into `'static` the caller must ensure that the multiboot information struct
         unsafe fn to_static_context(self) -> crate::boot_info::Multiboot2PmMemoryState {
+            let elf = pb_unwrap(self.boot_info.elf_sections_tag());
+            let mem_map = pb_unwrap(self.boot_info.memory_map_tag());
             unsafe {
                 crate::boot_info::Multiboot2PmMemoryState {
                     mbi_region: self.mbi_region,
-                    elf_sections: core::mem::transmute(self.elf_sections),
-                    mem_map: core::mem::transmute(self.mem_map),
-                    used_boundary: self.curr_state,
+                    elf_sections: core::mem::transmute(elf),
+                    mem_map: core::mem::transmute(mem_map),
+                    used_boundary: self.last_address + crate::boot_info::PAGE_SIZE as u64,
                     // SAFETY: This is safe, this is defined in the global_asm block where all variables are dword sized
                     // This symbol will never be written to once
                     low_boundary: 0,
@@ -1178,24 +1183,15 @@ pub(crate) mod pm {
         }
     }
 
-    /// Implements [x86_64::structures::paging::FrameAllocator] because [BasicPhysAllocator]
-    /// requires the live page tables to allocate memory.
-    struct FrameAllocator<'a, 'b, 'c> {
-        alloc: &'a mut BasicPhysAllocator<'c>,
-        mapper: &'b OffsetPageTable<'b>,
-    }
-
-    impl<'a, 'b, 'c> FrameAllocator<'a, 'b, 'c> {
-        fn new(alloc: &'a mut BasicPhysAllocator<'c>, mapper: &'b OffsetPageTable) -> Self {
-            Self { alloc, mapper }
-        }
-    }
-
-    unsafe impl x86_64::structures::paging::FrameAllocator<Size4KiB> for FrameAllocator<'_, '_, '_> {
+    unsafe impl x86_64::structures::paging::FrameAllocator<Size4KiB> for BasicPhysAllocator<'_> {
         fn allocate_frame(&mut self) -> Option<PhysFrame<Size4KiB>> {
-            let addr = self.alloc.alloc_mem(self.mapper);
-            Some(addr)
+            PhysFrame::from_start_address(PhysAddr::new(self.alloc_as_u64())).ok()
         }
+    }
+
+    #[derive(Eq, PartialEq)]
+    enum AllocError {
+        RegionExhausted,
     }
 
     #[repr(align(4096))]
