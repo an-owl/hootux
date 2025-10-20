@@ -1063,7 +1063,7 @@ pub(crate) mod pm {
                 mbi_region,
                 elf_sections: pb_unwrap(mbi.get_tag()),
                 mem_map: pb_unwrap(mbi.get_tag()),
-                curr_state: 0,
+                curr_state: 0x1000,
             }
         }
 
