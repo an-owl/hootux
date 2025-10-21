@@ -658,17 +658,6 @@ pub(crate) mod pm {
             core::writeln!(DebugWrite, "{:x?}", i).unwrap();
         }
 
-        // SAFETY: Memory is identity mapped, so we can cast the phys addr to a reference.
-        let mapper = unsafe {
-            OffsetPageTable::new(
-                &mut *(x86_64::registers::control::Cr3::read()
-                    .0
-                    .start_address()
-                    .as_u64() as usize as *mut PageTable),
-                x86_64::VirtAddr::new(0),
-            )
-        };
-
         let mut alloc = BasicPhysAllocator::new(&mbi);
         let knl_l4 =
             unsafe { &mut *(alloc.alloc().start_address().as_u64() as usize as *mut PageTable) };
