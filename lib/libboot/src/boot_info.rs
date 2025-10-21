@@ -348,8 +348,7 @@ impl<'a> Iterator for MapIter<'a> {
 #[cfg(feature = "multiboot2")]
 pub struct Multiboot2PmMemoryState {
     pub(crate) mbi_region: core::ops::Range<u64>,
-    pub(crate) elf_sections: &'static multiboot2::ElfSectionsTag,
-    pub(crate) mem_map: &'static multiboot2::MemoryMapTag,
+    pub(crate) boot_info: &'static multiboot2::BootInformation<'static>,
     pub(crate) used_boundary: u64,
     pub(crate) low_boundary: u64,
 }
@@ -395,7 +394,13 @@ impl Multiboot2PmMemoryStateIter<'_> {
             _ => unreachable!(), // other variants are not returned
         }
 
-        for i in self.parent.elf_sections.sections() {
+        for i in self
+            .parent
+            .boot_info
+            .elf_sections_tag()
+            .iter()
+            .flat_map(|e| e.sections())
+        {
             let start = x86_64::align_down(i.start_address(), PAGE_SIZE as u64);
             let end = x86_64::align_up(i.end_address(), PAGE_SIZE as u64);
 
@@ -410,6 +415,15 @@ impl Multiboot2PmMemoryStateIter<'_> {
             }
         }
 
+        for i in self.parent.boot_info.module_tags() {
+            let start = x86_64::align_up(i.start_address() as u64, PAGE_SIZE as u64);
+            let end = x86_64::align_down(i.end_address() as u64, PAGE_SIZE as u64);
+            let (r, ty) = Self::cmp_range(range, start..end);
+            if ty == MemoryRegionType::Bootloader {
+                return (r, ty);
+            }
+            range = r;
+        }
         Self::cmp_range(range, self.parent.mbi_region.clone())
     }
 
@@ -531,19 +545,16 @@ impl<'a> Iterator for Multiboot2PmMemoryStateIter<'a> {
     type Item = MemoryRegion;
 
     fn next(&mut self) -> Option<Self::Item> {
+        let mem_map = self.parent.boot_info.memory_map_tag().unwrap();
         // If the last available page is this region is next_address then this region is depleted
         if x86_64::align_down(
-            self.parent
-                .mem_map
-                .memory_areas()
-                .get(self.last_index)?
-                .end_address(),
+            mem_map.memory_areas().get(self.last_index)?.end_address(),
             PAGE_SIZE as u64,
         ) == self.next_addr
         {
             self.last_index += 1;
         };
-        let area = self.parent.mem_map.memory_areas().get(self.last_index)?;
+        let area = mem_map.memory_areas().get(self.last_index)?;
         let (start, end) = {
             if multiboot2::MemoryAreaType::from(area.typ()) == multiboot2::MemoryAreaType::Available
             {
@@ -561,7 +572,7 @@ impl<'a> Iterator for Multiboot2PmMemoryStateIter<'a> {
                 self.last_index += 1;
 
                 // Update next address
-                let next_area = self.parent.mem_map.memory_areas().get(self.last_index);
+                let next_area = mem_map.memory_areas().get(self.last_index);
                 self.next_addr = x86_64::align_up(
                     next_area
                         .map(|a| a.start_address())

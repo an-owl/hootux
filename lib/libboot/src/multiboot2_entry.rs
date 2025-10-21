@@ -1156,13 +1156,10 @@ pub(crate) mod pm {
         ///
         /// This fn casts `'a` into `'static` the caller must ensure that the multiboot information struct
         unsafe fn to_static_context(self) -> crate::boot_info::Multiboot2PmMemoryState {
-            let elf = pb_unwrap(self.boot_info.elf_sections_tag());
-            let mem_map = pb_unwrap(self.boot_info.memory_map_tag());
             unsafe {
                 crate::boot_info::Multiboot2PmMemoryState {
                     mbi_region: self.mbi_region,
-                    elf_sections: core::mem::transmute(elf),
-                    mem_map: core::mem::transmute(mem_map),
+                    boot_info: core::mem::transmute(self.boot_info),
                     used_boundary: self.last_address + crate::boot_info::PAGE_SIZE as u64,
                     // SAFETY: This is safe, this is defined in the global_asm block where all variables are dword sized
                     // This symbol will never be written to once
