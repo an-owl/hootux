@@ -10,6 +10,7 @@ extern crate alloc;
 
 use alloc::boxed::Box;
 use alloc::vec::Vec;
+use core::alloc::Allocator;
 use core::ptr::NonNull;
 use hatcher::boot_info::PixelFormat;
 use hootux::exit_qemu;
@@ -122,7 +123,38 @@ fn kernel_main(b: *mut hatcher::boot_info::BootInfo) -> ! {
     debug!("Successfully initialized Kernel");
 
     {
-        let tmpfs = fs::tmpfs::TmpFsRoot::new();
+        // initrd is the first module.
+        let tmpfs = if let Some(initrd) =
+            b.optionals.mb2_info.as_ref().unwrap().module_tags().next()
+        {
+            // SAFETY: This is a as-of-yet unmapped bootloader data.
+            let alloc = unsafe { alloc_interface::MmioAlloc::new(initrd.start_address() as usize) };
+            // SAFETY: align `1` guarenteed to not be ok.
+            let v: Vec<u8, _> = unsafe {
+                Vec::from_parts_in(
+                    alloc
+                        .allocate(core::alloc::Layout::from_size_align_unchecked(
+                            initrd.module_size() as usize,
+                            1,
+                        ))
+                        .unwrap()
+                        .cast(),
+                    initrd.module_size() as usize,
+                    initrd.module_size() as usize,
+                    alloc,
+                )
+            };
+
+            fs::tmpfs::TmpFsRoot::try_from(ustar::UnmappedTarball::from_raw(&v))
+                .inspect_err(|e| {
+                    log::error!(
+                        "Failed to load initrd got error {e:?}: Attempting to start without it",
+                    )
+                })
+                .unwrap_or(fs::tmpfs::TmpFsRoot::new())
+        } else {
+            fs::tmpfs::TmpFsRoot::new()
+        };
         fs::init_fs(Box::new(tmpfs));
         fs::sysfs::init();
         fs::sysfs::SysFsRoot::new().firmware.load_acpi(acpi_tables);

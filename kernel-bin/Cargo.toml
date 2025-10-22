@@ -22,3 +22,4 @@ futures-util = { version = "0.3.28", default-features = false, features = ["allo
 ahci = { path = "../drivers/ahci" }
 hid-ps2 = { path = "../drivers/hid-ps2" }
 usb = { path = "../drivers/usb", optional = true }
+ustar = { git = "https://github.com/an-owl/ustar" }

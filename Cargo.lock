@@ -505,6 +505,7 @@ dependencies = [
  "log",
  "multiboot2-header",
  "usb",
+ "ustar",
  "x86_64",
 ]
 
