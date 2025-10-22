@@ -9,15 +9,6 @@ static BRIEF: &str = r#"\
 Usage `cargo run -- [OPTIONS]`
 "#;
 
-const GRUB_DEFAULT_CONFIG: &str = r#"set timeout=0
-set default=0
-
-menuentry hootux {
-    multiboot2 /boot/hootux
-    boot
-}
-"#;
-
 /*
 Return codes:
 0. Ok
@@ -128,10 +119,12 @@ struct Options {
     native_dbg_shell: bool,
     daemonize: bool,
     grub_cfg: String,
+    modules: Vec<String>,
 }
 
 impl Options {
     fn get_args() -> Self {
+        use core::fmt::Write;
         let mut opts = getopts::Options::new();
         opts.optflag(
             "d",
@@ -197,6 +190,14 @@ impl Options {
             "-g PATH",
             HasArg::Yes,
             Occur::Optional,
+        );
+        opts.opt(
+            "",
+            "module",
+            "Include a module to be loaded into the kernel",
+            "",
+            HasArg::Yes,
+            Occur::Multi,
         );
 
         let matches = match opts.parse(std::env::args_os()) {
@@ -266,6 +267,8 @@ impl Options {
             }
         };
 
+        let modules = matches.opt_strs("module");
+
         let grub_cfg = {
             if matches.opt_present("g") {
                 let path = matches
@@ -279,7 +282,25 @@ impl Options {
                     }
                 }
             } else {
-                GRUB_DEFAULT_CONFIG.to_string()
+                let mut modules_strs = String::new();
+                for i in &modules {
+                    let fname = std::path::Path::new(i)
+                        .file_name()
+                        .expect("Module did nto point to valid file.");
+                    writeln!(modules_strs, "module /boot/{fname:?}").unwrap();
+                }
+
+                format!(
+                    r#"set timeout=0
+                    set default=0
+
+                    menuentry hootux {{
+                        multiboot2 /boot/hootux
+                        {modules_strs}
+                        boot
+                    }}
+                    "#
+                )
             }
         };
 
@@ -297,6 +318,7 @@ impl Options {
             native_dbg_shell: matches.opt_present("n"),
             daemonize: matches.opt_present("daemonize"),
             grub_cfg,
+            modules,
         }
     }
 
@@ -544,6 +566,22 @@ impl Options {
                 std::process::exit(0x61);
             }
         };
+
+        for module in self.modules.iter().map(|s| std::path::Path::new(s)) {
+            match std::fs::copy(
+                module,
+                tgt.join(&format!(
+                    "img/boot/hootux{}",
+                    module.file_name().unwrap().to_str().unwrap()
+                )),
+            ) {
+                Ok(_) => {}
+                Err(e) => {
+                    eprintln!("Failed to copy module {e}");
+                    std::process::exit(0x61);
+                }
+            }
+        }
 
         const IMG_NAME: &str = "grub.img";
         let img = tgt.join(IMG_NAME);
