@@ -287,7 +287,7 @@ impl Options {
                     let fname = std::path::Path::new(i)
                         .file_name()
                         .expect("Module did nto point to valid file.");
-                    writeln!(modules_strs, "module /boot/{fname:?}").unwrap();
+                    writeln!(modules_strs, "module2 /boot/{fname:?}").unwrap();
                 }
 
                 format!(
@@ -571,7 +571,7 @@ impl Options {
             match std::fs::copy(
                 module,
                 tgt.join(&format!(
-                    "img/boot/hootux{}",
+                    "img/boot/{}",
                     module.file_name().unwrap().to_str().unwrap()
                 )),
             ) {
