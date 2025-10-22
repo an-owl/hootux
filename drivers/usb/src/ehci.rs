@@ -1417,7 +1417,7 @@ impl TransactionString {
             "Setup transactions must always contain 8 bytes"
         );
         // SAFETY: We guarantee that `setup` owns this address.
-        let len = u16::from_le_bytes(setup[6..7].try_into().unwrap()) as usize;
+        let len = u16::from_le_bytes(setup[6..=7].try_into().unwrap()) as usize;
         // Determines the status PID from `data`
         let status_pid = data
             .as_ref()
