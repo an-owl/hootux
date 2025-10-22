@@ -558,7 +558,7 @@ impl NormalFile<u8> for TmpFsNormalFile {
 
 impl File for TmpFsNormalFile {
     fn file_type(&self) -> FileType {
-        FileType::Directory
+        FileType::NormalFile
     }
 
     fn block_size(&self) -> u64 {
