@@ -93,28 +93,18 @@ impl SysfsDirectory for EhciFileContainer {
     }
 
     fn file_list(&self) -> Vec<String> {
-        let controller = hootux::block_on!(core::pin::pin!(self.inner.lock()));
-        controller
-            .port_files
-            .keys()
-            .map(|k| alloc::format!("{k}"))
-            .chain([".".to_string(), "..".to_string()])
-            .collect()
+        [".".to_string(), "..".to_string(), "ports".to_string()].to_vec()
     }
 
     fn get_file(&self, name: &str) -> Result<Box<dyn SysfsFile>, IoError> {
         match name {
             "." => Ok(Box::new(self.clone())),
             ".." => Ok(Box::new(hootux::fs::sysfs::SysFsRoot::new().bus.clone())),
-            _ => {
-                let controller = hootux::block_on!(core::pin::pin!(self.inner.lock()));
-                let int = name.parse().map_err(|_| IoError::InvalidData)?;
-                let acc = controller
-                    .port_files
-                    .get(&int)
-                    .ok_or_else(|| IoError::InvalidData.into())?;
-                Ok(acc.get_file())
-            }
+            "ports" => Ok(Box::new(PortFiles {
+                inner: self.inner.clone(),
+                major: self.major,
+            })),
+            _ => Err(IoError::NotPresent),
         }
     }
 
@@ -138,6 +128,88 @@ impl BusDeviceFile for EhciFileContainer {
 
     fn id(&self) -> String {
         alloc::format!("usb{}", self.device().as_int().0)
+    }
+
+    fn as_any(self: Box<Self>) -> Box<dyn Any> {
+        self
+    }
+}
+
+#[file]
+#[derive(Clone)]
+pub(crate) struct PortFiles {
+    inner: Arc<async_lock::Mutex<super::Ehci>>,
+    major: MajorNum,
+}
+
+impl File for PortFiles {
+    fn file_type(&self) -> FileType {
+        FileType::Directory
+    }
+
+    fn block_size(&self) -> u64 {
+        hootux::mem::PAGE_SIZE as u64
+    }
+
+    fn device(&self) -> DevID {
+        // we are the root device, all devices on the bus use their USB bus address as minor.
+        DevID::new(self.major, 0)
+    }
+
+    fn clone_file(&self) -> Box<dyn File> {
+        Box::new(self.clone())
+    }
+
+    fn id(&self) -> u64 {
+        self.device().as_int().1 as u64
+    }
+
+    fn len(&self) -> IoResult<'_, u64> {
+        async { Ok(SysfsDirectory::entries(self) as u64) }.boxed()
+    }
+}
+
+impl SysfsDirectory for PortFiles {
+    fn entries(&self) -> usize {
+        let controller = hootux::block_on!(core::pin::pin!(self.inner.lock()));
+        (controller.address_bmp.count_ones() - 1) as usize + 2
+    }
+
+    fn file_list(&self) -> Vec<String> {
+        let controller = hootux::block_on!(core::pin::pin!(self.inner.lock()));
+        controller
+            .port_files
+            .keys()
+            .map(|k| alloc::format!("{k}"))
+            .chain([".".to_string(), "..".to_string()])
+            .collect()
+    }
+
+    fn get_file(&self, name: &str) -> Result<Box<dyn SysfsFile>, IoError> {
+        match name {
+            "." => Ok(Box::new(self.clone())),
+            ".." => Ok(Box::new(EhciFileContainer {
+                inner: self.inner.clone(),
+                major: self.major,
+            })),
+            _ => {
+                let controller = hootux::block_on!(core::pin::pin!(self.inner.lock()));
+                let int = name.parse().map_err(|_| IoError::InvalidData)?;
+                let acc = controller
+                    .port_files
+                    .get(&int)
+                    .ok_or_else(|| IoError::InvalidData.into())?;
+                Ok(acc.get_file())
+            }
+        }
+    }
+
+    fn store(&self, _name: &str, _file: Box<dyn SysfsFile>) -> Result<(), IoError> {
+        Err(IoError::NotSupported)
+    }
+
+    fn remove(&self, _name: &str) -> Result<(), IoError> {
+        Err(IoError::NotSupported)
     }
 
     fn as_any(self: Box<Self>) -> Box<dyn Any> {
