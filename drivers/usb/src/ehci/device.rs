@@ -304,9 +304,15 @@ impl SysfsFile for ClassFinderFle {}
 
 impl Read<u8> for ClassFinderFle {
     /// This implementation allows the caller to determine whether the device implements a certain class.
-    /// the first 3 bytes of `pos` (le) indicate the class to be searched for. The fourth byte
-    /// contains a bitmap indicating the descriptors at which this a match can be found.
-    /// All other bits in the fourth byte are reserved and will return [IoError::EndOfFile].
+    /// the first 3 bytes of `pos` (le) indicate the class to be searched for. The lower bits of the
+    /// fourth byte contains a bitmap indicating the descriptors at which this a match can be found.
+    /// Bits 6..7 of the fourth byte indicate which class fields must be matched.
+    ///
+    /// - A value of `0` will match class subclass and protocol
+    /// - A value of `1` will match class and subclass.
+    /// - A value of `2` will match only match the class.
+    ///
+    /// All other values in the fourth byte are reserved and will return [IoError::EndOfFile].
     ///
     /// ``` ignore
     /// # use hootux::fs::file::NormalFile;
@@ -390,7 +396,7 @@ impl Read<u8> for ClassFinderFle {
                 let len = buff.len(); // todo this is the wrong len
                 return Err((IoError::MediaError, buff, len));
             };
-            if dev_descriptor.class() == class && descriptors.contains(DescriptorBitmap::DEVICE) {
+            if dev_descriptor.class()[descriptors.class_len()] == class[descriptors.class_len()] && descriptors.contains(DescriptorBitmap::DEVICE) {
                 // SAFETY: This is safe because `DmaTarget::data_ptr()` must be writable.
                 (&mut *buff)[0..2].copy_from_slice(&[0, 1]);
                 return Ok((buff, 2));
@@ -406,7 +412,7 @@ impl Read<u8> for ClassFinderFle {
                 let Some(cfg_descriptor): Option<&usb_cfg::descriptor::ConfigurationDescriptor> = usb_cfg::descriptor::Descriptor::from_raw(&cfg_raw) else { return Err((IoError::MediaError, buff, 0)) };
                 // SAFETY: We fetch the max size for a descriptor, so we definitely have the whole thing & it has not been modified.
                 for interface_desc in unsafe { cfg_descriptor.iter() } {
-                    if descriptors.contains(DescriptorBitmap::INTERFACE) && interface_desc.class() == class {
+                    if descriptors.contains(DescriptorBitmap::INTERFACE) && interface_desc.class()[descriptors.class_len()] == class[descriptors.class_len()] {
                         (&mut *buff)[0..2].copy_from_slice(&[configuration, DescriptorBitmap::INTERFACE.bits()]);
                         return Ok((buff, 2));
                     }
@@ -433,6 +439,28 @@ bitflags::bitflags! {
     pub struct DescriptorBitmap: u8 {
         const DEVICE = 1;
         const INTERFACE = 1 << 1;
+        const MATCH_CLASS = 2 << 6;
+        const MATCH_SUBCLASS = 1 << 6;
+    }
+}
+
+impl DescriptorBitmap {
+    const fn class_len(&self) -> core::ops::Range<usize> {
+        if !self.contains(DescriptorBitmap::MATCH_CLASS)
+            && !self.contains(DescriptorBitmap::MATCH_SUBCLASS)
+        {
+            0..3
+        } else if !self.contains(DescriptorBitmap::MATCH_CLASS)
+            && self.contains(DescriptorBitmap::MATCH_SUBCLASS)
+        {
+            0..2
+        } else if self.contains(DescriptorBitmap::MATCH_CLASS)
+            && !self.contains(DescriptorBitmap::MATCH_SUBCLASS)
+        {
+            0..1
+        } else {
+            0..0 // invalid, will always cause EOF
+        }
     }
 }
 
