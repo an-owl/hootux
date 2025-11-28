@@ -233,6 +233,15 @@ impl QueueHead {
         self.next_link_ptr.set_address(addr);
         self.next_link_ptr
             .set_link_type(FrameListLinkType::QueueHead);
+        self.terminate_horizontal(false);
+    }
+
+    pub fn set_interrupt_schedule_mask(&mut self, mask: u8) {
+        self.ctl1.set_inerupt_schedule_mask(mask);
+    }
+
+    pub fn terminate_horizontal(&mut self, terminate: bool) {
+        self.next_pointer.set_end(terminate)
     }
 }
 
