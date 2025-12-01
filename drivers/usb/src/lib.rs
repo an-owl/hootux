@@ -1,5 +1,9 @@
 #![no_std]
 #![feature(allocator_api)]
+
+// TODO: Define USB controller and device directory layouts.
+// Also common controller-agnostic USB interface.
+
 extern crate alloc;
 
 use alloc::boxed::Box;
