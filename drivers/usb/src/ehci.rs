@@ -34,6 +34,10 @@ pub struct Ehci {
     // At runtime callers can assume this is Some
     periodic_frame_list: Option<Box<PeriodicFrameList, DmaAlloc>>,
 
+    /// Periodic endpoints, this list contains the reverse order of execution of the periodic queues.
+    /// This must be sorted by the endpoints "period".
+    periodic_queue_heads: Vec<alloc::sync::Arc<PeriodicEndpoint>>,
+
     memory: InaccessibleAddr<[u8]>,
     address: u32,
     layout: core::alloc::Layout,
@@ -133,6 +137,7 @@ impl Ehci {
             address_bmp: 1,
             ports: port_vec.into_boxed_slice(),
             async_list: Vec::new(),
+            periodic_queue_heads: Vec::new(),
             periodic_frame_list: None,
             memory: InaccessibleAddr::new(hci_pointer),
             address: phys_address,
@@ -379,6 +384,11 @@ impl Ehci {
             cmd
         })
     }
+
+    /// Sets the periodic schedule execution. The periodic schedule execution will not stop immediately,
+    /// it will only stop on a periodic table entry boundary. Meaning it will only stop on a uframe*8 boundary.
+    ///
+    /// [Self::periodic_schedule_state] will return the current state of this bit.
     fn execute_periodic(&mut self, state: bool) {
         let regs = self.operational_registers;
         let cfg = volatile::map_field!(regs.usb_command);
@@ -386,6 +396,13 @@ impl Ehci {
             cmd.set_periodic_schedule_enable(state);
             cmd
         })
+    }
+
+    /// Returns whether the current state of the "periodic schedule enable" bit.
+    fn periodic_schedule_state(&self) -> bool {
+        let regs = self.operational_registers;
+        let cfg = volatile::map_field!(regs.usb_command);
+        cfg.read().periodic_schedule_enable()
     }
 
     fn controller_enable(&mut self, state: bool) {
@@ -396,7 +413,6 @@ impl Ehci {
             cmd
         })
     }
-
     // You know the music, it's time to dance.
     async fn drop_endpoints<'a, T: Iterator<Item = &'a EndpointQueue>>(&'a mut self, endpoints: T) {
         let sem = self.async_doorbell_mutex.acquire().await;
@@ -450,6 +466,132 @@ impl Ehci {
             !e.waiting_for_drop
                 .load(core::sync::atomic::Ordering::Relaxed)
         });
+    }
+
+    /// This will disable the periodic frame list, reconstruct the list then re-enable the list.
+    async fn rebuild_periodic_list(&mut self) -> Result<(), ()> {
+        self.execute_periodic(false);
+        if self.periodic_queue_heads.len() == 0 {
+            // No endpoints, just stop.
+            return Ok(());
+        }
+
+        // This *should* indicate 5ms of retires (which is intended), but this is not bound to an exit time.
+        // At the time of writing this should wait about 17ms before failing.
+        const RETRIES: usize = 5;
+        for i in 0..=RETRIES {
+            match i {
+                RETRIES => {
+                    log::error!(
+                        "EHCI {}: periodic list failed to stop ",
+                        self.major_num.get_raw()
+                    );
+                    return Err(());
+                }
+                n => {
+                    if !self.periodic_schedule_state() {
+                        if n > 2 {
+                            log::warn!(
+                                "EHCI {}: periodic schedule took longer than expected to stop",
+                                self.major_num.get_raw()
+                            );
+                        }
+                        break;
+                    }
+                    hootux::task::util::sleep(1).await
+                }
+            }
+        }
+
+        // SAFETY: Periodic schedule has been disabled.
+        unsafe { self.link_periodic_list() };
+
+        let Some(ref mut periodic) = self.periodic_frame_list else {
+            unreachable!()
+        };
+        for (i, ptr) in periodic.iter().enumerate() {
+            let long_period = (i >> 3) as u32;
+
+            let Some(head) = self.periodic_queue_heads.iter().rfind(|&e| {
+                // If `long_period` is a multiple of the `e.rate/8` then we place it as the first entry in the list.
+                long_period.checked_rem(e.rate / 8).unwrap_or(0) == 0
+            }) else {
+                continue;
+            };
+
+            let head_addr = head.endpoint.head_addr();
+
+            ptr.set_address(head_addr);
+            ptr.set_type(ehci::frame_lists::FrameListLinkType::QueueHead);
+        }
+
+        // Dont wait for it, it'll start when its ready.
+        self.execute_periodic(true);
+        Ok(())
+    }
+
+    /// Links all periodic queues in order to be run.
+    ///
+    ///  # Safety
+    ///
+    /// The caller must ensure that the periodic frame list is not running.
+    unsafe fn link_periodic_list(&mut self) {
+        for i in (0..self.periodic_queue_heads.len()).rev() {
+            let this = &self.async_list[i];
+            let Some(next_index) = i.checked_sub(1) else {
+                this.terminate_horizontal();
+                return;
+            };
+            let next = &self.async_list[next_index];
+            this.set_next_endpoint_queue(&next);
+        }
+    }
+
+    /// Inserts `queues` into the periodic schedule and re-configures the periodic frame list.
+    ///
+    /// If this fn returns `Err(())` the controller failed to stop
+    pub async fn insert_into_periodic(
+        &mut self,
+        queues: impl Iterator<Item = alloc::sync::Arc<PeriodicEndpoint>>,
+    ) -> Result<(), ()> {
+        for queue in queues {
+            queue.set_bitmap();
+            let (Ok(entry) | Err(entry)) = self
+                .periodic_queue_heads
+                .binary_search_by(|f| f.rate.cmp(&queue.rate));
+            self.periodic_queue_heads.insert(entry, queue);
+        }
+
+        self.rebuild_periodic_list().await
+    }
+
+    /// Drops periodic endpoints from the execution list.
+    ///
+    /// When this fn fn returns `Err(())` the periodic list failed to stop. Endpoints
+    pub async fn drop_periodic_endpoints(
+        &mut self,
+        endpoints: impl Iterator<Item = &PeriodicEndpoint>,
+    ) -> Result<(), ()> {
+        let mut dirty = false;
+        for endpoint in endpoints {
+            if let Some(index) = self
+                .periodic_queue_heads
+                .iter()
+                .position(|e| core::ptr::eq(e.as_ref(), endpoint))
+            {
+                self.periodic_queue_heads.remove(index);
+                dirty = true;
+            } else {
+                log::warn!("Queue head at {endpoint:p} was not found",);
+            }
+        }
+
+        if dirty {
+            // Ignore error. There isn't
+            self.rebuild_periodic_list().await
+        } else {
+            Ok(())
+        }
     }
 }
 
@@ -825,6 +967,11 @@ impl EndpointQueue {
             let mut l = self.inner.lock();
             l.head.set_next_queue_head(phys_addr);
         });
+    }
+
+    fn terminate_horizontal(&self) {
+        let mut l = self.inner.lock();
+        l.head.terminate_horizontal(true);
     }
 
     fn head_addr(&self) -> u32 {
@@ -1612,3 +1759,45 @@ enum InterruptMessage {
 // SAFETY: auto Send is blocked by VolatilePtr<UsbSts>, but this must be (Send + Sync) to facilitate interrupts.
 unsafe impl Send for IntHandler {}
 unsafe impl Sync for IntHandler {}
+
+pub struct PeriodicEndpoint {
+    endpoint: alloc::sync::Arc<EndpointQueue>,
+    rate: u32,
+}
+
+impl PeriodicEndpoint {
+    pub fn new(
+        endpoint: alloc::sync::Arc<EndpointQueue>,
+        descriptor: &usb_cfg::descriptor::EndpointDescriptor,
+    ) -> Self {
+        assert_eq!(
+            descriptor.attributes.transfer_type(),
+            usb_cfg::descriptor::EndpointTransferType::Interrupt,
+            "Attempted to configure endpoint as incorrect type"
+        );
+        Self {
+            endpoint,
+            rate: descriptor.interval as u32,
+        }
+    }
+
+    fn set_bitmap(&self) {
+        let bitmap_sparce = match self.rate {
+            0 => unreachable!(),
+            n @ 1..8 => n,
+            _ => 8,
+        };
+        let mut bitmap = 0;
+        let mut index = 0;
+        while index < u8::BITS {
+            bitmap |= 1 << index;
+            index += bitmap_sparce;
+        }
+
+        self.endpoint
+            .inner
+            .lock()
+            .head
+            .set_interrupt_schedule_mask(bitmap)
+    }
+}
