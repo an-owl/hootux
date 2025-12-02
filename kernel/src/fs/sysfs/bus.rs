@@ -156,6 +156,10 @@ impl SysfsBus {
         SysfsDirectory::store(bus, &*s, super::clone_sysfs_file(&*device)).unwrap();
         self.event.notify_event()
     }
+
+    pub fn event_file(&self) -> &super::EventFile {
+        &self.event
+    }
 }
 
 /// Contains a single bus type e.g. USB, PCI.

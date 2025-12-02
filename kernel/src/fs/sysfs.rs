@@ -234,7 +234,7 @@ impl EventFile {
         }
     }
 
-    fn notify_event(&self) {
+    pub fn notify_event(&self) {
         let slaves = core::mem::replace(&mut *self.slaves.lock(), Vec::new());
         for slave in slaves {
             slave.ready()
