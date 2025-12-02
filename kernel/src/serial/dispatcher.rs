@@ -174,7 +174,7 @@ impl File for SerialDispatcher {
     fn method_call<'f, 'a: 'f, 'b: 'f>(
         &'b self,
         method: &str,
-        arguments: &'a (dyn Any + Send + Sync + 'a),
+        arguments: &'a (dyn Any + Send + Sync + 'static),
     ) -> IoResult<'f, MethodRc> {
         kernel_proc_macro::impl_method_call!(method, arguments =>
             async set_mode(super::DataBits, super::Parity, super::StopBits)

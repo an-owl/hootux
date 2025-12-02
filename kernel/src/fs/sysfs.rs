@@ -270,7 +270,7 @@ impl File for EventFile {
     fn method_call<'f, 'a: 'f, 'b: 'f>(
         &'b self,
         method: &str,
-        arguments: &'a (dyn Any + Send + Sync + 'a),
+        arguments: &'a (dyn Any + Send + Sync + 'static),
     ) -> IoResult<'f, MethodRc> {
         impl_method_call!(method, arguments => async notify_event())
     }

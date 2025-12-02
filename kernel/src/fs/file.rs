@@ -170,7 +170,7 @@ pub trait File:
     fn method_call<'f, 'a: 'f, 'b: 'f>(
         &'b self,
         method: &str,
-        arguments: &'a (dyn core::any::Any + Send + Sync + 'a),
+        arguments: &'a (dyn core::any::Any + Send + Sync + 'static),
     ) -> IoResult<'f, MethodRc> {
         async { Err(IoError::NotPresent) }.boxed()
     }
