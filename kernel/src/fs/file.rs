@@ -919,7 +919,7 @@ impl FileHandle {
 }
 
 pub struct MethodRc {
-    pub inner: alloc::boxed::Box<dyn core::any::Any>,
+    pub inner: alloc::boxed::Box<dyn core::any::Any + Send>,
 }
 
 impl MethodRc {
