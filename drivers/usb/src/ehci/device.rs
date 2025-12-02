@@ -235,6 +235,10 @@ impl UsbDeviceAccessor {
         };
         this.controller = alloc::sync::Arc::downgrade(&controller);
         l.port_files.insert(portnum, alloc::sync::Arc::new(this));
+        hootux::fs::sysfs::SysFsRoot::new()
+            .bus
+            .event_file()
+            .notify_event()
     }
 
     pub(super) fn get_file(self: &alloc::sync::Arc<Self>) -> Box<UsbDeviceFile> {
