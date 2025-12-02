@@ -36,7 +36,7 @@ pub struct Ehci {
 
     /// Periodic endpoints, this list contains the reverse order of execution of the periodic queues.
     /// This must be sorted by the endpoints "period".
-    periodic_queue_heads: Vec<alloc::sync::Arc<PeriodicEndpoint>>,
+    periodic_queue_heads: Vec<PeriodicEndpointQueue>,
 
     memory: InaccessibleAddr<[u8]>,
     address: u32,
@@ -552,7 +552,7 @@ impl Ehci {
     /// If this fn returns `Err(())` the controller failed to stop
     pub async fn insert_into_periodic(
         &mut self,
-        queues: impl Iterator<Item = alloc::sync::Arc<PeriodicEndpoint>>,
+        queues: impl Iterator<Item = PeriodicEndpointQueue>,
     ) -> Result<(), ()> {
         for queue in queues {
             queue.set_bitmap();
@@ -570,14 +570,14 @@ impl Ehci {
     /// When this fn fn returns `Err(())` the periodic list failed to stop. Endpoints
     pub async fn drop_periodic_endpoints(
         &mut self,
-        endpoints: impl Iterator<Item = &PeriodicEndpoint>,
+        endpoints: impl Iterator<Item = &PeriodicEndpointQueue>,
     ) -> Result<(), ()> {
         let mut dirty = false;
         for endpoint in endpoints {
             if let Some(index) = self
                 .periodic_queue_heads
                 .iter()
-                .position(|e| core::ptr::eq(e.as_ref(), endpoint))
+                .position(|e| core::ptr::addr_eq(e.as_ref(), endpoint))
             {
                 self.periodic_queue_heads.remove(index);
                 dirty = true;
@@ -900,6 +900,32 @@ impl EndpointQueue {
                 data_toggle_ctl,
             )),
             waiting_for_drop: core::sync::atomic::AtomicBool::new(false),
+        }
+    }
+
+    /// Configures a new [PeriodicEndpointQueue]. Functionally this is the same as [Self] but includes extra metadata.
+    ///
+    /// # Panics
+    ///
+    /// `target` may not target either [DeviceAddress::Default] or endpoint 0.
+    /// `pid` may not be [PidCode::Control].
+    fn new_periodic(
+        target: Target,
+        pid: PidCode,
+        packet_size: u32,
+        period: u32,
+    ) -> PeriodicEndpointQueue {
+        assert_ne!(pid, PidCode::Control);
+        // SAFETY: Endpoint::new(0) will always return `Some(_)`
+        assert_ne!(target.endpoint, unsafe {
+            Endpoint::new(0).unwrap_unchecked()
+        });
+        assert_ne!(target.dev, DeviceAddress::Default);
+
+        let endpoint = Self::new_async(target, pid, packet_size, false);
+        PeriodicEndpointQueue {
+            endpoint: alloc::sync::Arc::new(endpoint),
+            rate: period,
         }
     }
 
@@ -1760,27 +1786,13 @@ enum InterruptMessage {
 unsafe impl Send for IntHandler {}
 unsafe impl Sync for IntHandler {}
 
-pub struct PeriodicEndpoint {
+#[derive(Clone)]
+pub struct PeriodicEndpointQueue {
     endpoint: alloc::sync::Arc<EndpointQueue>,
     rate: u32,
 }
 
-impl PeriodicEndpoint {
-    pub fn new(
-        endpoint: alloc::sync::Arc<EndpointQueue>,
-        descriptor: &usb_cfg::descriptor::EndpointDescriptor,
-    ) -> Self {
-        assert_eq!(
-            descriptor.attributes.transfer_type(),
-            usb_cfg::descriptor::EndpointTransferType::Interrupt,
-            "Attempted to configure endpoint as incorrect type"
-        );
-        Self {
-            endpoint,
-            rate: descriptor.interval as u32,
-        }
-    }
-
+impl PeriodicEndpointQueue {
     fn set_bitmap(&self) {
         let bitmap_sparce = match self.rate {
             0 => unreachable!(),
@@ -1799,5 +1811,11 @@ impl PeriodicEndpoint {
             .lock()
             .head
             .set_interrupt_schedule_mask(bitmap)
+    }
+}
+
+impl AsRef<EndpointQueue> for PeriodicEndpointQueue {
+    fn as_ref(&self) -> &EndpointQueue {
+        &self.endpoint
     }
 }
