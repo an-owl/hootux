@@ -573,6 +573,7 @@ impl Write<u8> for ConfigurationIo {
 
 pub mod frontend {
     use super::*;
+    use crate::ehci::PeriodicEndpointQueue;
     use alloc::sync::Arc;
     use core::task::Poll;
 
@@ -666,7 +667,7 @@ pub mod frontend {
             Ok(())
         }
 
-        /// Configures an endpoint in the async list for the device.
+        /// Configures an endpoint for asynchronous or interrupt transactions.
         ///
         /// # Safety
         ///
@@ -675,6 +676,20 @@ pub mod frontend {
             &mut self,
             descriptor: &usb_cfg::descriptor::EndpointDescriptor,
         ) -> Result<Arc<EndpointQueue>, IoError> {
+            enum EndpointWrapper {
+                Async(Arc<EndpointQueue>),
+                Interrupt(PeriodicEndpointQueue),
+            }
+
+            impl EndpointWrapper {
+                fn as_endpoint(&self) -> &Arc<EndpointQueue> {
+                    match self {
+                        EndpointWrapper::Async(inner) => inner,
+                        EndpointWrapper::Interrupt(int) => &int.endpoint,
+                    }
+                }
+            }
+
             let acc = self.acc.upgrade().ok_or(IoError::NotPresent)?;
             let pid = if descriptor.attributes.transfer_type()
                 == usb_cfg::descriptor::EndpointTransferType::Control
@@ -688,18 +703,47 @@ pub mod frontend {
                 }
             };
             let dt_ctl = pid == crate::PidCode::Control;
-            let qh = EndpointQueue::new_async(
-                crate::Target {
-                    dev: acc.address,
-                    endpoint: descriptor.into(),
-                },
-                pid,
-                descriptor.max_packet_size.max_packet_size() as u32,
-                dt_ctl,
-            );
-            let qh = Arc::new(qh);
+
+            let ep = match descriptor.attributes.transfer_type() {
+                usb_cfg::descriptor::EndpointTransferType::Bulk
+                | usb_cfg::descriptor::EndpointTransferType::Control => {
+                    let qh = EndpointQueue::new_async(
+                        crate::Target {
+                            dev: acc.address,
+                            endpoint: descriptor.into(),
+                        },
+                        pid,
+                        descriptor.max_packet_size.max_packet_size() as u32,
+                        dt_ctl,
+                    );
+                    let qh = Arc::new(qh);
+                    EndpointWrapper::Async(qh)
+                }
+                usb_cfg::descriptor::EndpointTransferType::Interrupt => {
+                    let ep = EndpointQueue::new_periodic(
+                        crate::Target {
+                            dev: acc.address,
+                            endpoint: descriptor.into(),
+                        },
+                        pid,
+                        descriptor.max_packet_size.max_packet_size() as u32,
+                        descriptor.interval as u32,
+                    );
+
+                    EndpointWrapper::Interrupt(ep)
+                }
+                usb_cfg::descriptor::EndpointTransferType::Isochronous => {
+                    log::error!(
+                        "Called {}::{}::setup_endpoint() on Isochronous endpoint",
+                        module_path!(),
+                        core::any::type_name::<Self>()
+                    );
+                    return Err(IoError::InvalidData);
+                }
+            };
+
             match self.endpoints[descriptor.endpoint_address.endpoint() as usize]
-                .replace(qh.clone())
+                .replace(ep.as_endpoint().clone())
             {
                 None => {}
                 Some(old_head) => {
@@ -716,8 +760,17 @@ pub mod frontend {
                 .ok_or(IoError::NotPresent)?
                 .lock_arc()
                 .await;
-            ctl.insert_into_async(qh.clone());
-            Ok(qh)
+
+            match ep {
+                EndpointWrapper::Async(ref ep) => ctl.insert_into_async(ep.clone()),
+                EndpointWrapper::Interrupt(ref per) => {
+                    ctl.insert_into_periodic([per.clone()].into_iter())
+                        .await
+                        .map_err(|_| IoError::MediaError)?;
+                }
+            }
+
+            Ok(ep.as_endpoint().clone())
         }
 
         pub fn endpoint(&self, ep: impl Into<crate::Endpoint>) -> Option<Arc<EndpointQueue>> {
