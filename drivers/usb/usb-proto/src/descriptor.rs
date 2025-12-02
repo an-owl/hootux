@@ -152,7 +152,7 @@ impl<T: ConfigurationMarker> ConfigurationDescriptor<T> {
     /// fetched using [super::CtlTransfer::get_descriptor] where `D` is `Self` first when `len` is
     /// `None` and again where `len` is `ConfigurationDescriptor.length` of the returned configuration descriptor.
     // todo make an example
-    pub unsafe fn iter(&self) -> impl Iterator<Item = &InterfaceDescriptor> {
+    pub unsafe fn iter(&self) -> ConfigurationIterator<'_, T> {
         ConfigurationIterator {
             parent: self,
             // SAFETY: The caller must guarantee this is safe.
@@ -167,6 +167,10 @@ pub struct ConfigurationIterator<'a, T: ConfigurationMarker> {
     next: Option<*const InterfaceDescriptor>,
     count: u8,
 }
+
+// SAFETY: ConfigurationIter does not allow mutating inner data in any way shape or form.
+unsafe impl<T: ConfigurationMarker> Send for ConfigurationIterator<'_, T> {}
+unsafe impl<T: ConfigurationMarker> Sync for ConfigurationIterator<'_, T> {}
 
 impl<'a, T: ConfigurationMarker> Iterator for ConfigurationIterator<'a, T> {
     type Item = &'a InterfaceDescriptor;
@@ -248,7 +252,7 @@ impl InterfaceDescriptor {
     ///
     /// The caller must guarantee that `self` is in the format returned by the device as specified
     /// by the USB specification. see [ConfigurationDescriptor::iter] for more information.
-    pub unsafe fn iter(&self) -> impl Iterator<Item = &EndpointDescriptor> {
+    pub unsafe fn iter(&self) -> InterfaceIter<'_> {
         if self.num_endpoints == 0 {
             InterfaceIter {
                 parent: self,
@@ -271,6 +275,10 @@ pub struct InterfaceIter<'a> {
     next: Option<*const EndpointDescriptor>,
     count: u8,
 }
+
+// SAFETY: InterfaceDescriptor does not allow mutating inner data in any way shape or form.
+unsafe impl Send for InterfaceIter<'_> {}
+unsafe impl Sync for InterfaceIter<'_> {}
 
 impl<'a> Iterator for InterfaceIter<'a> {
     type Item = &'a EndpointDescriptor;
