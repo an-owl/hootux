@@ -31,9 +31,9 @@ dependencies = [
 
 [[package]]
 name = "async-lock"
-version = "3.4.0"
+version = "3.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ff6e472cdea888a4bd64f342f09b3f50e1886d32afe8df3d663c01140b811b18"
+checksum = "5fd03604047cee9b6ce9de9f70c6cd540a0520c813cbd49bae61f33ab80ed1dc"
 dependencies = [
  "event-listener",
  "event-listener-strategy",
@@ -92,18 +92,18 @@ checksum = "dc827186963e592360843fb5ba4b973e145841266c1357f7180c43526f2e5b61"
 
 [[package]]
 name = "bitfield"
-version = "0.19.1"
+version = "0.19.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "db1bcd90f88eabbf0cadbfb87a45bceeaebcd3b4bc9e43da379cd2ef0162590d"
+checksum = "21ba6517c6b0f2bf08be60e187ab64b038438f22dd755614d8fe4d4098c46419"
 dependencies = [
  "bitfield-macros",
 ]
 
 [[package]]
 name = "bitfield-macros"
-version = "0.19.1"
+version = "0.19.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3787a07661997bfc05dd3431e379c0188573f78857080cf682e1393ab8e4d64c"
+checksum = "f48d6ace212fdf1b45fd6b566bb40808415344642b76c3224c07c8df9da81e97"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -456,6 +456,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "hid-report"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0bebb5da0629d65c77fa369d9e9e3ee5dee280506452d53ef97d9d2848d14945"
+
+[[package]]
 name = "hootux"
 version = "0.1.0"
 dependencies = [
@@ -505,6 +511,7 @@ dependencies = [
  "log",
  "multiboot2-header",
  "usb",
+ "usb-hid",
  "ustar",
  "x86_64",
 ]
@@ -580,9 +587,9 @@ dependencies = [
 
 [[package]]
 name = "log"
-version = "0.4.27"
+version = "0.4.28"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "13dc2df351e3202783a1fe0d44375f7295ffb4049267b0f3018346dc122a1d94"
+checksum = "34080505efa8e45a4b816c349525ebe327ceaa8559756f0356cba97ef3bf7432"
 
 [[package]]
 name = "marker_maker"
@@ -1227,6 +1234,19 @@ version = "0.1.0"
 dependencies = [
  "bitfield",
  "bitflags 2.9.1",
+]
+
+[[package]]
+name = "usb-hid"
+version = "0.1.0"
+dependencies = [
+ "async-lock",
+ "cast_trait_object",
+ "hid-report",
+ "hootux",
+ "log",
+ "usb",
+ "usb-cfg",
 ]
 
 [[package]]
