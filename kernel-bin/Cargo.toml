@@ -5,7 +5,9 @@ edition = "2024"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 [features]
-default = ["kernel-shell", "hootux/multiprocessing", "hootux/write-combining", "usb"]
+usb-hid = ["usb", "dep:usb-hid"]
+usb = ["dep:usb"]
+default = ["kernel-shell", "hootux/multiprocessing", "hootux/write-combining", "usb", "usb-hid"]
 kernel-shell = ["hootux/kernel-shell"]
 
 [dependencies]
@@ -23,3 +25,4 @@ ahci = { path = "../drivers/ahci" }
 hid-ps2 = { path = "../drivers/hid-ps2" }
 usb = { path = "../drivers/usb", optional = true }
 ustar = { git = "https://github.com/an-owl/ustar" }
+usb-hid = { path = "../drivers/usb/device-drivers/usb-hid", optional = true }
