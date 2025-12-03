@@ -623,7 +623,7 @@ pub mod frontend {
             };
 
             if is_device {
-                let op_len = u16::from_le_bytes((&b[2..3]).try_into().unwrap());
+                let op_len = u16::from_le_bytes((&b[2..=3]).try_into().unwrap());
 
                 let mut buffer: Vec<u8> = b.try_into().unwrap(); // Uses global, wont panic
                 buffer.resize(op_len as usize, 0);
