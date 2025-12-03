@@ -6,6 +6,8 @@
 
 extern crate alloc;
 
+pub use ehci::device::UsbDeviceFile;
+
 use alloc::boxed::Box;
 use core::pin::Pin;
 use futures_util::FutureExt;

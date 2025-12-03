@@ -15,16 +15,16 @@ use usb_cfg::descriptor::Descriptor;
 
 #[derive(Clone)]
 #[file]
-pub(super) struct UsbDeviceFile {
+pub struct UsbDeviceFile {
     major_num: MajorNum,
     address: u8,
     usb_device_accessor: alloc::sync::Weak<UsbDeviceAccessor>,
 }
 
 impl UsbDeviceFile {
-    async fn acquire_ctl(
+    pub async fn acquire_ctl(
         &self,
-        driver: &Box<dyn crate::UsbDeviceDriver>,
+        driver: &dyn crate::UsbDeviceDriver,
     ) -> Result<frontend::UsbDevCtl, IoError> {
         let acc = self
             .usb_device_accessor
@@ -39,7 +39,7 @@ impl UsbDeviceFile {
             );
             return Err(IoError::AlreadyExists);
         }
-        *acc_driver = Some(crate::UsbDeviceDriver::clone(&**driver));
+        *acc_driver = Some(crate::UsbDeviceDriver::clone(driver));
         Ok(frontend::UsbDevCtl {
             acc: alloc::sync::Arc::downgrade(&acc),
             endpoints,
@@ -70,14 +70,6 @@ impl File for UsbDeviceFile {
 
     fn len(&self) -> IoResult<'_, u64> {
         async { Ok(hootux::fs::sysfs::SysfsDirectory::entries(self) as u64) }.boxed()
-    }
-
-    fn method_call<'f, 'a: 'f, 'b: 'f>(
-        &'b self,
-        method: &str,
-        arguments: &'a (dyn Any + Send + Sync + 'static),
-    ) -> IoResult<'f, MethodRc> {
-        impl_method_call!(method,arguments => acquire_ctl(Box<UsbDeviceDriver>))
     }
 }
 
@@ -443,7 +435,7 @@ bitflags::bitflags! {
     pub struct DescriptorBitmap: u8 {
         const DEVICE = 1;
         const INTERFACE = 1 << 1;
-        const MATCH_CLASS = 2 << 6;
+        const MATCH_CLASS = 1 << 7;
         const MATCH_SUBCLASS = 1 << 6;
     }
 }
