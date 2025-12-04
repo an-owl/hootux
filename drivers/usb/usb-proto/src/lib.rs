@@ -128,7 +128,7 @@ impl CtlTransfer {
         Self {
             request_type: header,
             request: RequestCode::GetDescriptor as u8,
-            value: u16::from_le_bytes([index, D::DESCRIPTOR_TYPE as u8]),
+            value: u16::from_le_bytes([index, D::DESCRIPTOR_TYPE.0]),
             index: 0,
             length: len.unwrap_or(size_of::<D>() as u16),
         }
@@ -322,15 +322,18 @@ pub enum RequestCode {
 }
 
 #[derive(Debug, Eq, PartialEq, Copy, Clone)]
-pub enum DescriptorType {
-    Device = 1,
-    Configuration = 2,
-    String = 3,
-    Interface = 4,
-    Endpoint = 5,
-    DeviceQualifier = 6,
-    OtherSpeedConfiguration = 7,
-    InterfacePower = 8,
+pub struct DescriptorType(u8);
+
+#[allow(non_upper_case_globals)]
+impl DescriptorType {
+    pub const Device: Self = Self(1);
+    pub const Configuration: Self = Self(2);
+    pub const String: Self = Self(3);
+    pub const Interface: Self = Self(4);
+    pub const Endpoint: Self = Self(5);
+    pub const DeviceQualifier: Self = Self(6);
+    pub const OtherSpeedConfiguration: Self = Self(7);
+    pub const InterfacePower: Self = Self(8);
 }
 
 #[non_exhaustive]

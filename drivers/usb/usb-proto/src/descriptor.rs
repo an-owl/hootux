@@ -50,7 +50,7 @@ impl DeviceDescriptor {
     /// descriptor as described in the USB specification 2.0.
     // Why cant we read the whole thing with 8 bye transfers? IDK.
     pub const fn packet_size(buffer: &[u8; 8]) -> Option<u8> {
-        if buffer[1] == Self::DESCRIPTOR_TYPE as u8 {
+        if buffer[1] == Self::DESCRIPTOR_TYPE.0 {
             Some(buffer[core::mem::offset_of!(DeviceDescriptor, max_packet_size_0)])
         } else {
             None
@@ -140,11 +140,11 @@ impl<T: ConfigurationMarker> ConfigurationDescriptor<T> {
     /// ```ignore
     /// struct FullConfiguration {
     ///     cfg: ConfigurationDescriptor,
-    ///     interfaces: [InterfaceDescriptorWithEndpoints]
+    ///     interfaces: Descriptor
     /// }
-    /// struct InterfaceDescriptorWithEndpoints {
+    /// struct InterfaceDescriptor {
     ///     id: InterfaceDescriptor
-    ///     endpoints: [EndpointDescriptor]
+    ///     endpoints: Descriptor
     /// }
     /// ```
     ///
@@ -152,40 +152,15 @@ impl<T: ConfigurationMarker> ConfigurationDescriptor<T> {
     /// fetched using [super::CtlTransfer::get_descriptor] where `D` is `Self` first when `len` is
     /// `None` and again where `len` is `ConfigurationDescriptor.length` of the returned configuration descriptor.
     // todo make an example
-    pub unsafe fn iter(&self) -> ConfigurationIterator<'_, T> {
-        ConfigurationIterator {
-            parent: self,
-            // SAFETY: The caller must guarantee this is safe.
-            next: Some(unsafe { (self as *const Self).offset(1) }.cast()),
-            count: 1,
+    pub unsafe fn iter(&self) -> DescriptorIterator<'_> {
+        // SAFETY: Caller must guarantee that `&self..&self + self.total_len` is available
+        let start = unsafe { (&raw const self).offset(1) };
+        let start = start.cast::<u8>();
+        DescriptorIterator {
+            next: start,
+            end: start as usize + self.total_length as usize,
+            _lifetime: PhantomData,
         }
-    }
-}
-
-pub struct ConfigurationIterator<'a, T: ConfigurationMarker> {
-    parent: &'a ConfigurationDescriptor<T>,
-    next: Option<*const InterfaceDescriptor>,
-    count: u8,
-}
-
-// SAFETY: ConfigurationIter does not allow mutating inner data in any way shape or form.
-unsafe impl<T: ConfigurationMarker> Send for ConfigurationIterator<'_, T> {}
-unsafe impl<T: ConfigurationMarker> Sync for ConfigurationIterator<'_, T> {}
-
-impl<'a, T: ConfigurationMarker> Iterator for ConfigurationIterator<'a, T> {
-    type Item = &'a InterfaceDescriptor;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        // SAFETY: USB guarantees alignment caller guarantees everything else
-        let raw = self.next.take()?;
-        let ret = unsafe { &*raw };
-        // SAFETY: USB spec guarantees this points to valid data
-
-        if self.count < self.parent.num_interfaces {
-            self.next = unsafe { Some(raw.byte_add(ret.length as usize)) };
-            self.count += 1;
-        }
-        Some(ret)
     }
 }
 
@@ -243,55 +218,6 @@ pub struct InterfaceDescriptor {
     pub interface_sub_class: u8,
     pub interface_protocol: u8,
     pub interface_index: u8,
-}
-
-impl InterfaceDescriptor {
-    /// Returns an iterator over [EndpointDescriptor]'s defined by this interface.
-    ///
-    /// # Safety
-    ///
-    /// The caller must guarantee that `self` is in the format returned by the device as specified
-    /// by the USB specification. see [ConfigurationDescriptor::iter] for more information.
-    pub unsafe fn iter(&self) -> InterfaceIter<'_> {
-        if self.num_endpoints == 0 {
-            InterfaceIter {
-                parent: self,
-                next: None,
-                count: 0,
-            }
-        } else {
-            InterfaceIter {
-                parent: self,
-                // Caller must guarantee that this is safe.
-                next: unsafe { Some((self as *const Self).add(1).cast()) },
-                count: 0,
-            }
-        }
-    }
-}
-
-pub struct InterfaceIter<'a> {
-    parent: &'a InterfaceDescriptor,
-    next: Option<*const EndpointDescriptor>,
-    count: u8,
-}
-
-// SAFETY: InterfaceDescriptor does not allow mutating inner data in any way shape or form.
-unsafe impl Send for InterfaceIter<'_> {}
-unsafe impl Sync for InterfaceIter<'_> {}
-
-impl<'a> Iterator for InterfaceIter<'a> {
-    type Item = &'a EndpointDescriptor;
-    fn next(&mut self) -> Option<Self::Item> {
-        let raw = self.next.take()?;
-        let ret = unsafe { &*raw };
-        if self.count < self.parent.num_endpoints {
-            // SAFETY: We perform a bounds check to ensure this pointer is valid
-            self.next = unsafe { Some(raw.add(1)) };
-            self.count += 1;
-        }
-        Some(ret)
-    }
 }
 
 impl InterfaceDescriptor {
@@ -438,7 +364,7 @@ pub trait Descriptor: Sized + Sealed {
         if raw.len() < size_of::<Self>() {
             return None;
         }
-        if *raw.get(1).unwrap() != Self::descriptor_type() as u8 {
+        if *raw.get(1).unwrap() != Self::descriptor_type().0 {
             return None;
         }
         // SAFETY: All invariants of self muse be valid, we assert the descriptor type of self
@@ -474,3 +400,95 @@ impl_descriptor!(EndpointDescriptor, DescriptorType::Endpoint);
 impl Sealed for EndpointDescriptor {}
 
 impl_descriptor!(DeviceQualifier, DescriptorType::DeviceQualifier);
+
+pub struct DescriptorIterator<'a> {
+    next: *const u8,
+    end: usize,
+    _lifetime: PhantomData<&'a u8>,
+}
+
+impl<'a> Iterator for DescriptorIterator<'a> {
+    type Item = &'a DescriptorHeader;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.next as usize >= self.end {
+            return None;
+        }
+        // SAFETY: Constructor guarantees that this is valid.
+        let t: &DescriptorHeader = unsafe { &*self.next.cast() };
+        // SAFETY: We can return anything between `self.next..self.last`
+        self.next = unsafe { self.next.byte_offset(t.descriptor_len as isize) };
+        Some(t)
+    }
+}
+
+#[repr(C)]
+pub struct DescriptorHeader {
+    descriptor_len: u8,
+    descriptor_id: u8,
+}
+
+impl DescriptorHeader {
+    /// Attempts to cast the descriptor header into the whole descriptor.
+    ///
+    /// # Safety
+    ///
+    /// The caller must ensure that `&self` points to the full descriptor of `self.descriptor_len` bytes.
+    pub unsafe fn cast<T: Descriptor>(&self) -> Option<&T> {
+        if T::descriptor_type().0 == self.descriptor_id {
+            // SAFETY: Descriptor type vale is checked above.
+            // It's theoretically possible to cast to the wrong type but contextually thi shouldn't be possible.
+            // Libs should not even know descriptor types that may have the same ID
+            Some(unsafe { &*(&raw const self).cast::<T>() })
+        } else {
+            None
+        }
+    }
+
+    /// Returns [BaseDescriptor]
+    ///
+    /// # Safety
+    ///
+    /// The caller must ensure that `&self` points to the full descriptor of `self.descriptor_len` bytes.
+    pub unsafe fn base_descriptor(&self) -> Option<BaseDescriptor<'_>> {
+        match DescriptorType(self.descriptor_id) {
+            DescriptorType::Device => Some(unsafe { BaseDescriptor::Device(self.cast().unwrap()) }),
+            DescriptorType::DeviceQualifier => {
+                Some(unsafe { BaseDescriptor::DeviceQualifier(self.cast().unwrap()) })
+            }
+            DescriptorType::Configuration => {
+                Some(unsafe { BaseDescriptor::Configuration(self.cast().unwrap()) })
+            }
+            DescriptorType::OtherSpeedConfiguration => {
+                Some(unsafe { BaseDescriptor::OtherSpeed(self.cast().unwrap()) })
+            }
+            DescriptorType::Interface => {
+                Some(unsafe { BaseDescriptor::Interface(self.cast().unwrap()) })
+            }
+            DescriptorType::Endpoint => {
+                Some(unsafe { BaseDescriptor::Endpoint(self.cast().unwrap()) })
+            }
+            _ => None,
+        }
+    }
+
+    /// Returns a slice containing the whole descriptor.
+    ///
+    /// # Safety
+    ///
+    /// The caller must ensure that `&self` points to the full descriptor of `self.descriptor_len` bytes.
+    pub unsafe fn as_raw(&self) -> &[u8] {
+        // SAFETY: Guaranteed by caller
+        unsafe { core::slice::from_raw_parts(&self.descriptor_len, self.descriptor_len as usize) }
+    }
+}
+
+/// One of the descriptors in the Base USB specification. This does not include class specific descritors.
+pub enum BaseDescriptor<'a> {
+    Device(&'a DeviceDescriptor),
+    DeviceQualifier(&'a DeviceQualifier),
+    Configuration(&'a ConfigurationDescriptor),
+    OtherSpeed(&'a ConfigurationDescriptor<AlternateSpeed>),
+    Interface(&'a InterfaceDescriptor),
+    Endpoint(&'a EndpointDescriptor),
+}
