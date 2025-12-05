@@ -11,7 +11,7 @@ use hootux::fs::sysfs::{SysfsDirectory, SysfsFile};
 use hootux::fs::vfs::MajorNum;
 use hootux::fs::{IoError, IoResult};
 use hootux::mem::dma::DmaBuff;
-use usb_cfg::descriptor::Descriptor;
+use usb_cfg::descriptor::{BaseDescriptor, Descriptor};
 
 #[derive(Clone)]
 #[file]
@@ -405,10 +405,13 @@ impl Read<u8> for ClassFinderFle {
 
             for configuration in 0..dev_descriptor.num_configurations {
                 let cfg_raw = get_descriptor_full!(usb_cfg::descriptor::ConfigurationDescriptor,configuration);
-                let Some(cfg_descriptor): Option<&usb_cfg::descriptor::ConfigurationDescriptor> = usb_cfg::descriptor::Descriptor::from_raw(&cfg_raw) else { return Err((IoError::MediaError, buff, 0)) };
+                let Some(cfg_descriptor): Option<&usb_cfg::descriptor::ConfigurationDescriptor> = Descriptor::from_raw(&cfg_raw) else { return Err((IoError::MediaError, buff, 0)) };
+
                 // SAFETY: We fetch the max size for a descriptor, so we definitely have the whole thing & it has not been modified.
-                for interface_desc in unsafe { cfg_descriptor.iter() } {
-                    if descriptors.contains(DescriptorBitmap::INTERFACE) && interface_desc.class()[descriptors.class_len()] == class[descriptors.class_len()] {
+                // `cast` is guaranteed by iter
+                for interface_descriptor in unsafe { cfg_descriptor.iter().filter(|h| h.cast::<usb_cfg::descriptor::DeviceDescriptor>().is_some()) } {
+                    let Some(BaseDescriptor::Interface(interface_descriptor)) = (unsafe { interface_descriptor.base_descriptor() }) else {unreachable!()};
+                    if descriptors.contains(DescriptorBitmap::INTERFACE) && interface_descriptor.class()[descriptors.class_len()] == class[descriptors.class_len()] {
                         (&mut *buff)[0..2].copy_from_slice(&[configuration, DescriptorBitmap::INTERFACE.bits()]);
                         return Ok((buff, 2));
                     }
@@ -485,11 +488,11 @@ impl Read<u8> for ConfigurationIo {
             let Some(acc) = self.usb_device_accessor.upgrade() else {
                 return Err((IoError::NotPresent, buff, 0));
             };
-            const DEVICE_DESCRIPTOR_ID: u8 = usb_cfg::DescriptorType::Device as u8;
-            const DEVICE_QUALIFIER_ID: u8 = usb_cfg::DescriptorType::DeviceQualifier as u8;
-            const CONFIGURATION_DESCRIPTOR_ID: u8 = usb_cfg::DescriptorType::Configuration as u8;
+            const DEVICE_DESCRIPTOR_ID: u8 = usb_cfg::DescriptorType::Device.0;
+            const DEVICE_QUALIFIER_ID: u8 = usb_cfg::DescriptorType::DeviceQualifier.0;
+            const CONFIGURATION_DESCRIPTOR_ID: u8 = usb_cfg::DescriptorType::Configuration.0;
             const OTHER_SPEED_CONFIGURATION: u8 =
-                usb_cfg::DescriptorType::OtherSpeedConfiguration as u8;
+                usb_cfg::DescriptorType::OtherSpeedConfiguration.0;
 
             let command = match pos.to_le_bytes() {
                 [0, DEVICE_DESCRIPTOR_ID, ..] => Vec::from(
