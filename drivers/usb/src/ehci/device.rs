@@ -410,7 +410,7 @@ impl Read<u8> for ClassFinderFle {
                 // SAFETY: We fetch the max size for a descriptor, so we definitely have the whole thing & it has not been modified.
                 // `cast` is guaranteed by iter
                 for interface_descriptor in unsafe { cfg_descriptor.iter().filter(|h| h.cast::<usb_cfg::descriptor::DeviceDescriptor>().is_some()) } {
-                    let Some(BaseDescriptor::Interface(interface_descriptor)) = (unsafe { interface_descriptor.base_descriptor() }) else {unreachable!()};
+                    let Some(BaseDescriptor::Interface(interface_descriptor)) = interface_descriptor.base_descriptor() else {unreachable!()};
                     if descriptors.contains(DescriptorBitmap::INTERFACE) && interface_descriptor.class()[descriptors.class_len()] == class[descriptors.class_len()] {
                         (&mut *buff)[0..2].copy_from_slice(&[configuration, DescriptorBitmap::INTERFACE.bits()]);
                         return Ok((buff, 2));
