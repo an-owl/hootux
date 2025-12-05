@@ -632,7 +632,7 @@ pub mod frontend {
         /// Sets the device's configuration to the `configuration`
         pub async fn set_configuration(&mut self, configuration: u8) -> Result<(), IoError> {
             let acc = self.acc.upgrade().ok_or(IoError::NotPresent)?;
-            if acc.configurations >= configuration {
+            if configuration > acc.configurations {
                 return Err(IoError::InvalidData);
             }
             let command =
