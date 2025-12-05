@@ -586,18 +586,8 @@ pub mod frontend {
         /// This may issue 2 transactions.
         pub async fn get_descriptor<T: usb_cfg::descriptor::RequestableDescriptor>(
             &mut self,
-            mut index: u8,
-        ) -> Result<Box<T>, IoError> {
-            let is_device = if core::any::TypeId::of::<T>()
-                == core::any::TypeId::of::<usb_cfg::descriptor::DeviceDescriptor>()
-                || core::any::TypeId::of::<T>()
-                    == core::any::TypeId::of::<usb_cfg::descriptor::DeviceQualifier>()
-            {
-                index = 0;
-                true
-            } else {
-                false
-            };
+            index: u8,
+        ) -> Result<Vec<u8>, IoError> {
             let base_len = size_of::<T>();
             let buffer = alloc::vec![0u8; base_len];
             let command = DmaBuff::from(Vec::from(
@@ -614,30 +604,26 @@ pub mod frontend {
                 return Err(IoError::MediaError);
             };
 
-            if is_device {
-                let op_len = u16::from_le_bytes((&b[2..=3]).try_into().unwrap());
+            let op_len = u16::from_le_bytes((&b[2..=3]).try_into().unwrap());
 
-                let mut buffer: Vec<u8> = b.try_into().unwrap(); // Uses global, wont panic
-                buffer.resize(op_len as usize, 0);
-                let buffer = DmaBuff::from(buffer);
-                let ts = TransactionString::setup_transaction(
-                    DmaBuff::from(Vec::from(
-                        usb_cfg::CtlTransfer::get_descriptor::<T>(index, Some(op_len)).to_bytes(),
-                    )),
-                    Some((buffer, crate::PidCode::In)),
-                );
-                let (rc, _, Ok(_)) = acc.ctl_endpoint.append_cmd_string(ts).await.complete() else {
-                    return Err(IoError::MediaError);
-                };
-                b = rc;
-            }
+            let mut buffer: Vec<u8> = b.try_into().unwrap(); // Uses global, wont panic
+            buffer.resize(op_len as usize, 0);
+            let buffer = DmaBuff::from(buffer);
+            let ts = TransactionString::setup_transaction(
+                DmaBuff::from(Vec::from(
+                    usb_cfg::CtlTransfer::get_descriptor::<T>(index, Some(op_len)).to_bytes(),
+                )),
+                Some((buffer, crate::PidCode::In)),
+            );
+            let (rc, _, Ok(_)) = acc.ctl_endpoint.append_cmd_string(ts).await.complete() else {
+                return Err(IoError::MediaError);
+            };
+            b = rc;
 
-            if b[1] == T::DESCRIPTOR_TYPE as u8 {
+            if b[1] == T::DESCRIPTOR_TYPE.0 {
                 let mut v: Vec<u8> = b.try_into().unwrap();
                 v.shrink_to_fit();
-                let ptr = (&raw mut *v.leak()).cast::<T>();
-                // SAFETY: We have checked that this is T and that it is the correct size for T
-                Ok(unsafe { Box::from_raw(ptr) })
+                Ok(v)
             } else {
                 Err(IoError::MediaError)
             }
