@@ -401,27 +401,93 @@ impl Sealed for EndpointDescriptor {}
 
 impl_descriptor!(DeviceQualifier, DescriptorType::DeviceQualifier);
 
+/// Iterates over descriptors.
+///
+/// Iterator descriptors are guaranteed to be fully mapped and accessible.
+///
+/// # Safety
+///
+/// All memory between `next` and `end` bust be available to self as outlive `'a`
 pub struct DescriptorIterator<'a> {
     next: *const u8,
     end: usize,
     _lifetime: PhantomData<&'a u8>,
 }
 
+impl<'a> DescriptorIterator<'a> {
+    /// Returns an adaptor that returns Descriptor iterators each starting
+    /// on a descriptor with the id `descriptor_type` and continuing up-to (excluding)
+    /// the next descriptor of `descriptor_type`.
+    pub fn fold_on(self, descriptor_type: DescriptorType) -> FoldingDescriptorIterator<'a> {
+        FoldingDescriptorIterator {
+            fold_on: descriptor_type,
+            inner: self,
+        }
+    }
+
+    /// Returns the header currently pointed at by self.
+    fn get_header(&self) -> Option<&'a DescriptorHeader> {
+        if self.next as usize >= self.end {
+            return None;
+        }
+        Some(unsafe { &*self.next.cast() })
+    }
+}
+
+pub struct FoldingDescriptorIterator<'a> {
+    fold_on: DescriptorType,
+    inner: DescriptorIterator<'a>,
+}
+
+impl<'a> Iterator for FoldingDescriptorIterator<'a> {
+    type Item = DescriptorIterator<'a>;
+    fn next(&mut self) -> Option<Self::Item> {
+        // Locate the start of the iterator.
+        let start = loop {
+            let this = self.inner.next()?;
+            if this.descriptor_id == self.fold_on.0 {
+                break this;
+            }
+        };
+
+        // Locate the end of the iterator
+        let mut end = self.inner.end;
+        loop {
+            let Some(header) = self.inner.get_header() else {
+                break;
+            };
+            if header.descriptor_id == self.fold_on.0 {
+                end = self.inner.next as usize;
+            }
+        }
+
+        Some(DescriptorIterator {
+            next: (&raw const start).cast(),
+            end,
+            _lifetime: PhantomData,
+        })
+    }
+}
+
 impl<'a> Iterator for DescriptorIterator<'a> {
     type Item = &'a DescriptorHeader;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.next as usize >= self.end {
-            return None;
-        }
-        // SAFETY: Constructor guarantees that this is valid.
-        let t: &DescriptorHeader = unsafe { &*self.next.cast() };
+        // We need to unbind the lifetime so we can update self.next.
+        // The lifetime will be rebound upon returning.
+        let header = self.get_header()?;
+
         // SAFETY: We can return anything between `self.next..self.last`
-        self.next = unsafe { self.next.byte_offset(t.descriptor_len as isize) };
-        Some(t)
+        self.next = unsafe { self.next.byte_offset(header.descriptor_len as isize) };
+        Some(self.get_header()?)
     }
 }
 
+/// Contains the header of a descriptor.
+///
+/// # Safety
+///
+/// This must always be followed by the rest of the descriptor.
 #[repr(C)]
 pub struct DescriptorHeader {
     descriptor_len: u8,
@@ -430,11 +496,7 @@ pub struct DescriptorHeader {
 
 impl DescriptorHeader {
     /// Attempts to cast the descriptor header into the whole descriptor.
-    ///
-    /// # Safety
-    ///
-    /// The caller must ensure that `&self` points to the full descriptor of `self.descriptor_len` bytes.
-    pub unsafe fn cast<T: Descriptor>(&self) -> Option<&T> {
+    pub fn cast<T: Descriptor>(&self) -> Option<&T> {
         if T::descriptor_type().0 == self.descriptor_id {
             // SAFETY: Descriptor type vale is checked above.
             // It's theoretically possible to cast to the wrong type but contextually thi shouldn't be possible.
@@ -446,37 +508,25 @@ impl DescriptorHeader {
     }
 
     /// Returns [BaseDescriptor]
-    ///
-    /// # Safety
-    ///
-    /// The caller must ensure that `&self` points to the full descriptor of `self.descriptor_len` bytes.
-    pub unsafe fn base_descriptor(&self) -> Option<BaseDescriptor<'_>> {
+    pub fn base_descriptor(&self) -> Option<BaseDescriptor<'_>> {
         match DescriptorType(self.descriptor_id) {
-            DescriptorType::Device => Some(unsafe { BaseDescriptor::Device(self.cast().unwrap()) }),
+            DescriptorType::Device => Some(BaseDescriptor::Device(self.cast().unwrap())),
             DescriptorType::DeviceQualifier => {
-                Some(unsafe { BaseDescriptor::DeviceQualifier(self.cast().unwrap()) })
+                Some(BaseDescriptor::DeviceQualifier(self.cast().unwrap()))
             }
             DescriptorType::Configuration => {
-                Some(unsafe { BaseDescriptor::Configuration(self.cast().unwrap()) })
+                Some(BaseDescriptor::Configuration(self.cast().unwrap()))
             }
             DescriptorType::OtherSpeedConfiguration => {
-                Some(unsafe { BaseDescriptor::OtherSpeed(self.cast().unwrap()) })
+                Some(BaseDescriptor::OtherSpeed(self.cast().unwrap()))
             }
-            DescriptorType::Interface => {
-                Some(unsafe { BaseDescriptor::Interface(self.cast().unwrap()) })
-            }
-            DescriptorType::Endpoint => {
-                Some(unsafe { BaseDescriptor::Endpoint(self.cast().unwrap()) })
-            }
+            DescriptorType::Interface => Some(BaseDescriptor::Interface(self.cast().unwrap())),
+            DescriptorType::Endpoint => Some(BaseDescriptor::Endpoint(self.cast().unwrap())),
             _ => None,
         }
     }
 
     /// Returns a slice containing the whole descriptor.
-    ///
-    /// # Safety
-    ///
-    /// The caller must ensure that `&self` points to the full descriptor of `self.descriptor_len` bytes.
     pub unsafe fn as_raw(&self) -> &[u8] {
         // SAFETY: Guaranteed by caller
         unsafe { core::slice::from_raw_parts(&self.descriptor_len, self.descriptor_len as usize) }
