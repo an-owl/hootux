@@ -414,6 +414,10 @@ pub struct DescriptorIterator<'a> {
     _lifetime: PhantomData<&'a u8>,
 }
 
+// SAFETY: Pointee data is not mutable.
+unsafe impl Sync for DescriptorIterator<'_> {}
+unsafe impl Send for DescriptorIterator<'_> {}
+
 impl<'a> DescriptorIterator<'a> {
     /// Returns an adaptor that returns Descriptor iterators each starting
     /// on a descriptor with the id `descriptor_type` and continuing up-to (excluding)
@@ -505,6 +509,10 @@ impl DescriptorHeader {
         } else {
             None
         }
+    }
+
+    pub fn id(&self) -> DescriptorType {
+        DescriptorType(self.descriptor_id)
     }
 
     /// Returns [BaseDescriptor]
