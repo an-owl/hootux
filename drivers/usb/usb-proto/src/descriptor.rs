@@ -154,11 +154,11 @@ impl<T: ConfigurationMarker> ConfigurationDescriptor<T> {
     // todo make an example
     pub unsafe fn iter(&self) -> DescriptorIterator<'_> {
         // SAFETY: Caller must guarantee that `&self..&self + self.total_len` is available
-        let start = unsafe { (&raw const self).offset(1) };
+        let start = unsafe { (&raw const *self).offset(1) };
         let start = start.cast::<u8>();
         DescriptorIterator {
             next: start,
-            end: start as usize + self.total_length as usize,
+            end: start as usize + self.total_length as usize - self.length as usize,
             _lifetime: PhantomData,
         }
     }
@@ -462,11 +462,13 @@ impl<'a> Iterator for FoldingDescriptorIterator<'a> {
             };
             if header.descriptor_id == self.fold_on.0 {
                 end = self.inner.next as usize;
+                break;
             }
+            let _ = self.inner.next(); // Guaranteed to succeed
         }
 
         Some(DescriptorIterator {
-            next: (&raw const start).cast(),
+            next: (&raw const *start).cast(),
             end,
             _lifetime: PhantomData,
         })
@@ -480,10 +482,12 @@ impl<'a> Iterator for DescriptorIterator<'a> {
         // We need to unbind the lifetime so we can update self.next.
         // The lifetime will be rebound upon returning.
         let header = self.get_header()?;
-
+        let len = header.descriptor_len;
+        let header = &raw const header;
         // SAFETY: We can return anything between `self.next..self.last`
-        self.next = unsafe { self.next.byte_offset(header.descriptor_len as isize) };
-        Some(self.get_header()?)
+        self.next = unsafe { self.next.byte_offset(len as isize) };
+        // SAFETY: We need to change self.next using header.descriptor_len which is not allowed normally.
+        Some(unsafe { &*header })
     }
 }
 
