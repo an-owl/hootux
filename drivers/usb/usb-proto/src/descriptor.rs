@@ -539,7 +539,7 @@ impl DescriptorHeader {
     }
 
     /// Returns a slice containing the whole descriptor.
-    pub unsafe fn as_raw(&self) -> &[u8] {
+    pub fn as_raw(&self) -> &[u8] {
         // SAFETY: Guaranteed by caller
         unsafe { core::slice::from_raw_parts(&self.descriptor_len, self.descriptor_len as usize) }
     }
