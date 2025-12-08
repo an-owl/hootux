@@ -509,7 +509,7 @@ impl DescriptorHeader {
             // SAFETY: Descriptor type vale is checked above.
             // It's theoretically possible to cast to the wrong type but contextually thi shouldn't be possible.
             // Libs should not even know descriptor types that may have the same ID
-            Some(unsafe { &*(&raw const self).cast::<T>() })
+            Some(unsafe { &*(&raw const *self).cast::<T>() })
         } else {
             None
         }
