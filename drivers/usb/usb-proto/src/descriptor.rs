@@ -356,7 +356,7 @@ bitfield! {
     pub isochronus_mult, _: 12,11;
 }
 
-pub trait Descriptor: Sized + Sealed {
+pub trait Descriptor: Sized {
     fn length(&self) -> u8;
     fn descriptor_type() -> DescriptorType;
 
