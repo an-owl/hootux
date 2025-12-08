@@ -8,7 +8,7 @@ use hootux::fs::sysfs::{SysfsDirectory, SysfsFile};
 use hootux::fs::vfs::DeviceIdDistributer;
 use hootux::fs::{IoError, IoResult};
 use usb::ehci::EndpointQueue;
-use usb_cfg::descriptor::{DeviceDescriptor, EndpointTransferType};
+use usb_cfg::descriptor::{Descriptor, DeviceDescriptor, EndpointTransferType};
 
 static ID_DISPENSER: DeviceIdDistributer = DeviceIdDistributer::new();
 
@@ -154,57 +154,93 @@ impl DriverRuntime {
     }
 
     async fn configure_device(&self) -> Result<(), IoError> {
-        let Some(ref mut ctl) = self.inner.write().await.devctl else {
-            unreachable!()
-        };
+        let mut driver_state = self.inner.write().await;
+
+        macro_rules! devctl {
+            () => {{
+                let Some(ref mut ctl) = driver_state.devctl else {
+                    unreachable!()
+                };
+                ctl
+            }};
+        }
 
         log::trace!("Attempting to configure device {} as HID", self.id);
 
-        let dev_descriptor: Box<DeviceDescriptor> = ctl.get_descriptor(0).await?;
-
-        let mut driver_state = self.inner.write().await;
+        let dev_descriptor_buff = devctl!().get_descriptor::<DeviceDescriptor>(0).await?;
+        // SAFETY: `get_descriptor<T>()` is guaranteed to return T
+        let dev_descriptor =
+            unsafe { DeviceDescriptor::from_raw(&dev_descriptor_buff).unwrap_unchecked() };
 
         // Iterate over configurations to locate our
         'cfg: for configuration_no in 0..dev_descriptor.num_configurations {
-            let descriptor: Box<usb_cfg::descriptor::ConfigurationDescriptor> =
-                ctl.get_descriptor(configuration_no).await?;
+            let descriptor_buff = devctl!()
+                .get_descriptor::<usb_cfg::descriptor::ConfigurationDescriptor>(configuration_no)
+                .await?;
+            let descriptor = unsafe {
+                usb_cfg::descriptor::ConfigurationDescriptor::<usb_cfg::descriptor::Normal>::from_raw(&descriptor_buff)
+                    .unwrap_unchecked()
+            };
 
             // SAFETY: get_descriptor always returns all the descriptor data.
-            for interface in unsafe { descriptor.iter() } {
+            for mut interface_group in unsafe {
+                descriptor
+                    .iter()
+                    .fold_on(usb_cfg::DescriptorType::Interface)
+            } {
+                let interface = interface_group
+                    .next()
+                    .unwrap()
+                    .cast::<usb_cfg::descriptor::InterfaceDescriptor>()
+                    .unwrap(); // First element is always fold_on type.
+
                 if interface.class()[0] == crate::USB_HID_CLASS {
-                    ctl.set_configuration(configuration_no)
+                    devctl!()
+                        .set_configuration(configuration_no)
                         .await
                         .inspect_err(|e| {
                             log::error!("Failed to configure {}: {e:?}, aborting", self.id)
                         })?;
 
+                    use usb_cfg::descriptor::BaseDescriptor;
                     // SAFETY: get_descriptor always returns all the descriptor data.
-                    for endpoint in unsafe { interface.iter() } {
-                        if let EndpointTransferType::Interrupt = endpoint.attributes.transfer_type()
-                        {
-                            match endpoint.endpoint_address.in_endpoint() {
-                                true => {
-                                    let Some(ref mut ctl) = driver_state.devctl else {
-                                        unreachable!()
-                                    };
-                                    // SAFETY: The device was configured above.
-                                    driver_state.in_endpoint = Arc::downgrade(&unsafe {
-                                        ctl.setup_endpoint(endpoint).await
-                                    }?)
-                                }
-                                false => {
-                                    // SAFETY: The device was configured above.
-                                    driver_state.out_endpoint = Arc::downgrade(&unsafe {
-                                        ctl.setup_endpoint(endpoint).await?
-                                    });
+                    for descriptor in interface_group {
+                        match descriptor.base_descriptor() {
+                            Some(BaseDescriptor::Endpoint(endpoint)) => {
+                                if let EndpointTransferType::Interrupt =
+                                    endpoint.attributes.transfer_type()
+                                {
+                                    match endpoint.endpoint_address.in_endpoint() {
+                                        true => {
+                                            let Some(ref mut ctl) = driver_state.devctl else {
+                                                unreachable!()
+                                            };
+                                            // SAFETY: The device was configured above.
+                                            driver_state.in_endpoint = Arc::downgrade(&unsafe {
+                                                ctl.setup_endpoint(endpoint).await
+                                            }?)
+                                        }
+                                        false => {
+                                            // SAFETY: The device was configured above.
+                                            driver_state.out_endpoint = Arc::downgrade(&unsafe {
+                                                devctl!().setup_endpoint(endpoint).await?
+                                            });
+                                        }
+                                    }
+
+                                    if driver_state.in_endpoint.upgrade().is_some()
+                                        && driver_state.out_endpoint.upgrade().is_some()
+                                    {
+                                        break 'cfg;
+                                    }
                                 }
                             }
 
-                            if driver_state.in_endpoint.upgrade().is_some()
-                                && driver_state.out_endpoint.upgrade().is_some()
-                            {
-                                break 'cfg;
+                            None => {
+                                log::debug!("Unknown descriptor type: {:x?}", descriptor.id().0);
+                                log::debug!("{:x?}", descriptor.as_raw());
                             }
+                            _ => {} // Shouldn't happen, ignore
                         }
                     }
                     break 'cfg;
