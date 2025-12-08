@@ -322,6 +322,7 @@ pub enum RequestCode {
 }
 
 #[derive(Debug, Eq, PartialEq, Copy, Clone)]
+#[repr(transparent)]
 pub struct DescriptorType(pub u8);
 
 #[allow(non_upper_case_globals)]
