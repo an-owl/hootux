@@ -282,7 +282,7 @@ bitfield! {
 pub enum RequestType {
     #[default]
     Standard = 0,
-    Interface = 1,
+    Class = 1,
     Vendor = 2,
 }
 
