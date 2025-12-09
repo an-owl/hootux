@@ -807,6 +807,68 @@ pub mod frontend {
             )
             .await
         }
+
+        /// Sends a generic command via the control pipe.
+        ///
+        /// # Safety
+        ///
+        /// Command that are defined in the USB serial bus specifications or any commands that
+        /// affect the generic device state may not be sent using this function.
+        pub async unsafe fn send_command(
+            &self,
+            command: usb_cfg::CtlTransfer,
+            buffer: Option<DmaBuff>,
+        ) -> (Option<DmaBuff>, Result<usize, IoError>) {
+            let Some(cmd_ep) = self
+                .acc
+                .upgrade()
+                .and_then(|e| Some(e.ctl_endpoint.clone()))
+            else {
+                return (buffer, Err(IoError::NotPresent));
+            };
+            let buffer_present = buffer.is_none();
+            if (command.data_len() == 0) == buffer_present {
+                log::debug!("Attempted to send command with invalid buffer");
+                return (buffer, Err(IoError::InvalidData));
+            } else if command.data_len() > buffer.as_ref().and_then(|b| Some(b.len())).unwrap_or(0)
+            {
+                log::debug!("Buffer was smaller than request size... Ignoring");
+            };
+
+            let pid = if command.is_rx_command() {
+                crate::PidCode::In
+            } else {
+                crate::PidCode::Out
+            };
+
+            let b = if let Some(buff) = buffer {
+                Some((buff, pid))
+            } else {
+                None
+            };
+
+            let cmd_ts =
+                TransactionString::setup_transaction(Vec::from(command.to_bytes()).into(), b);
+            let completion = cmd_ep.append_cmd_string(cmd_ts).await;
+            let (buffer, len, status) = completion.complete();
+            let status = match status {
+                Ok(crate::UsbError::RecoveredError) => {
+                    log::trace!("USB corrected error");
+                    Ok(len)
+                }
+                Ok(crate::UsbError::Ok) => Ok(len),
+                Err(()) => {
+                    log::error!("Device error: Halted");
+                    Err(IoError::MediaError)
+                }
+                Ok(crate::UsbError::Halted) => unreachable!(), // This is never returned by completion, Err(()) is used instead.
+            };
+            if buffer_present {
+                (Some(buffer), status)
+            } else {
+                (None, status) // Buffer is bogus, so this is fine to drop.
+            }
+        }
     }
 
     impl Drop for UsbDevCtl {
