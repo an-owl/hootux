@@ -59,6 +59,10 @@ impl CtlTransfer {
         // SAFETY: This is safe, all invariants of u8 are valid
         unsafe { core::mem::transmute(self) }
     }
+
+    pub fn is_rx_command(&self) -> bool {
+        self.request_type.get_data_direction()
+    }
 }
 
 impl CtlTransfer {
@@ -274,7 +278,7 @@ bitfield! {
 
     from Recipient, _, recipent: 4,0;
     from RequestType, _, target_type: 6,5;
-    from DataDirection, _, data_direction: 7;
+    from DataDirection, get_data_direction, data_direction: 7;
 
 }
 
