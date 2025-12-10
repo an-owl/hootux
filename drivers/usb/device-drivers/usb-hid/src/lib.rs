@@ -12,6 +12,7 @@ use hootux::fs::*;
 
 const USB_HID_CLASS: u8 = 0x03;
 
+pub mod descriptors;
 mod driver_obj;
 
 pub fn init() {
