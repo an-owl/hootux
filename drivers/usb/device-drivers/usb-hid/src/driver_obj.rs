@@ -1,6 +1,7 @@
 use alloc::boxed::Box;
 use alloc::string::String;
 use alloc::sync::{Arc, Weak};
+use alloc::vec;
 use alloc::vec::Vec;
 use core::any::Any;
 use hootux::fs::file::*;
@@ -183,10 +184,11 @@ impl DriverRuntime {
             };
 
             // SAFETY: get_descriptor always returns all the descriptor data.
-            for mut interface_group in unsafe {
+            for (i, mut interface_group) in unsafe {
                 descriptor
                     .iter()
                     .fold_on(usb_cfg::DescriptorType::Interface)
+                    .enumerate()
             } {
                 let interface = interface_group
                     .next()
@@ -234,6 +236,52 @@ impl DriverRuntime {
                                         break 'cfg;
                                     }
                                 }
+                            }
+
+                            None if descriptor.id()
+                                == crate::descriptors::HidDescriptor::descriptor_type() =>
+                            {
+                                let Some(hid_descriptor) =
+                                    descriptor.cast::<crate::descriptors::HidDescriptor>()
+                                else {
+                                    unreachable!()
+                                };
+
+                                let Some(report_descriptor) =
+                                    hid_descriptor.optionals().iter().find(|o| {
+                                        o.id == crate::descriptors::HidDescriptorRequestType::Report
+                                            .discriminant()
+                                    })
+                                else {
+                                    unreachable!() // The report descriptor entry is guaranteed to be contained in the HID descriptor
+                                };
+
+                                let Some(ref devctl) = driver_state.devctl else {
+                                    unreachable!()
+                                };
+
+                                let command = crate::descriptors::request_descriptor_command(
+                                    crate::descriptors::HidDescriptorRequestType::Hid,
+                                    i as u8,
+                                    report_descriptor.length,
+                                );
+                                let buffer = vec![0u8; report_descriptor.length as usize];
+                                // SAFETY: The request is targeted at the interface and is not defined in the base specification.
+                                let rc =
+                                    unsafe { devctl.send_command(command, Some(buffer.into())) }
+                                        .await;
+
+                                // Buffer is always Some(_)
+                                let (Some(buffer), len) = (rc.0, rc.1?) else {
+                                    unreachable!()
+                                };
+
+                                let mut buffer: Vec<u8> = buffer.try_into().unwrap();
+                                if buffer.len() < len {
+                                    log::warn!("Received buffer was smaller than expected");
+                                    buffer.truncate(len);
+                                }
+                                todo!()
                             }
 
                             None => {
