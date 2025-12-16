@@ -14,6 +14,7 @@ pub enum KeyState {
 }
 
 #[repr(u8)]
+#[derive(Ord, PartialOrd, Eq, PartialEq, Copy, Clone, Debug)]
 pub enum KeyGroup {
     /// Keys which have a Unicode representation when not modified and not marked as belonging to the keypad.
     /// Only unmodified keys may be returned via this type e.g. the 'c' key will never output 'C'.
@@ -44,6 +45,7 @@ pub enum KeyGroup {
 }
 
 #[repr(u32)]
+#[derive(Ord, PartialOrd, Eq, PartialEq, Copy, Clone, Debug)]
 pub enum ModifierKey {
     LeftControl,
     LeftShift,
@@ -57,6 +59,7 @@ pub enum ModifierKey {
 }
 
 #[repr(u32)]
+#[derive(Ord, PartialOrd, Eq, PartialEq, Copy, Clone, Debug)]
 pub enum ControlKey {
     Escape,
 
