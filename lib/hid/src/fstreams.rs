@@ -28,9 +28,9 @@ bitflags::bitflags! {
         const NO_BITFIELD = 0x1 << 63;
         const QUERY = 0x1 << 62;
 
-        const KEYBOARD = 0x1 << 0;
+        const KEYBOARD = 0x1 << crate::KEYBOARD;
         /// Mouse, hamster etc.
-        const RODENT = 0x1 << 1;
+        const RODENT = 0x1 << crate::RODENT;
     }
 }
 
