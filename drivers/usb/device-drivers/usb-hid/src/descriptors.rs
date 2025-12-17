@@ -272,24 +272,6 @@ impl From<u16> for UsagePage {
     }
 }
 
-/// This trait defines an object which can parse report data and forward it to a file object.
-trait HidInterface {
-    /// Returns which report ID this `HidInterface` can parse. If no report ID's are defined in
-    /// the report descriptor then this function *should* not be called, and the return value of this
-    /// fn may be undefined.
-    ///
-    /// [Self::parse_report] will only be called on reports with this report ID.
-    fn report_id(&self) -> u8;
-
-    /// Parse the report given in `report` and forward parsed data into `stream`.
-    /// `stream` will be given pre-opened in write only mode.
-    fn parse_report(
-        &self,
-        report: &[u8],
-        stream: &dyn hootux::fs::device::Fifo<u8>,
-    ) -> BoxFuture<Result<(), IoError>>;
-}
-
 pub(crate) struct Parser<T: Iterator<Item = ReportItem>> {
     current_state: StateTables,
     stack: alloc::vec::Vec<StateTables>,
