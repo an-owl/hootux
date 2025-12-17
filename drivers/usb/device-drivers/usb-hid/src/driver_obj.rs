@@ -7,6 +7,7 @@ use core::any::Any;
 use core::sync::atomic::Ordering;
 use futures_util::FutureExt;
 use futures_util::future::BoxFuture;
+use hid::fstreams::HidIndexFlags;
 use hootux::fs::device::{Fifo, OpenMode};
 use hootux::fs::file::*;
 use hootux::fs::sysfs::{SysfsDirectory, SysfsFile};
@@ -306,6 +307,18 @@ impl DriverRuntime {
     }
 }
 
+/// The HID pipe is a character device that returns a single relevant character to indicate a HID device state change.
+/// The packet formats are defined in [hid]. `pos` in [Read::read] and [Write::write] are a [hid::fstreams::HidIndexFlags].
+///
+/// This file can return different characters and so IOs to this file do not need to conform to
+/// [File::block_size] like other character devices.
+///
+/// This file tracks which interfaces are supported by the HID pipe, if none of the requested
+/// interfaces are supported by the HID device then the operation will return [IoError::NotSupported].
+///
+/// When an interface option is not recognised or pass in an invalid way then this will return [IoError::InvalidData].
+/// When multiple interfaces are requested the first byte will indicate the interface that returned data.
+/// Note that this byte will only be 0..31 because only these interfaces can be requested at the same time.
 #[file]
 struct HidPipe {
     inner: Weak<HidPipeInner>,
@@ -317,7 +330,13 @@ struct HidPipe {
 
 struct HidPipeInner {
     /// File objects may only pend operations when it's serial and `self.serial` is equal.
-    pending: async_lock::Mutex<Vec<(DmaBuff, hid::fstreams::HidIndexFlags, core::task::Waker)>>,
+    pending: async_lock::Mutex<
+        Vec<(
+            DmaBuff,
+            HidIndexFlags,
+            hootux::task::util::MessageFuture<hootux::task::util::Sender, (DmaBuff, usize)>,
+        )>,
+    >,
     driver_state: Arc<DriverState>,
 
     /// Counts the number of file objects that have opened this file for reading.
@@ -327,6 +346,9 @@ struct HidPipeInner {
     /// which Op's need to be fetched.
     serial: core::sync::atomic::AtomicUsize,
     queued: spin::Mutex<alloc::collections::VecDeque<QueuedOp>>,
+
+    /// Contains interfaces supported by this file.
+    interfaces: alloc::collections::BTreeSet<u32>,
 }
 
 struct QueuedOp {
@@ -342,7 +364,8 @@ impl HidPipeInner {
         let mut queue = self.pending.lock().await;
         self.serial.fetch_add(1, Ordering::Relaxed);
 
-        for (buffer, select, waker) in queue.extract_if(.., |e| e.1.is_interface(interface_index)) {
+        for (mut buffer, select, tx) in queue.extract_if(.., |e| e.1.is_interface(interface_index))
+        {
             count -= 1;
 
             let mut tgt = &mut buffer[..];
@@ -353,7 +376,7 @@ impl HidPipeInner {
             }
             let len = tgt.len().min(payload.len());
             tgt[0..len].copy_from_slice(&payload[..len]);
-            waker.wake()
+            tx.complete((buffer, len));
         }
 
         if count > 0 {
@@ -370,6 +393,89 @@ impl HidPipeInner {
             interface,
         };
         l.push_back(qd)
+    }
+
+    /// Removes all queued messages that will not
+    fn clean_queue(&mut self) {
+        let mut l = self.queued.lock();
+        while let Some(op) = l.get(0) {
+            if op.pending.load(Ordering::Relaxed) == 0 {
+                l.pop_front();
+            } else {
+                break;
+            }
+        }
+    }
+}
+
+impl HidPipe {
+    /// Receives normal data.
+    /// Does not support options.
+    async fn recv_data(
+        &self,
+        buffer: DmaBuff,
+        interface: HidIndexFlags,
+    ) -> Result<(DmaBuff, usize), IoError> {
+        // Only called from Self::read() which upgraded inner already.
+        let Some(fa) = self.inner.upgrade() else {
+            unreachable!()
+        };
+        let mut queue = fa.pending.lock().await;
+
+        if self.serial.load(Ordering::Relaxed) != fa.serial.load(Ordering::Relaxed) {}
+
+        let (tx, rx) = hootux::task::util::new_message();
+        queue.push((buffer, interface, tx));
+
+        // Explicit drop, prevents deadlock on rx.await
+        drop(queue);
+
+        Ok(rx.await)
+    }
+
+    /// Searches the queued data and returns the first entry found.
+    ///
+    /// Returns whether the queued data list needs to be cleaned regardless of whether data was found.
+    fn search_cache(
+        &self,
+        mut buffer: DmaBuff,
+        interface: HidIndexFlags,
+    ) -> (Option<(DmaBuff, usize)>, bool) {
+        // Only called from Self::recv_data() which upgraded inner already.
+        let Some(fa) = self.inner.upgrade() else {
+            unreachable!()
+        };
+        let l = fa.queued.lock();
+        let mut dirty = false;
+        for op in l.iter() {
+            // We've already checked this before.
+            if self.serial.load(Ordering::Relaxed) > op.serial {
+                continue;
+            }
+
+            // Update serial, this must be unconditional else if we do not find a matching entry we
+            // need to know that we are up to date.
+            self.serial.store(op.serial, Ordering::Relaxed);
+            if !interface.is_interface(op.interface) {
+                continue;
+            }
+
+            let mut tgt = &mut buffer[..];
+            // prepend if number
+            if interface.is_multiple() {
+                tgt[0] = op.interface as u8;
+                tgt = &mut tgt[1..];
+            }
+            let op_len = op.payload.len().min(tgt.len());
+            tgt[..op_len].copy_from_slice(&op.payload[..op_len]);
+
+            // if new value == 0
+            if op.pending.fetch_sub(1, Ordering::Relaxed) == 1 {
+                dirty = true;
+            }
+            return (Some((buffer, op_len)), dirty);
+        }
+        (None, dirty)
     }
 }
 
@@ -407,7 +513,7 @@ impl File for HidPipe {
     }
 
     fn len(&self) -> IoResult<'_, u64> {
-        async { hootux::mem::PAGE_SIZE }.boxed()
+        async { Ok(hootux::mem::PAGE_SIZE as u64) }.boxed()
     }
 }
 
@@ -451,13 +557,49 @@ impl Read<u8> for HidPipe {
         pos: u64,
         buff: DmaBuff,
     ) -> BoxFuture<'_, Result<(DmaBuff, usize), (IoError, DmaBuff, usize)>> {
-        async {
+        async move {
+            // Prevents error where receiving data may panic when `pos` is multiple.
+            // Char size is set to `8` anyway.
             if buff.len() <= 1 {
                 log::debug!("Attempted to read HidPipe with short buffer");
-                return Err((IoError::EndOfFile, buff, 0));
+                return Err((IoError::InvalidData, buff, 0));
+            } else if !self.open_mode.is_read() {
+                return Err((IoError::NotReady, buff, 0));
+            };
+
+            let hid_index = HidIndexFlags::from_bits_retain(pos);
+            let Some(fa) = self.inner.upgrade() else {
+                return Err((IoError::NotPresent, buff, 0));
+            };
+
+            // Perform sanity check to ensure that interfaces are actually supported.
+            // Otherwise
+            {
+                if hid_index.contains(HidIndexFlags::NO_BITFIELD) {
+                    let mut flags = hid_index.bits() as u32;
+                    let mut no_if = true;
+
+                    while flags != 0 {
+                        let bit = flags.trailing_zeros();
+                        // Clear bit
+                        flags &= !(1 << bit);
+                        if fa.interfaces.contains(&bit) {
+                            no_if = false;
+                        }
+                    }
+                    if no_if {
+                        return Err((IoError::NotSupported, buff, 0));
+                    }
+                } else {
+                    if !fa.interfaces.contains(&(hid_index.bits() as u32)) {
+                        return Err((IoError::NotSupported, buff, 0));
+                    }
+                }
             }
+
             todo!()
         }
+        .boxed()
     }
 }
 
