@@ -97,9 +97,7 @@ pub(crate) fn request_descriptor_command(
     )
 }
 
-use futures_util::future::BoxFuture;
 use hid_report::ReportItem;
-use hootux::fs::IoError;
 
 /// This component handles parsing of the report descriptor which can be used to generate objects
 /// which can retrieve data from a report.
@@ -144,7 +142,9 @@ macro_rules! state_init {
     ($self:ident,$tgt:ident) => {
         state_init!($self, $tgt, report_id);
         state_init!($self, $tgt, usage_page);
-        state_init!($self, $tgt, usage);
+
+        $tgt.usage.extend_from_slice(&$self.global.usage);
+
         state_init!($self, $tgt, logical_minimum);
         state_init!($self, $tgt, logical_maximum);
         state_init!($self, $tgt, physical_minimum);
@@ -172,6 +172,7 @@ impl StateTables {
     fn compile_state(&self) -> StateTable {
         let mut table = self.local.clone();
         state_init!(self, table);
+
         table
     }
 }
