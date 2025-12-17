@@ -22,6 +22,7 @@ bitflags::bitflags! {
     ///
     /// Bits `32..=62` (inclusive) are used as an argument into the interface.
     /// This must be set to `0` when multiple interfaces are selected.
+    #[derive(Copy, Clone, Debug, Eq, PartialEq)]
     pub struct HidIndexFlags: u64 {
         /// Disables the bitfield, when this bit is set bits 0..31 are treated as an index.
         const NO_BITFIELD = 0x1 << 63;
@@ -30,5 +31,31 @@ bitflags::bitflags! {
         const KEYBOARD = 0x1 << 0;
         /// Mouse, hamster etc.
         const RODENT = 0x1 << 1;
+    }
+}
+
+impl HidIndexFlags {
+    /// Determines if `self` is targeting a single interface.
+    /// When this returns true returned IO's must be preceded by an interface number.
+    pub fn is_multiple(&self) -> bool {
+        if self.contains(Self::NO_BITFIELD) {
+            return true;
+        };
+        (self.bits() as u32).count_ones() < 2
+    }
+
+    /// Determines if `self` is selecting `interface`
+    pub fn is_interface(&self, interface: u32) -> bool {
+        if self.contains(Self::NO_BITFIELD) {
+            let tmp = (self.bits() & !Self::NO_BITFIELD.bits()) as u32; // clear the bit
+            tmp == interface
+        } else {
+            if interface > 31 {
+                false
+            } else {
+                let raw = self.bits() as u32; // truncate
+                (raw & 1 << interface) != 0
+            }
+        }
     }
 }
