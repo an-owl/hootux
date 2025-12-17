@@ -4,12 +4,19 @@ use alloc::sync::{Arc, Weak};
 use alloc::vec;
 use alloc::vec::Vec;
 use core::any::Any;
+use core::sync::atomic::Ordering;
+use futures_util::FutureExt;
+use futures_util::future::BoxFuture;
+use hootux::fs::device::{Fifo, OpenMode};
 use hootux::fs::file::*;
 use hootux::fs::sysfs::{SysfsDirectory, SysfsFile};
 use hootux::fs::vfs::DeviceIdDistributer;
 use hootux::fs::{IoError, IoResult};
+use hootux::mem::dma::DmaBuff;
 use usb::ehci::EndpointQueue;
 use usb_cfg::descriptor::{Descriptor, DeviceDescriptor, EndpointTransferType};
+
+mod hid_if;
 
 static ID_DISPENSER: DeviceIdDistributer = DeviceIdDistributer::new();
 
@@ -296,5 +303,170 @@ impl DriverRuntime {
             }
         }
         Ok(())
+    }
+}
+
+#[file]
+struct HidPipe {
+    inner: Weak<HidPipeInner>,
+    id: DevID,
+    interface: u64,
+    open_mode: OpenMode,
+    serial: core::sync::atomic::AtomicUsize,
+}
+
+struct HidPipeInner {
+    /// File objects may only pend operations when it's serial and `self.serial` is equal.
+    pending: async_lock::Mutex<Vec<(DmaBuff, hid::fstreams::HidIndexFlags, core::task::Waker)>>,
+    driver_state: Arc<DriverState>,
+
+    /// Counts the number of file objects that have opened this file for reading.
+    open_read: core::sync::atomic::AtomicUsize,
+
+    /// We queue all operations, operations must be given a serial number so each file can track
+    /// which Op's need to be fetched.
+    serial: core::sync::atomic::AtomicUsize,
+    queued: spin::Mutex<alloc::collections::VecDeque<QueuedOp>>,
+}
+
+struct QueuedOp {
+    payload: Box<[u8]>,
+    serial: usize,
+    pending: core::sync::atomic::AtomicUsize,
+    interface: u32,
+}
+
+impl HidPipeInner {
+    async fn send_op(&self, payload: &[u8], interface_index: u32) {
+        let mut count = self.serial.load(Ordering::Relaxed);
+        let mut queue = self.pending.lock().await;
+        self.serial.fetch_add(1, Ordering::Relaxed);
+
+        for (buffer, select, waker) in queue.extract_if(.., |e| e.1.is_interface(interface_index)) {
+            count -= 1;
+
+            let mut tgt = &mut buffer[..];
+            if select.is_multiple() {
+                // prepend interface number for multiple interfaces
+                tgt[0] = interface_index as u8;
+                tgt = &mut tgt[1..];
+            }
+            let len = tgt.len().min(payload.len());
+            tgt[0..len].copy_from_slice(&payload[..len]);
+            waker.wake()
+        }
+
+        if count > 0 {
+            self.pend_op(payload, interface_index, count)
+        }
+    }
+
+    fn pend_op(&self, payload: &[u8], interface: u32, count: usize) {
+        let mut l = self.queued.lock();
+        let qd = QueuedOp {
+            payload: Box::from(payload),
+            serial: self.serial.load(Ordering::Relaxed),
+            pending: core::sync::atomic::AtomicUsize::new(count),
+            interface,
+        };
+        l.push_back(qd)
+    }
+}
+
+impl Clone for HidPipe {
+    fn clone(&self) -> Self {
+        Self {
+            inner: self.inner.clone(),
+            id: self.id,
+            interface: self.interface,
+            open_mode: OpenMode::Locked,
+            serial: core::sync::atomic::AtomicUsize::new(0), // set when open() is called
+        }
+    }
+}
+
+impl File for HidPipe {
+    fn file_type(&self) -> FileType {
+        FileType::CharDev
+    }
+
+    fn block_size(&self) -> u64 {
+        8
+    }
+
+    fn device(&self) -> DevID {
+        self.id
+    }
+
+    fn clone_file(&self) -> Box<dyn File> {
+        Box::new(self.clone())
+    }
+
+    fn id(&self) -> u64 {
+        self.interface << 8
+    }
+
+    fn len(&self) -> IoResult<'_, u64> {
+        async { hootux::mem::PAGE_SIZE }.boxed()
+    }
+}
+
+impl Fifo<u8> for HidPipe {
+    fn open(&mut self, mode: OpenMode) -> Result<(), IoError> {
+        let Some(fa) = self.inner.upgrade() else {
+            return Err(IoError::NotPresent);
+        };
+        if self.open_mode == OpenMode::Locked {
+            // Self can be opened an unlimited number of times.
+            self.open_mode = mode;
+            if mode.is_read() {
+                fa.open_read.fetch_add(1, Ordering::Acquire);
+                self.serial
+                    .store(fa.serial.load(Ordering::Relaxed), Ordering::Release);
+            }
+
+            Ok(())
+        } else {
+            Err(IoError::Busy)
+        }
+    }
+
+    fn close(&mut self) -> Result<(), IoError> {
+        self.open_mode = OpenMode::Locked;
+        Ok(())
+    }
+
+    fn locks_remain(&self, _: OpenMode) -> usize {
+        usize::MAX
+    }
+
+    fn is_master(&self) -> Option<usize> {
+        None
+    }
+}
+
+impl Read<u8> for HidPipe {
+    fn read(
+        &self,
+        pos: u64,
+        buff: DmaBuff,
+    ) -> BoxFuture<'_, Result<(DmaBuff, usize), (IoError, DmaBuff, usize)>> {
+        async {
+            if buff.len() <= 1 {
+                log::debug!("Attempted to read HidPipe with short buffer");
+                return Err((IoError::EndOfFile, buff, 0));
+            }
+            todo!()
+        }
+    }
+}
+
+impl Write<u8> for HidPipe {
+    fn write(
+        &self,
+        pos: u64,
+        buff: DmaBuff,
+    ) -> BoxFuture<'_, Result<(DmaBuff, usize), (IoError, DmaBuff, usize)>> {
+        todo!()
     }
 }

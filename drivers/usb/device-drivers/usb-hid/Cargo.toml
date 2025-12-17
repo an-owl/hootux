@@ -7,9 +7,11 @@ edition = "2024"
 hid-report = "1.0.0"
 cast_trait_object = "0.1.4"
 async-lock = { version = "3.4", default-features = false }
+spin = { version = "0.10.0", default-features = false }
 log = { version = "0.4", default-features = false }
 futures-util = "0.3.31"
 
 usb-cfg = { path = "../../usb-proto" }
 usb = { path = "../../../usb" }
 hootux = { path = "../../../../kernel" }
+hid = { path = "../../../../lib/hid" }
