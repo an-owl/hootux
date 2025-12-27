@@ -82,6 +82,8 @@ pub enum ControlKey {
     ScrollLock,
     CapsLock,
 
+    Application,
+    Power,
     Execute,
     Help,
     Menu,
@@ -97,6 +99,10 @@ pub enum ControlKey {
     Mute,
     VolumeUp,
     VolumeDown,
+
+    LockingCapsLock,
+    LockingNumLock,
+    LockingScrollLock,
 
     International1,
     International2,
@@ -118,6 +124,24 @@ pub enum ControlKey {
     Lang9,
 
     AlternateErase,
+
+    SysReq,
+    Cancel,
+    Prior,
+    Return,
+    Seperator,
+    Out,
+    Oper,
+    CrSel,
+    ExSel,
+
+    Hundreds,  // "00" in the HUD
+    Thousands, // "000" in the HUD
+
+    ThousandsSeperator,
+    DecimalSeperator,
+    CurrencyUnit,
+    CurrencySubUnit,
 
     // Keypad only.
     // Note that I'm Going down the list of USB HID usages
@@ -169,5 +193,19 @@ mod tests {
             ControlKey::MemoryAdd as u32 + ControlKey::KEYPAD_OFFSET,
             u32::from_le_bytes(encoded[4..8].try_into().unwrap())
         );
+    }
+}
+
+#[repr(C)]
+#[derive(Copy, Clone, Debug)]
+// "Char" refers to the fact that this is the file "character" not like a Unicode `char`.
+pub struct KeyChar {
+    pub key_group: KeyGroup,
+    pub state: KeyState,
+}
+
+impl KeyChar {
+    fn into_bytes(self) -> [u8; size_of::<KeyGroup>()] {
+        unsafe { core::mem::transmute(self) }
     }
 }
