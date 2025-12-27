@@ -8,6 +8,7 @@
 //! the full data range of the format, the value should not be normalized.
 
 #[repr(u8)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
 pub enum KeyState {
     Released = 0,
     Pressed = 1,
