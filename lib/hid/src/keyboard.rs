@@ -167,6 +167,20 @@ impl ControlKey {
     pub const KEYPAD_OFFSET: u32 = 0x11_0000;
 }
 
+#[repr(C)]
+#[derive(Copy, Clone, Debug)]
+// "Char" refers to the fact that this is the file "character" not like a Unicode `char`.
+pub struct KeyChar {
+    pub key_group: KeyGroup,
+    pub state: KeyState,
+}
+
+impl KeyChar {
+    fn into_bytes(self) -> [u8; size_of::<Self>()] {
+        unsafe { core::mem::transmute(self) }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -193,19 +207,5 @@ mod tests {
             ControlKey::MemoryAdd as u32 + ControlKey::KEYPAD_OFFSET,
             u32::from_le_bytes(encoded[4..8].try_into().unwrap())
         );
-    }
-}
-
-#[repr(C)]
-#[derive(Copy, Clone, Debug)]
-// "Char" refers to the fact that this is the file "character" not like a Unicode `char`.
-pub struct KeyChar {
-    pub key_group: KeyGroup,
-    pub state: KeyState,
-}
-
-impl KeyChar {
-    fn into_bytes(self) -> [u8; size_of::<KeyGroup>()] {
-        unsafe { core::mem::transmute(self) }
     }
 }
