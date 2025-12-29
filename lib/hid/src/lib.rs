@@ -5,5 +5,5 @@ pub mod fstreams;
 pub mod keyboard;
 pub mod query;
 
-const KEYBOARD: u64 = 0;
-const RODENT: u64 = 1;
+pub const KEYBOARD: u32 = 0;
+pub const RODENT: u32 = 1;
