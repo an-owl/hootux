@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-hid-report = "1.0.0"
+hidreport = "0.5.0"
 cast_trait_object = "0.1.4"
 async-lock = { version = "3.4", default-features = false }
 spin = { version = "0.10.0", default-features = false }
