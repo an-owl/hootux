@@ -406,6 +406,24 @@ impl HidPipeInner {
             }
         }
     }
+
+    /// Decrements all queued messages beginning from `serial` until the end of the queue.
+    ///
+    /// This must be called by file objects when they are closed in order to clean the queued messages from the queue.
+    fn close_from_serial(&self, serial: usize) {
+        let mut pending = self.queued.lock();
+        if self.open_read.fetch_sub(1, Ordering::Relaxed) == 1 {
+            pending.clear();
+            return;
+        }
+        if let Ok(start) = pending.binary_search_by(|e| e.serial.cmp(&serial)) {
+            for i in pending.iter().skip(start) {
+                i.pending.fetch_sub(1, Ordering::Relaxed);
+            }
+            drop(pending);
+            self.clean_queue();
+        }
+    }
 }
 
 impl HidPipe {
@@ -610,5 +628,14 @@ impl Write<u8> for HidPipe {
         buff: DmaBuff,
     ) -> BoxFuture<'_, Result<(DmaBuff, usize), (IoError, DmaBuff, usize)>> {
         todo!()
+    }
+}
+
+impl Drop for HidPipe {
+    fn drop(&mut self) {
+        // Must clean all queued retained for self in self.inner
+        if self.open_mode != OpenMode::Locked {
+            let _ = self.close();
+        }
     }
 }
