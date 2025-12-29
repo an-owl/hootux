@@ -556,6 +556,14 @@ impl Fifo<u8> for HidPipe {
     }
 
     fn close(&mut self) -> Result<(), IoError> {
+        if self.open_mode != OpenMode::Locked {
+            let Some(fa) = self.inner.upgrade() else {
+                return Err(IoError::NotPresent);
+            };
+            fa.close_from_serial(self.serial.load(Ordering::Relaxed));
+        } else {
+            return Err(IoError::Busy);
+        }
         self.open_mode = OpenMode::Locked;
         Ok(())
     }
