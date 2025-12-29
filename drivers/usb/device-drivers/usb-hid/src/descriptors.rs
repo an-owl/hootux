@@ -1,3 +1,4 @@
+use core::cmp::Ordering;
 use usb_cfg::DescriptorType;
 
 /// HID descriptor defined by the USB HID specification 1.11
@@ -98,7 +99,7 @@ pub(crate) fn request_descriptor_command(
 }
 
 #[repr(u16)]
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+#[derive(Debug, Copy, Clone)]
 pub enum UsagePage {
     Undefined = 0,
     GenericDesktop = 1,
@@ -136,6 +137,32 @@ pub enum UsagePage {
     GamingDevice = 0x92,
     FidoAlliance = 0xf1d0,
     Other(u16),
+}
+
+impl PartialEq for UsagePage {
+    fn eq(&self, other: &Self) -> bool {
+        let s: u16 = self.into();
+        let o: u16 = other.into();
+        s.eq(&o)
+    }
+}
+
+impl Eq for UsagePage {}
+
+impl PartialOrd for UsagePage {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        let s: u16 = self.into();
+        let o: u16 = other.into();
+        s.partial_cmp(&o)
+    }
+}
+
+impl Ord for UsagePage {
+    fn cmp(&self, other: &Self) -> Ordering {
+        let s: u16 = self.into();
+        let o: u16 = other.into();
+        s.cmp(&o)
+    }
 }
 
 impl From<UsagePage> for u16 {
