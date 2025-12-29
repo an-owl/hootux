@@ -395,8 +395,8 @@ impl HidPipeInner {
         l.push_back(qd)
     }
 
-    /// Removes all queued messages that will not
-    fn clean_queue(&mut self) {
+    /// Removes all queued messages that are no longer pending.
+    fn clean_queue(&self) {
         let mut l = self.queued.lock();
         while let Some(op) = l.get(0) {
             if op.pending.load(Ordering::Relaxed) == 0 {
