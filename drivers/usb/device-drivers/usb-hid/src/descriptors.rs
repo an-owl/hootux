@@ -141,8 +141,8 @@ pub enum UsagePage {
 
 impl PartialEq for UsagePage {
     fn eq(&self, other: &Self) -> bool {
-        let s: u16 = self.into();
-        let o: u16 = other.into();
+        let s: u16 = (*self).into();
+        let o: u16 = (*other).into();
         s.eq(&o)
     }
 }
@@ -151,16 +151,16 @@ impl Eq for UsagePage {}
 
 impl PartialOrd for UsagePage {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        let s: u16 = self.into();
-        let o: u16 = other.into();
+        let s: u16 = (*self).into();
+        let o: u16 = (*other).into();
         s.partial_cmp(&o)
     }
 }
 
 impl Ord for UsagePage {
     fn cmp(&self, other: &Self) -> Ordering {
-        let s: u16 = self.into();
-        let o: u16 = other.into();
+        let s: u16 = (*self).into();
+        let o: u16 = (*other).into();
         s.cmp(&o)
     }
 }
