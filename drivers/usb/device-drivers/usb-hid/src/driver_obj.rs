@@ -359,6 +359,8 @@ struct QueuedOp {
 }
 
 impl HidPipeInner {
+    /// Sends the character to all file objects. If the character cannot be written into all file
+    /// objects immediately it will be queued until it is received by all open file objects.
     async fn send_op(&self, payload: &[u8], interface_index: u32) {
         let mut count = self.serial.load(Ordering::Relaxed);
         let mut queue = self.pending.lock().await;
@@ -384,6 +386,7 @@ impl HidPipeInner {
         }
     }
 
+    /// Send a character to the file, the character will wait until all file objects have read the character.
     fn pend_op(&self, payload: &[u8], interface: u32, count: usize) {
         let mut l = self.queued.lock();
         let qd = QueuedOp {
@@ -424,6 +427,38 @@ impl HidPipeInner {
             self.clean_queue();
         }
     }
+
+    /// Receives a character from the file queue. Only characters matching `interface` will be returned.
+    /// On success returns the number of bytes written into `buffer`.
+    ///
+    /// This will always return the new serial of the file object.
+    async fn receive_queued(
+        &self,
+        buffer: &mut DmaBuff,
+        interface: HidIndexFlags,
+        serial: usize,
+    ) -> (Result<usize, ()>, usize) {
+        let l = self.queued.lock();
+        let mut dirty = false;
+        let (Ok(start) | Err(start)) = l.binary_search_by(|e| serial.cmp(&e.serial));
+        for i in l.iter().skip(start) {
+            if i.pending.fetch_sub(1, Ordering::Relaxed) == 1 {
+                dirty = true;
+            }
+            if interface.is_interface(i.interface) {
+                let len = i.payload.len().min(buffer.len());
+                buffer[..len].copy_from_slice(&i.payload[..len]);
+                if dirty {
+                    self.clean_queue();
+                }
+                return (Ok(len), i.serial);
+            }
+        }
+        if dirty {
+            self.close_from_serial(serial);
+        }
+        (Err(()), self.serial.load(Ordering::Relaxed))
+    }
 }
 
 impl HidPipe {
@@ -431,16 +466,25 @@ impl HidPipe {
     /// Does not support options.
     async fn recv_data(
         &self,
-        buffer: DmaBuff,
+        mut buffer: DmaBuff,
         interface: HidIndexFlags,
-    ) -> Result<(DmaBuff, usize), IoError> {
+    ) -> Result<(DmaBuff, usize), (DmaBuff, IoError)> {
         // Only called from Self::read() which upgraded inner already.
         let Some(fa) = self.inner.upgrade() else {
             unreachable!()
         };
         let mut queue = fa.pending.lock().await;
 
-        if self.serial.load(Ordering::Relaxed) != fa.serial.load(Ordering::Relaxed) {}
+        if self.serial.load(Ordering::Relaxed) != fa.serial.load(Ordering::Relaxed) {
+            let (rc, serial) = fa
+                .receive_queued(&mut buffer, interface, self.serial.load(Ordering::Relaxed))
+                .await;
+            self.serial.store(serial, Ordering::Relaxed);
+            match rc {
+                Ok(n) => return Ok((buffer, n)),
+                Err(()) => {} // fall through
+            }
+        }
 
         let (tx, rx) = hootux::task::util::new_message();
         queue.push((buffer, interface, tx));
@@ -623,7 +667,15 @@ impl Read<u8> for HidPipe {
                 }
             }
 
-            todo!()
+            // We need to own self.inner to make sure its present.
+            let Some(_inner) = self.inner.upgrade() else {
+                return Err((IoError::NotPresent, buff, 0));
+            };
+
+            return match self.recv_data(buff, hid_index).await {
+                Err((buff, e)) => Err((e, buff, 0)),
+                Ok(r) => Ok(r),
+            };
         }
         .boxed()
     }
@@ -632,10 +684,10 @@ impl Read<u8> for HidPipe {
 impl Write<u8> for HidPipe {
     fn write(
         &self,
-        pos: u64,
+        _pos: u64,
         buff: DmaBuff,
     ) -> BoxFuture<'_, Result<(DmaBuff, usize), (IoError, DmaBuff, usize)>> {
-        todo!()
+        async { Err((IoError::NotSupported, buff, 0)) }.boxed()
     }
 }
 
