@@ -4,18 +4,23 @@ use alloc::boxed::Box;
 use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
 use core::ops::BitXor;
+use futures_util::FutureExt;
 use futures_util::future::BoxFuture;
 use hid::keyboard::{ControlKey, KeyGroup, KeyState, ModifierKey};
+use hidreport::Report;
 use hidreport::{Field, ReportDescriptor};
 use hootux::fs::IoError;
 
-pub fn resolve_interfaces(
+pub(crate) fn resolve_interfaces(
     descriptor: ReportDescriptor,
 ) -> Result<BTreeMap<UsagePage, Box<dyn HidInterface>>, IoError> {
     let mut collection = BTreeMap::new();
 
     if let Some(interface) = BaseKeyboardIf::new(&descriptor) {
-        let None = collection.insert(interface.usage_page(), Box::new(interface)) else {
+        let None = collection.insert(
+            interface.usage_page(),
+            Box::new(interface) as Box<dyn HidInterface>,
+        ) else {
             unreachable!()
         };
     }
@@ -24,18 +29,18 @@ pub fn resolve_interfaces(
 }
 
 /// This trait defines an object which can parse report data and forward it to a file object.
-trait HidInterface {
+pub(crate) trait HidInterface {
     fn usage_page(&self) -> UsagePage;
 
     fn interface_number(&self) -> u32;
 
     /// Parse the report given in `report` and forward parsed data into `stream`.
     /// `stream` will be given pre-opened in write only mode.
-    fn parse_report(
-        &mut self,
-        report: &[u8],
-        stream: &HidPipeInner,
-    ) -> BoxFuture<Result<(), IoError>>;
+    fn parse_report<'a>(
+        &'a mut self,
+        report: &'a [u8],
+        stream: &'a HidPipeInner,
+    ) -> BoxFuture<'a, Result<(), IoError>>;
 }
 
 /// Handles key input.
@@ -55,14 +60,15 @@ impl BaseKeyboardIf {
             for field in reports.fields() {
                 match field {
                     Field::Variable(field_distinct)
-                        if field_distinct.usage.usage_page.into()
-                            == crate::descriptors::UsagePage::KeyboardKeypad =>
+                        if Into::<u16>::into(field_distinct.usage.usage_page)
+                            == Into::<u16>::into(UsagePage::KeyboardKeypad) =>
                     {
                         variable_fields.push(field_distinct.clone());
                     }
+
                     Field::Array(field_distinct) => {
-                        if field_distinct.usage_range().minimum().usage_page().into()
-                            == crate::descriptors::UsagePage::KeyboardKeypad
+                        if Into::<u16>::into(field_distinct.usage_range().minimum().usage_page())
+                            == Into::<u16>::into(UsagePage::KeyboardKeypad)
                         {
                             array_field = Some(field_distinct.clone())
                         }
@@ -98,11 +104,11 @@ impl HidInterface for BaseKeyboardIf {
         hid::KEYBOARD
     }
 
-    fn parse_report(
-        &mut self,
-        report: &[u8],
-        stream: &HidPipeInner,
-    ) -> BoxFuture<Result<(), IoError>> {
+    fn parse_report<'a>(
+        &'a mut self,
+        report: &'a [u8],
+        stream: &'a HidPipeInner,
+    ) -> BoxFuture<'a, Result<(), IoError>> {
         async {
             let mut curr_state = KeyboardStateMachine::empty();
             for field in &self.modifier_keys {
@@ -112,7 +118,7 @@ impl HidInterface for BaseKeyboardIf {
                 let data: u32 = data.into();
                 let state = data != 1;
                 if state {
-                    curr_state.set_bit(field.usage.usage_id.into());
+                    curr_state.set_bit(Into::<u16>::into(field.usage.usage_id) as u8);
                 }
             }
 
@@ -121,7 +127,7 @@ impl HidInterface for BaseKeyboardIf {
                     break;
                 };
                 let key: u32 = t.into();
-                curr_state.set_bit(key.into());
+                curr_state.set_bit(key as u8);
             }
 
             let prev_state = core::mem::replace(&mut self.state_machine, curr_state);
@@ -142,10 +148,13 @@ impl HidInterface for BaseKeyboardIf {
                         KeyState::Released
                     },
                 };
-                stream.send_op(&char.into_bytes()).await;
+                stream
+                    .send_op(&char.into_bytes(), self.interface_number())
+                    .await;
             }
             Ok(())
         }
+        .boxed()
     }
 }
 
@@ -164,7 +173,7 @@ impl KeyboardStateMachine {
         let mut this = Self::empty();
 
         for mut char in iter {
-            let mut word = if char > 128 {
+            let word = if char > 128 {
                 char -= 128;
                 &mut this.0[1]
             } else {
@@ -196,7 +205,7 @@ impl KeyboardStateMachine {
 
     /// Returns the value of the bit.
     fn get_bit(&self, mut index: u8) -> bool {
-        let mut word = if index > 128 {
+        let word = if index > 128 {
             index -= 128;
             self.0[1]
         } else {
@@ -207,14 +216,14 @@ impl KeyboardStateMachine {
     }
 
     fn set_bit(&mut self, mut index: u8) {
-        let mut word = if index > 128 {
+        let word = if index > 128 {
             index -= 128;
             &mut self.0[1]
         } else {
             &mut self.0[0]
         };
 
-        *word | 1 << index;
+        *word |= 1 << index;
     }
 
     fn into_update_iter(self, new_state: &Self) -> KeyboardStateIter {
@@ -334,10 +343,14 @@ fn usb_2_hid(usb_key: u16) -> Result<KeyGroup, IoError> {
         0x65 => Ok(KeyGroup::ControlKey(ControlKey::Application)),
         0x66 => Ok(KeyGroup::ControlKey(ControlKey::Power)),
         0x67 => Ok(KeyGroup::Keypad('=' as u32)),
-        n @ 0x68..0x73 => {
+        n @ 0x68..=0x73 => {
             let n = n - (0x68 + 13);
             // SAFETY: This is safe, this can never be `0`
-            unsafe { Ok(KeyGroup::FunctionKey(n.try_into().unwrap_unchecked())) }
+            unsafe {
+                Ok(KeyGroup::FunctionKey(
+                    (n as u32).try_into().unwrap_unchecked(),
+                ))
+            }
         }
         0x74 => Ok(KeyGroup::ControlKey(ControlKey::Execute)),
         0x75 => Ok(KeyGroup::ControlKey(ControlKey::Help)),
@@ -400,13 +413,13 @@ fn usb_2_hid(usb_key: u16) -> Result<KeyGroup, IoError> {
         0xb8 => Ok(KeyGroup::Keypad('{' as u32)),
         0xb9 => Ok(KeyGroup::Keypad('}' as u32)),
         0xba => Ok(KeyGroup::Keypad('\t' as u32)),
-        0xbc => Ok(KeyGroup::Keypad('\u{8}' as u32)),
-        n @ 0xbd..=0xc1 => {
+        0xbb => Ok(KeyGroup::Keypad('\u{8}' as u32)),
+        n @ 0xbc..=0xc1 => {
             let n = (n as u8) - 0xbd + 'A' as u8;
             Ok(KeyGroup::Keypad(n as u32))
         }
         0xc2 => Ok(KeyGroup::Keypad('⊕' as u32)),
-        0x33 => Ok(KeyGroup::Keypad('^' as u32)),
+        0xc3 => Ok(KeyGroup::Keypad('^' as u32)),
         0xc4 => Ok(KeyGroup::Keypad('%' as u32)),
         0xc5 => Ok(KeyGroup::Keypad('<' as u32)),
         0xc6 => Ok(KeyGroup::Keypad('>' as u32)),
@@ -459,7 +472,7 @@ fn usb_2_hid(usb_key: u16) -> Result<KeyGroup, IoError> {
         0xdd => Ok(KeyGroup::Keypad(
             ControlKey::Hexadecimal as u32 + ControlKey::KEYPAD_OFFSET,
         )),
-        0xde..0xdf => Err(IoError::InvalidData),
+        0xde..=0xdf => Err(IoError::InvalidData),
         0xe0 => Ok(KeyGroup::Modifier(ModifierKey::LeftControl)),
         0xe1 => Ok(KeyGroup::Modifier(ModifierKey::LeftShift)),
         0xe2 => Ok(KeyGroup::Modifier(ModifierKey::LeftAlt)),
@@ -468,6 +481,6 @@ fn usb_2_hid(usb_key: u16) -> Result<KeyGroup, IoError> {
         0xe5 => Ok(KeyGroup::Modifier(ModifierKey::RightShift)),
         0xe6 => Ok(KeyGroup::Modifier(ModifierKey::AltRight)),
         0xe7 => Ok(KeyGroup::Modifier(ModifierKey::RightSuper)),
-        0xe8..0xffff => Err(IoError::InvalidData),
+        0xe8..=0xffff | 3 => Err(IoError::InvalidData),
     }
 }
