@@ -869,6 +869,16 @@ pub mod frontend {
                 (None, status) // Buffer is bogus, so this is fine to drop.
             }
         }
+
+        /// Returns a file object for self.
+        pub fn to_file(&self) -> Result<UsbDeviceFile, IoError> {
+            let accessor = self.acc.upgrade().ok_or(IoError::NotPresent)?;
+            Ok(UsbDeviceFile {
+                major_num: accessor.major_num,
+                address: accessor.address.into(),
+                usb_device_accessor: Arc::downgrade(&accessor),
+            })
+        }
     }
 
     impl Drop for UsbDevCtl {
