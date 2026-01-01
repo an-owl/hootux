@@ -1,7 +1,6 @@
 use crate::descriptors::UsagePage;
 use crate::driver_obj::HidPipeInner;
 use alloc::boxed::Box;
-use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
 use core::ops::BitXor;
 use futures_util::FutureExt;
@@ -12,24 +11,26 @@ use hidreport::{Field, ReportDescriptor};
 use hootux::fs::IoError;
 
 pub(crate) fn resolve_interfaces(
-    descriptor: ReportDescriptor,
-) -> Result<BTreeMap<UsagePage, Box<dyn HidInterface>>, IoError> {
-    let mut collection = BTreeMap::new();
+    descriptor: &ReportDescriptor,
+) -> Result<Vec<Box<dyn HidInterface>>, IoError> {
+    let mut collection = Vec::new();
 
     if let Some(interface) = BaseKeyboardIf::new(&descriptor) {
-        let None = collection.insert(
-            interface.usage_page(),
-            Box::new(interface) as Box<dyn HidInterface>,
-        ) else {
-            unreachable!()
-        };
+        collection.push(Box::new(interface) as Box<dyn HidInterface>);
     }
 
-    Ok(collection)
+    let initial_len = collection.len();
+    collection.dedup_by(|a, b| a.usage_page() == b.usage_page());
+    if collection.len() == initial_len {
+        Ok(collection)
+    } else {
+        log::error!("Found duplicate HID interfaces");
+        Err(IoError::AlreadyExists)
+    }
 }
 
 /// This trait defines an object which can parse report data and forward it to a file object.
-pub(crate) trait HidInterface {
+pub(crate) trait HidInterface: Send + Sync {
     fn usage_page(&self) -> UsagePage;
 
     fn interface_number(&self) -> u32;
