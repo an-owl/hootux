@@ -553,6 +553,8 @@ impl Clone for HidPipe {
     }
 }
 
+impl SysfsFile for HidPipe {}
+
 impl File for HidPipe {
     fn file_type(&self) -> FileType {
         FileType::CharDev
