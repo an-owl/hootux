@@ -25,7 +25,8 @@ impl HidDescriptor {
     pub fn optionals(&self) -> &[DescriptorDescriber] {
         let tail_len_bytes = self.length as usize - size_of::<Self>();
         let elements = tail_len_bytes / size_of::<DescriptorDescriber>();
-        let tail_start: *const Self = &raw const *self;
+        // SAFETY: We guarantee that the tail is always present, this moves th pointer to the start of the tail.
+        let tail_start: *const Self = unsafe { (&raw const *self).add(1) };
         let tail_start = tail_start.cast();
 
         // SAFETY: Requirements must be upheld when creating the pointer to `self`
