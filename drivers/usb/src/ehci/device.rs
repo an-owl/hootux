@@ -826,7 +826,7 @@ pub mod frontend {
             else {
                 return (buffer, Err(IoError::NotPresent));
             };
-            let buffer_present = buffer.is_none();
+            let buffer_present = buffer.is_some();
             if (command.data_len() == 0) == buffer_present {
                 log::debug!("Attempted to send command with invalid buffer");
                 return (buffer, Err(IoError::InvalidData));
