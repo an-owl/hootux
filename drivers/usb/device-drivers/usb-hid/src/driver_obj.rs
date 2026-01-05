@@ -106,16 +106,7 @@ impl File for DriverStateFile {
     fn device(&self) -> DevID {
         let major = ID_DISPENSER.major();
 
-        // Minor needs to be lazily initialised, because we need self to attempt to bind using self.
-        // Failing to bind would otherwise allocate a minor number.
-        let t = self.minor.load(core::sync::atomic::Ordering::Relaxed);
-        let minor = if t == usize::MAX {
-            ID_DISPENSER.alloc_id().as_int().1
-        } else {
-            t
-        };
-
-        DevID::new(major, minor)
+        DevID::new(major, self.minor.load(Ordering::Relaxed))
     }
 
     fn clone_file(&self) -> Box<dyn File> {
@@ -271,11 +262,10 @@ impl DriverRuntime {
             };
 
             // SAFETY: get_descriptor always returns all the descriptor data.
-            for (i, mut interface_group) in unsafe {
+            for mut interface_group in unsafe {
                 descriptor
                     .iter()
                     .fold_on(usb_cfg::DescriptorType::Interface)
-                    .enumerate()
             } {
                 let interface = interface_group
                     .next()
@@ -348,8 +338,8 @@ impl DriverRuntime {
                                 };
 
                                 let command = crate::descriptors::request_descriptor_command(
-                                    crate::descriptors::HidDescriptorRequestType::Hid,
-                                    i as u8,
+                                    crate::descriptors::HidDescriptorRequestType::Report,
+                                    interface.interface_number,
                                     report_descriptor.length,
                                 );
                                 let buffer = vec![0u8; report_descriptor.length as usize];
@@ -368,7 +358,27 @@ impl DriverRuntime {
                                     log::warn!("Received buffer was smaller than expected");
                                     buffer.truncate(len);
                                 }
-                                todo!()
+
+                                let report_descriptor =
+                                    match hidreport::ReportDescriptor::try_from(&buffer) {
+                                        Ok(report) => report,
+                                        Err(e) => {
+                                            log::error!(
+                                                "Failed to parse report descriptor: {e:?}\n{:?}",
+                                                &buffer[..len]
+                                            );
+                                            return Err(IoError::MediaError);
+                                        }
+                                    };
+
+                                driver_state.hid_interfaces =
+                                    hid_if::resolve_interfaces(&report_descriptor)?;
+                                let None = report_sizes
+                                    .replace(Self::resolve_interface_sizes(&report_descriptor))
+                                else {
+                                    log::error!("Got multiple report descriptors.");
+                                    return Err(IoError::AlreadyExists);
+                                };
                             }
 
                             None => {
@@ -588,6 +598,21 @@ impl HidPipeInner {
             self.close_from_serial(serial);
         }
         (Err(()), self.serial.load(Ordering::Relaxed))
+    }
+
+    fn enable_interface(&mut self, interface: u32) {
+        self.interfaces.insert(interface);
+    }
+
+    fn to_file(self: &Arc<Self>, interface: u8) -> HidPipe {
+        assert!(interface < 16);
+        HidPipe {
+            inner: Arc::downgrade(self),
+            id: DevID::new(ID_DISPENSER.major(), self.minor_num),
+            interface: interface as u64,
+            open_mode: OpenMode::Locked,
+            serial: core::sync::atomic::AtomicUsize::new(self.serial.load(Ordering::Relaxed)),
+        }
     }
 }
 
