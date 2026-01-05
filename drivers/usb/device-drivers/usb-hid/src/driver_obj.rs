@@ -649,51 +649,6 @@ impl HidPipe {
 
         Ok(rx.await)
     }
-
-    /// Searches the queued data and returns the first entry found.
-    ///
-    /// Returns whether the queued data list needs to be cleaned regardless of whether data was found.
-    fn search_cache(
-        &self,
-        mut buffer: DmaBuff,
-        interface: HidIndexFlags,
-    ) -> (Option<(DmaBuff, usize)>, bool) {
-        // Only called from Self::recv_data() which upgraded inner already.
-        let Some(fa) = self.inner.upgrade() else {
-            unreachable!()
-        };
-        let l = fa.queued.lock();
-        let mut dirty = false;
-        for op in l.iter() {
-            // We've already checked this before.
-            if self.serial.load(Ordering::Relaxed) > op.serial {
-                continue;
-            }
-
-            // Update serial, this must be unconditional else if we do not find a matching entry we
-            // need to know that we are up to date.
-            self.serial.store(op.serial, Ordering::Relaxed);
-            if !interface.is_interface(op.interface) {
-                continue;
-            }
-
-            let mut tgt = &mut buffer[..];
-            // prepend if number
-            if interface.is_multiple() {
-                tgt[0] = op.interface as u8;
-                tgt = &mut tgt[1..];
-            }
-            let op_len = op.payload.len().min(tgt.len());
-            tgt[..op_len].copy_from_slice(&op.payload[..op_len]);
-
-            // if new value == 0
-            if op.pending.fetch_sub(1, Ordering::Relaxed) == 1 {
-                dirty = true;
-            }
-            return (Some((buffer, op_len)), dirty);
-        }
-        (None, dirty)
-    }
 }
 
 impl Clone for HidPipe {
