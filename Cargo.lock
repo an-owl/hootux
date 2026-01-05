@@ -66,7 +66,7 @@ version = "0.7.0"
 source = "git+https://github.com/meh/rust-bdf#2eceb6634bf4932cc877a69d574c86994c0cf883"
 dependencies = [
  "bit-set",
- "thiserror",
+ "thiserror 1.0.60",
 ]
 
 [[package]]
@@ -118,9 +118,9 @@ checksum = "bef38d45163c2f1dde094a7dfd33ccf595c92905c8f8f4fdc18d06fb1037718a"
 
 [[package]]
 name = "bitflags"
-version = "2.9.1"
+version = "2.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1b8e56985ec62d17e9c1001dc89c88ecd7dc08e47eba5ec7c29c7b5eeecde967"
+checksum = "812e12b5285cc515a9c72a5c1d3b6d46a19dac5acfef5265968c166106e31dd3"
 
 [[package]]
 name = "bitmap-fontgen"
@@ -162,7 +162,7 @@ dependencies = [
  "semver",
  "serde",
  "serde_json",
- "thiserror",
+ "thiserror 1.0.60",
 ]
 
 [[package]]
@@ -293,7 +293,7 @@ name = "ehci"
 version = "0.1.0"
 dependencies = [
  "bitfield",
- "bitflags 2.9.1",
+ "bitflags 2.10.0",
  "common",
  "log",
  "num_enum 0.7.4",
@@ -324,9 +324,9 @@ dependencies = [
 
 [[package]]
 name = "event-listener-strategy"
-version = "0.5.3"
+version = "0.5.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3c3e4e0dd3673c1139bf041f3008816d9cf2946bbfac2945c09e523b8d7b05b2"
+checksum = "8be9f3dfaaffdae2972880079a491a1a8bb7cbed0b8dd7a347f668b4150a3b93"
 dependencies = [
  "event-listener",
  "pin-project-lite",
@@ -433,10 +433,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "hid"
+version = "0.1.0"
+dependencies = [
+ "bitflags 2.10.0",
+]
+
+[[package]]
 name = "hid-8042"
 version = "0.1.0"
 dependencies = [
- "bitflags 2.9.1",
+ "bitflags 2.10.0",
 ]
 
 [[package]]
@@ -456,10 +463,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "hid-report"
-version = "1.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0bebb5da0629d65c77fa369d9e9e3ee5dee280506452d53ef97d9d2848d14945"
+name = "hidreport"
+version = "0.5.0"
+source = "git+https://github.com/an-owl/hidreport/?branch=no_std#8d7de1bcad41e3de5bd3149db6e492c0a67fb936"
+dependencies = [
+ "thiserror 2.0.17",
+]
 
 [[package]]
 name = "hootux"
@@ -468,7 +477,7 @@ dependencies = [
  "acpi",
  "async-lock",
  "atomic",
- "bitflags 2.9.1",
+ "bitflags 2.10.0",
  "bitmap-fontgen",
  "cast_trait_object",
  "cfg-if",
@@ -634,7 +643,7 @@ version = "0.20.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3d67e1b461b49127f2226c78a2b4090f72212c44fa27342bcfef93dd39bd6b86"
 dependencies = [
- "bitflags 2.9.1",
+ "bitflags 2.10.0",
  "derive_more 0.99.17",
  "log",
  "ptr_meta",
@@ -647,7 +656,7 @@ version = "0.23.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "43fcee184de68e344a888bc4f2b9d6b2f2f527cae8cedbb4d62a4df727d1ceae"
 dependencies = [
- "bitflags 2.9.1",
+ "bitflags 2.10.0",
  "derive_more 1.0.0",
  "log",
  "multiboot2-common",
@@ -870,7 +879,7 @@ version = "11.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1ab240315c661615f2ee9f0f2cd32d5a7343a84d5ebcccb99d46e6637565e7b0"
 dependencies = [
- "bitflags 2.9.1",
+ "bitflags 2.10.0",
 ]
 
 [[package]]
@@ -1056,7 +1065,16 @@ version = "1.0.60"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "579e9083ca58dd9dcf91a9923bb9054071b9ebbd800b342194c9feb0ee89fc18"
 dependencies = [
- "thiserror-impl",
+ "thiserror-impl 1.0.60",
+]
+
+[[package]]
+name = "thiserror"
+version = "2.0.17"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f63587ca0f12b72a0600bcba1d40081f830876000bb46dd2337a3051618f4fc8"
+dependencies = [
+ "thiserror-impl 2.0.17",
 ]
 
 [[package]]
@@ -1064,6 +1082,17 @@ name = "thiserror-impl"
 version = "1.0.60"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e2470041c06ec3ac1ab38d0356a6119054dedaea53e12fbefc0de730a1c08524"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.100",
+]
+
+[[package]]
+name = "thiserror-impl"
+version = "2.0.17"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3ff15c8ecd7de3849db632e14d18d2571fa09dfc5ed93479bc4485c7a517c913"
 dependencies = [
  "proc-macro2",
  "quote",

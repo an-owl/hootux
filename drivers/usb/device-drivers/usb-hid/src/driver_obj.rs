@@ -1,5 +1,5 @@
 use alloc::boxed::Box;
-use alloc::string::String;
+use alloc::string::{String, ToString};
 use alloc::sync::{Arc, Weak};
 use alloc::vec;
 use alloc::vec::Vec;
@@ -8,6 +8,7 @@ use core::sync::atomic::Ordering;
 use futures_util::FutureExt;
 use futures_util::future::BoxFuture;
 use hid::fstreams::HidIndexFlags;
+use hidreport::Report;
 use hootux::fs::device::{Fifo, OpenMode};
 use hootux::fs::file::*;
 use hootux::fs::sysfs::{SysfsDirectory, SysfsFile};
@@ -21,21 +22,38 @@ mod hid_if;
 
 static ID_DISPENSER: DeviceIdDistributer = DeviceIdDistributer::new();
 
+// todo add support for multiple interfaces
 struct DriverState {
     devctl: Option<usb::UsbDevCtl>,
 
     // devctl owns these
     in_endpoint: Weak<EndpointQueue>,
     out_endpoint: Weak<EndpointQueue>,
+
+    pipe: Arc<HidPipeInner>,
+
+    minor_number: Option<usize>,
+    hid_interfaces: Vec<Box<dyn hid_if::HidInterface>>,
 }
 
 impl DriverState {
-    const fn new() -> Self {
+    fn new() -> Self {
         Self {
             devctl: None,
             in_endpoint: Weak::new(),
             out_endpoint: Weak::new(),
+            hid_interfaces: Vec::new(),
+            pipe: Arc::new(HidPipeInner::new(0)), // We use null here but will change the ID later.
+            minor_number: None,
         }
+    }
+
+    fn reload_pipe(&mut self) {
+        let mut pipe = HidPipeInner::new(0);
+        for i in &self.hid_interfaces {
+            pipe.enable_interface(i.interface_number())
+        }
+        self.pipe = Arc::new(pipe);
     }
 }
 
@@ -115,15 +133,32 @@ impl File for DriverStateFile {
 
 impl SysfsDirectory for DriverStateFile {
     fn entries(&self) -> usize {
-        todo!()
+        3
     }
 
     fn file_list(&self) -> Vec<String> {
-        todo!()
+        Vec::from([".".to_string(), "..".to_string(), "if0".to_string()])
     }
 
-    fn get_file(&self, _name: &str) -> Result<Box<dyn SysfsFile>, IoError> {
-        todo!()
+    fn get_file(&self, name: &str) -> Result<Box<dyn SysfsFile>, IoError> {
+        match name {
+            "." => Ok(Box::new(Clone::clone(self))),
+            ".." => {
+                let Some(ref t) =
+                    hootux::task::util::block_on!(core::pin::pin!(self.inner.read())).devctl
+                else {
+                    unreachable!()
+                };
+                t.to_file().map(|e| Box::new(e) as Box<dyn SysfsFile>)
+            }
+            "if0" => {
+                let pi = hootux::task::util::block_on!(core::pin::pin!(self.inner.read()))
+                    .pipe
+                    .clone();
+                Ok(Box::new(pi.to_file(0)))
+            }
+            _ => Err(IoError::NotPresent),
+        }
     }
 
     fn store(&self, _name: &str, _file: Box<dyn SysfsFile>) -> Result<(), IoError> {
@@ -151,19 +186,63 @@ pub(crate) struct DriverRuntime {
 }
 
 impl DriverRuntime {
-    pub(crate) async fn run(self) -> hootux::task::TaskResult {
-        let Ok(_) = self.configure_device().await.inspect_err(|e| {
-            log::error!("Failed to initialize USB HID device {}: {:?}", self.id, e)
-        }) else {
+    pub(crate) async fn run(mut self) -> hootux::task::TaskResult {
+        let Ok((input_size, output_size, _feature_size)) =
+            self.configure_device().await.inspect_err(|e| {
+                log::error!("Failed to initialize USB HID device {}: {:?}", self.id, e)
+            })
+        else {
             return hootux::task::TaskResult::Error;
         };
-        loop {
-            return hootux::task::TaskResult::ExitedNormally;
+        log::info!("Initialized USB HID device");
+
+        match self.mainloop(input_size, output_size).await {
+            Ok(_) => hootux::task::TaskResult::ExitedNormally,
+            Err(IoError::NotPresent) => hootux::task::TaskResult::StoppedExternally, // Device is no longer attached/present
+            Err(e) => {
+                log::error!("HID device stopped: Reason {e:?}");
+                hootux::task::TaskResult::Error
+            }
         }
     }
 
-    async fn configure_device(&self) -> Result<(), IoError> {
+    async fn mainloop(&mut self, input_size: usize, _output_size: usize) -> Result<(), IoError> {
+        let mut input_buffer: DmaBuff = {
+            let mut t = Vec::new();
+            t.resize(input_size, 0);
+            t.into()
+        };
+        let Some(input_endpoint) = self.inner.read().await.in_endpoint.upgrade() else {
+            return Err(IoError::NotPresent);
+        };
+        // todo: maybe add second buffer so we can alternate between them so one is pending while we parse the new data.
+        loop {
+            let (buff, len, status) = input_endpoint
+                .new_string(input_buffer, usb::ehci::StringInterruptConfiguration::End)
+                .await
+                .complete();
+
+            match status {
+                Ok(_) => {}
+                Err(()) => {
+                    log::error!("Encountered error: Device halted");
+                    return Err(IoError::MediaError);
+                }
+            }
+            input_buffer = buff;
+
+            // This must expect to errors, especially when Usage Pages aare not supported.
+            // Errors should be handled downstream, but we still need to know about them.
+            let _ = self
+                .handle_input(&input_buffer[..len])
+                .await
+                .inspect_err(|e| log::trace!("Got error {e:?} while parsing report"));
+        }
+    }
+
+    async fn configure_device(&self) -> Result<(usize, usize, usize), IoError> {
         let mut driver_state = self.inner.write().await;
+        let mut report_sizes = None;
 
         macro_rules! devctl {
             () => {{
@@ -303,7 +382,45 @@ impl DriverRuntime {
                 }
             }
         }
-        Ok(())
+
+        driver_state.reload_pipe();
+        let rs = report_sizes.ok_or(IoError::NotPresent);
+        let minor_num = ID_DISPENSER.alloc_id().as_int().1;
+        driver_state.minor_number = Some(minor_num);
+
+        rs
+    }
+
+    /// Passes `data` to all interfaces until one successfully handles it.
+    async fn handle_input(&self, data: &[u8]) -> Result<(), IoError> {
+        let mut lr = self.inner.write().await;
+        let pipe = lr.pipe.clone();
+
+        for i in lr.hid_interfaces.iter_mut() {
+            match i.parse_report(data, &pipe).await {
+                Ok(_) => return Ok(()),
+                Err(_) => {}
+            }
+        }
+        log::trace!("No interface for report");
+        Err(IoError::NotSupported)
+    }
+
+    /// Returns maximum size of (input, output, feature) descriptors.
+    fn resolve_interface_sizes(report: &hidreport::ReportDescriptor) -> (usize, usize, usize) {
+        let mut input = 0;
+        for i in report.input_reports() {
+            input = input.max(i.size_in_bytes());
+        }
+        let mut output = 0;
+        for i in report.output_reports() {
+            output = output.max(i.size_in_bytes());
+        }
+        let mut feature = 0;
+        for i in report.feature_reports() {
+            feature = feature.max(i.size_in_bytes());
+        }
+        (input, output, feature)
     }
 }
 
@@ -337,7 +454,6 @@ struct HidPipeInner {
             hootux::task::util::MessageFuture<hootux::task::util::Sender, (DmaBuff, usize)>,
         )>,
     >,
-    driver_state: Arc<DriverState>,
 
     /// Counts the number of file objects that have opened this file for reading.
     open_read: core::sync::atomic::AtomicUsize,
@@ -349,6 +465,9 @@ struct HidPipeInner {
 
     /// Contains interfaces supported by this file.
     interfaces: alloc::collections::BTreeSet<u32>,
+
+    // file metadata
+    minor_num: usize,
 }
 
 struct QueuedOp {
@@ -359,6 +478,17 @@ struct QueuedOp {
 }
 
 impl HidPipeInner {
+    const fn new(minor_num: usize) -> Self {
+        Self {
+            pending: async_lock::Mutex::new(Vec::new()),
+            open_read: core::sync::atomic::AtomicUsize::new(0),
+            serial: core::sync::atomic::AtomicUsize::new(0),
+            queued: spin::Mutex::new(alloc::collections::VecDeque::new()),
+            interfaces: alloc::collections::BTreeSet::new(),
+            minor_num,
+        }
+    }
+
     /// Sends the character to all file objects. If the character cannot be written into all file
     /// objects immediately it will be queued until it is received by all open file objects.
     async fn send_op(&self, payload: &[u8], interface_index: u32) {
