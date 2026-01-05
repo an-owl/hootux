@@ -1385,10 +1385,22 @@ impl TransactionString {
             }
             TransactionStringMetadata::Control => {
                 if !self.str.last().unwrap().get_config().active() {
-                    (TransactionStringState::Completed, false)
+                    return (TransactionStringState::Completed, false);
                 } else {
-                    (TransactionStringState::None, false)
+                    for (i, qtd) in self.str.iter().enumerate() {
+                        if qtd.is_active() {
+                            return (TransactionStringState::None, false);
+                        } else if qtd.get_config().error() {
+                            log::error!(
+                                "Command pipe qTD {i} completed with error - status bits: {:#010b}",
+                                qtd.get_config().0 & 0xff
+                            );
+                            return (TransactionStringState::Error, true);
+                        }
+                    }
                 }
+                log::debug!("How did we get here?");
+                panic!("How did we get here?")
             }
         }
     }
