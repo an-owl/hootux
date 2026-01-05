@@ -9,7 +9,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "94476c7ef97af4c4d998b3f422c1b01d5211aad57c80ed200baf148d1f1efab6"
 dependencies = [
  "bit_field",
- "bitflags 2.9.1",
+ "bitflags 2.10.0",
  "log",
 ]
 
@@ -20,7 +20,7 @@ dependencies = [
  "async-lock",
  "ata",
  "atomic",
- "bitflags 2.9.1",
+ "bitflags 2.10.0",
  "cast_trait_object",
  "futures",
  "hootux",
@@ -44,7 +44,7 @@ dependencies = [
 name = "ata"
 version = "0.1.0"
 dependencies = [
- "bitflags 2.9.1",
+ "bitflags 2.10.0",
  "num_enum 0.6.1",
 ]
 
@@ -1150,7 +1150,7 @@ version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4922792855b1bce30997fbaa5418597902c278a92d20dfe348e6f062c3bd861d"
 dependencies = [
- "bitflags 2.9.1",
+ "bitflags 2.10.0",
  "rustversion",
  "x86",
 ]
@@ -1170,7 +1170,7 @@ version = "0.27.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "89ee9c34c612d45735fef4c478450cd2a1e64e59ad1e5988e5024af53914a854"
 dependencies = [
- "bitflags 2.9.1",
+ "bitflags 2.10.0",
  "log",
  "ptr_meta",
  "ucs2",
@@ -1196,7 +1196,7 @@ version = "0.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "efa8716f52e8cab8bcedfd5052388a0f263b69fe5cc2561548dc6a530678333c"
 dependencies = [
- "bitflags 2.9.1",
+ "bitflags 2.10.0",
  "ptr_meta",
  "uguid",
 ]
@@ -1207,7 +1207,7 @@ version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b463030b802e1265a3800fab24df95d3229c202c2e408832a206f05b4d1496ca"
 dependencies = [
- "bitflags 2.9.1",
+ "bitflags 2.10.0",
  "ptr_meta",
  "uguid",
 ]
@@ -1242,7 +1242,7 @@ version = "0.1.0"
 dependencies = [
  "async-lock",
  "bitfield",
- "bitflags 2.9.1",
+ "bitflags 2.10.0",
  "cast_trait_object",
  "common",
  "derivative",
@@ -1262,7 +1262,7 @@ name = "usb-cfg"
 version = "0.1.0"
 dependencies = [
  "bitfield",
- "bitflags 2.9.1",
+ "bitflags 2.10.0",
 ]
 
 [[package]]
@@ -1271,9 +1271,12 @@ version = "0.1.0"
 dependencies = [
  "async-lock",
  "cast_trait_object",
- "hid-report",
+ "futures-util",
+ "hid",
+ "hidreport",
  "hootux",
  "log",
+ "spin 0.10.0",
  "usb",
  "usb-cfg",
 ]
@@ -1348,7 +1351,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0f042214de98141e9c8706e8192b73f56494087cc55ebec28ce10f26c5c364ae"
 dependencies = [
  "bit_field",
- "bitflags 2.9.1",
+ "bitflags 2.10.0",
  "rustversion",
  "volatile 0.4.6",
 ]
