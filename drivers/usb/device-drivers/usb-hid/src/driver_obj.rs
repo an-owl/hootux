@@ -142,7 +142,7 @@ impl SysfsDirectory for DriverStateFile {
                 };
                 t.to_file().map(|e| Box::new(e) as Box<dyn SysfsFile>)
             }
-            "if0" => {
+            "if1" => {
                 let pi = hootux::task::util::block_on!(core::pin::pin!(self.inner.read()))
                     .pipe
                     .clone();
