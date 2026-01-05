@@ -167,26 +167,6 @@ impl KeyboardStateMachine {
         Self([0; 2])
     }
 
-    /// USB does not pass state changes like PS/2, it gives us the whole state each time.
-    /// So we do not have an "update" fn. Instead, we just rebuild the whole state, and compare
-    /// the old and new states to send it down the pipe.
-    fn from_iter(iter: impl IntoIterator<Item = u8>) -> Self {
-        let mut this = Self::empty();
-
-        for mut char in iter {
-            let word = if char > 128 {
-                char -= 128;
-                &mut this.0[1]
-            } else {
-                &mut this.0[0]
-            };
-
-            *word |= 1 << char;
-        }
-
-        this
-    }
-
     /// Sets the first one bit to zero, returns its position.
     fn flip_first_bit(&mut self) -> Option<u8> {
         let pos = self.0[0].trailing_zeros();
