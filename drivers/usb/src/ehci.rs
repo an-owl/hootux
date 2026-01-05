@@ -852,12 +852,19 @@ impl EndpointQueueInner {
         let current_addr = t.current_qtd();
         let mut rc = false;
 
-        while let Some(i) = self.work.pop_front() {
+        let mut current = 0u32;
+        let mut pull = current;
+        for i in self.work.iter_mut() {
+            current += 1;
             match i.evaluate_state(current_addr) {
                 (TransactionStringState::Completed, brk) => {
+                    pull = current;
                     log::trace!("Completion on {:?}", self.target);
                     rc = true;
-                    i.complete();
+
+                    // Replaces `i` with empty transaction string, which is then completed.
+                    // Empty TransactionString is will be removed after loop completes.
+                    core::mem::replace(i, TransactionString::empty()).complete();
                     if brk {
                         break;
                     }
@@ -875,6 +882,9 @@ impl EndpointQueueInner {
                 }
                 _ => {}
             }
+        }
+        for _ in 0..pull {
+            self.work.pop_front();
         }
         rc
     }
