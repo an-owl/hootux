@@ -877,8 +877,10 @@ impl EndpointQueueInner {
                     }
                 }
                 (TransactionStringState::Error, _) => {
+                    pull = current;
                     log::error!("USB error on {:?}", self.target);
-                    todo!(); // fixme: Remove this, errors should be handled by the device driver.
+                    core::mem::replace(i, TransactionString::empty()).complete();
+                    rc = true;
                 }
                 _ => {}
             }
