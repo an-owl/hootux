@@ -712,7 +712,7 @@ pub mod frontend {
                         },
                         pid,
                         descriptor.max_packet_size.max_packet_size() as u32,
-                        descriptor.interval as u32,
+                        1 << (descriptor.interval - 1),
                     );
 
                     EndpointWrapper::Interrupt(ep)

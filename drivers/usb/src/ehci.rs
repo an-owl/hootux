@@ -510,11 +510,9 @@ impl Ehci {
             unreachable!()
         };
         for (i, ptr) in periodic.iter().enumerate() {
-            let long_period = (i >> 3) as u32;
-
             let Some(head) = self.periodic_queue_heads.iter().rfind(|&e| {
                 // If `long_period` is a multiple of the `e.rate/8` then we place it as the first entry in the list.
-                long_period.checked_rem(e.rate / 8).unwrap_or(0) == 0
+                (i as u32).checked_rem(e.rate / 8).unwrap_or(0) == 0
             }) else {
                 continue;
             };
