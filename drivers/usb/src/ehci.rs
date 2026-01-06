@@ -1708,6 +1708,13 @@ impl InterruptWorker {
         let parent = self.parent.upgrade().unwrap();
         let parent = parent.lock_arc().await;
         let mut found_int = false;
+
+        for i in &parent.periodic_queue_heads {
+            if i.endpoint.check_state() {
+                found_int = true;
+            }
+        }
+
         for i in &parent.async_list {
             if i.check_state() {
                 found_int = true
