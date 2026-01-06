@@ -565,7 +565,7 @@ impl Ehci {
 
     /// Drops periodic endpoints from the execution list.
     ///
-    /// When this fn fn returns `Err(())` the periodic list failed to stop. Endpoints
+    /// When this fn returns `Err(())` the periodic list failed to stop.
     pub async fn drop_periodic_endpoints(
         &mut self,
         endpoints: impl Iterator<Item = &PeriodicEndpointQueue>,
