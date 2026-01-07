@@ -1217,6 +1217,7 @@ impl TransactionString {
         interrupt: StringInterruptConfiguration,
     ) -> Self {
         let len = payload.len();
+        // qTD pages are 4K aligned, so the pointer must be aligned down and the offset set to `offset_into_initial`
         let offset_into_initial = (&raw const payload[0]) as usize & PAGE_SIZE - 1;
 
         let mut prd = payload
@@ -1254,6 +1255,7 @@ impl TransactionString {
                 qtd.set_buffer(i, prd.next().expect(BOUNDS_ERR))
             }
             cursor += qtd_len_bytes;
+            qtd.set_data_len(qtd_len_bytes as u32);
 
             let mut b = Box::<QueueElementTransferDescriptor, DmaAlloc>::new_uninit_in(
                 DmaAlloc::new(hootux::mem::MemRegion::Mem32, 32),
