@@ -659,6 +659,12 @@ impl Drop for Ehci {
     }
 }
 
+// SAFETY: This is a bit sketchy, technically it does violate synchronization rules.
+// AsyncDoorbell requires access to `Ehci` but only uses it to set the async doorbell enable, which
+// is only access by this type and is guarded with a semaphore
+// No other values are accessed.
+unsafe impl Send for AsyncDoorbell<'_> {}
+
 /// The EndpointQueue maintains the state of queued operations for asynchronous jobs.
 ///
 /// The EndpointQueue operates using [TransactionString]'s, which each describes a queued operation.
