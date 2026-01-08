@@ -1384,7 +1384,6 @@ impl TransactionString {
                     } else if !qtd.is_active() && (config.get_expected_size() != 0) {
                         return (TransactionStringState::Completed, false);
                     } else if !qtd.is_active() && config.get_interrupt_on_complete() {
-                        log::debug!("Config {config:?}");
                         rc = TransactionStringState::Interrupt
                     } else if config.active() && qtd_phys_addr != last_qtd && i == 0 {
                         // This detects if the last QTD transitioned to the alternate QTD instead of this one.
