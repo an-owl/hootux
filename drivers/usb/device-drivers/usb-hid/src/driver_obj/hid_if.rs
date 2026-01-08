@@ -117,7 +117,7 @@ impl HidInterface for BaseKeyboardIf {
                     continue;
                 };
                 let data: u32 = data.into();
-                let state = data != 1;
+                let state = data != 0;
                 if state {
                     curr_state.set_bit(Into::<u16>::into(field.usage.usage_id) as u8);
                 }
