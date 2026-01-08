@@ -1290,6 +1290,11 @@ impl TransactionString {
             string.push(b);
         }
 
+        // First qtd must set offset into buffer
+        if let Some(qtd) = string.get_mut(0) {
+            qtd.set_offset(offset_into_initial as u32);
+        }
+
         match interrupt {
             StringInterruptConfiguration::Never => {}
             StringInterruptConfiguration::End => {
