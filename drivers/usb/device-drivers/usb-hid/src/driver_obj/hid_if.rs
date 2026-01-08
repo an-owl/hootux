@@ -128,6 +128,9 @@ impl HidInterface for BaseKeyboardIf {
                     break;
                 };
                 let key: u32 = t.into();
+                if key == 0 {
+                    break; // `0` is EOF
+                }
                 curr_state.set_bit(key as u8);
             }
 
