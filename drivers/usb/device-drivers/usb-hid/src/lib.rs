@@ -14,6 +14,7 @@ const USB_HID_CLASS: u8 = 0x03;
 
 pub mod descriptors;
 mod driver_obj;
+mod requests;
 
 pub fn init() {
     hootux::task::run_task(Box::pin(init_inner()))
