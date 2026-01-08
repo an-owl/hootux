@@ -206,7 +206,10 @@ impl DriverRuntime {
                 log::error!("HID device stopped: Reason {e:?}");
                 hootux::task::TaskResult::Error
             }
-        }
+        };
+
+        self.shutdown().await;
+        rc
     }
 
     async fn mainloop(&mut self, input_size: usize, _output_size: usize) -> Result<(), IoError> {
@@ -443,6 +446,11 @@ impl DriverRuntime {
             feature = feature.max(i.size_in_bytes());
         }
         (input, output, feature)
+    }
+
+    async fn shutdown(self) {
+        let mut l = self.inner.write().await;
+        l.devctl.take().unwrap().shutdown().await;
     }
 }
 
