@@ -187,7 +187,19 @@ impl DriverRuntime {
         };
         log::info!("Initialized USB HID device");
 
-        match self.mainloop(input_size, output_size).await {
+        let mut l = self.inner.write().await;
+        let Some(ref mut devctl) = l.devctl else {
+            unreachable!()
+        };
+        let command = crate::requests::Request::SetProtocol {
+            interface: 0,
+            protocol: crate::requests::Protocol::Boot,
+        };
+        // This is a class specific request, so is always safe.
+        unsafe { devctl.send_command(command.into(), None).await };
+        drop(l);
+
+        let rc = match self.mainloop(input_size, output_size).await {
             Ok(_) => hootux::task::TaskResult::ExitedNormally,
             Err(IoError::NotPresent) => hootux::task::TaskResult::StoppedExternally, // Device is no longer attached/present
             Err(e) => {
