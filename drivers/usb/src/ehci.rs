@@ -763,11 +763,12 @@ impl EndpointQueueInner {
         payload: DmaBuff,
         int_mode: StringInterruptConfiguration,
     ) -> impl Future<Output = StringCompletion> + use<> {
-        let mut st = TransactionString::new(payload, self.packet_size, int_mode);
+        let mut st = TransactionString::new(payload, self.packet_size, int_mode, self.pid);
         let fut = st.get_future();
         if let Some(last) = self.work.get_mut(self.work.len() - 1) {
             // SAFETY: Self ensures that the string is either run to completion or safely removed.
             unsafe { last.append_string(&st) }
+            self.work.push_back(st);
             fut
         } else {
             let t = self.terminator.as_mut().unwrap();
@@ -776,8 +777,10 @@ impl EndpointQueueInner {
                 .unwrap()
                 .try_into()
                 .unwrap();
+
             // SAFETY: addr is guaranteed to point to a valid QTD
-            unsafe { t.set_next(Some(addr)) };
+            unsafe { self.exit_idle_into(addr) };
+            self.work.push_back(st);
             fut
         }
     }
@@ -1221,6 +1224,7 @@ impl TransactionString {
         mut payload: DmaBuff,
         transaction_len: u32,
         interrupt: StringInterruptConfiguration,
+        pid: crate::PidCode,
     ) -> Self {
         let len = payload.len();
         // qTD pages are 4K aligned, so the pointer must be aligned down and the offset set to `offset_into_initial`
@@ -1250,6 +1254,8 @@ impl TransactionString {
             let peek_last = qtd_pages == 5 && qtd_len_bytes / PAGE_SIZE == 4; // if qtd_pages is rounded up
 
             let mut qtd = QueueElementTransferDescriptor::new();
+
+            qtd.set_pid(pid);
 
             for i in 0..qtd_pages {
                 if i == 5 && peek_last {
