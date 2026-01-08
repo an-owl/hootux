@@ -1386,11 +1386,12 @@ impl TransactionString {
                         return (TransactionStringState::Completed, false);
                     }
                     // We have checked the last QTD
-                    if qtd_phys_addr == last_qtd {
-                        return (rc, true);
-                    } else if i == len {
+
+                    if i + 1 == len {
                         // this is the last qtd in this string. If we have made it here then this string has been completed.
                         return (TransactionStringState::Completed, false);
+                    } else if qtd_phys_addr == last_qtd {
+                        return (rc, true);
                     }
                 }
                 panic!("Evaluate state managed to escape the loop")
