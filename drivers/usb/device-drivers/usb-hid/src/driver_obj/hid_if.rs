@@ -263,7 +263,7 @@ fn usb_2_hid(usb_key: u16) -> Result<KeyGroup, IoError> {
             Err(IoError::MediaError)
         }
         char_key @ 4..=0x1d => {
-            const CHAR_OFFSET: u16 = ('A' as u16) - 4;
+            const CHAR_OFFSET: u16 = ('a' as u16) - 4;
             Ok(KeyGroup::MainBody((CHAR_OFFSET + char_key) as u8 as char))
         }
         num_key @ 0x1e..=0x26 => {
