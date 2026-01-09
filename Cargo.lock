@@ -125,7 +125,7 @@ checksum = "812e12b5285cc515a9c72a5c1d3b6d46a19dac5acfef5265968c166106e31dd3"
 [[package]]
 name = "bitmap-fontgen"
 version = "0.1.0"
-source = "git+https://github.com/an-owl/bitmap-fontgen#b1a357c74e757491d325aa3b8b4ef5551c541818"
+source = "git+https://github.com/an-owl/bitmap-fontgen#4c28e024b979cbb0669e57fa497436c0c38ee4f7"
 dependencies = [
  "bdf",
  "phf",

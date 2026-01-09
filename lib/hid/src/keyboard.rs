@@ -62,12 +62,12 @@ pub enum ModifierKey {
 #[repr(u32)]
 #[derive(Ord, PartialOrd, Eq, PartialEq, Copy, Clone, Debug)]
 pub enum ControlKey {
-    Escape,
+    Escape, // \u{0010}
 
-    Left,
-    Right,
-    Up,
-    Down,
+    Left,  // ←
+    Right, // →
+    Up,    // ↑
+    Down,  // ↓
 
     Insert,
     PageUp,
@@ -83,13 +83,13 @@ pub enum ControlKey {
     CapsLock,
 
     Application,
-    Power,
+    Power, // ⏻
     Execute,
     Help,
     Menu,
     Select,
-    Stop,
-    Again,
+    Stop,  // ⏹
+    Again, // ⎌
     Undo,
     Cut,
     Copy,
@@ -154,7 +154,7 @@ pub enum ControlKey {
     MemoryMultiply,
     MemoryDivide,
 
-    Clear,
+    Clear, // ⎚ ?
     ClearEntry,
 
     Binary,
