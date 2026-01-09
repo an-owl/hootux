@@ -522,14 +522,13 @@ impl HidPipeInner {
     /// Sends the character to all file objects. If the character cannot be written into all file
     /// objects immediately it will be queued until it is received by all open file objects.
     async fn send_op(&self, payload: &[u8], interface_index: u32) {
-        let mut count = self.serial.load(Ordering::Relaxed);
         let mut queue = self.pending.lock().await;
+        let mut count = self.open_read.load(Ordering::Relaxed) - queue.len();
         self.serial.fetch_add(1, Ordering::Relaxed);
 
+        // Send to pending FOs
         for (mut buffer, select, tx) in queue.extract_if(.., |e| e.1.is_interface(interface_index))
         {
-            count -= 1;
-
             let mut tgt = &mut buffer[..];
             if select.is_multiple() {
                 // prepend interface number for multiple interfaces
@@ -540,6 +539,9 @@ impl HidPipeInner {
             tgt[0..len].copy_from_slice(&payload[..len]);
             tx.complete((buffer, len));
         }
+
+        // Number of FOs that missed this op.
+        // All ops must be received by all FOs
 
         if count > 0 {
             self.pend_op(payload, interface_index, count)
@@ -794,6 +796,10 @@ impl Read<u8> for HidPipe {
                     }
                 } else {
                     if !fa.interfaces.contains(&(hid_index.bits() as u32)) {
+                        {
+                            let v = fa.interfaces.iter().map(|e| *e).collect::<Vec<_>>();
+                            log::debug!("Supported IFs {:?}", &v[..]);
+                        }
                         return Err((IoError::NotSupported, buff, 0));
                     }
                 }
