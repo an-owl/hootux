@@ -59,6 +59,10 @@ impl CtlTransfer {
         // SAFETY: This is safe, all invariants of u8 are valid
         unsafe { core::mem::transmute(self) }
     }
+
+    pub fn is_rx_command(&self) -> bool {
+        self.request_type.get_data_direction()
+    }
 }
 
 impl CtlTransfer {
@@ -128,7 +132,7 @@ impl CtlTransfer {
         Self {
             request_type: header,
             request: RequestCode::GetDescriptor as u8,
-            value: u16::from_le_bytes([index, D::DESCRIPTOR_TYPE as u8]),
+            value: u16::from_le_bytes([index, D::DESCRIPTOR_TYPE.0]),
             index: 0,
             length: len.unwrap_or(size_of::<D>() as u16),
         }
@@ -274,7 +278,7 @@ bitfield! {
 
     from Recipient, _, recipent: 4,0;
     from RequestType, _, target_type: 6,5;
-    from DataDirection, _, data_direction: 7;
+    from DataDirection, get_data_direction, data_direction: 7;
 
 }
 
@@ -282,7 +286,7 @@ bitfield! {
 pub enum RequestType {
     #[default]
     Standard = 0,
-    Interface = 1,
+    Class = 1,
     Vendor = 2,
 }
 
@@ -322,15 +326,19 @@ pub enum RequestCode {
 }
 
 #[derive(Debug, Eq, PartialEq, Copy, Clone)]
-pub enum DescriptorType {
-    Device = 1,
-    Configuration = 2,
-    String = 3,
-    Interface = 4,
-    Endpoint = 5,
-    DeviceQualifier = 6,
-    OtherSpeedConfiguration = 7,
-    InterfacePower = 8,
+#[repr(transparent)]
+pub struct DescriptorType(pub u8);
+
+#[allow(non_upper_case_globals)]
+impl DescriptorType {
+    pub const Device: Self = Self(1);
+    pub const Configuration: Self = Self(2);
+    pub const String: Self = Self(3);
+    pub const Interface: Self = Self(4);
+    pub const Endpoint: Self = Self(5);
+    pub const DeviceQualifier: Self = Self(6);
+    pub const OtherSpeedConfiguration: Self = Self(7);
+    pub const InterfacePower: Self = Self(8);
 }
 
 #[non_exhaustive]

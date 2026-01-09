@@ -216,6 +216,8 @@ fn init_static_drivers() {
     hid_ps2::init();
     #[cfg(feature = "usb")]
     usb::init();
+    #[cfg(feature = "usb-hid")]
+    usb_hid::init();
 }
 
 #[cfg(not(test))]

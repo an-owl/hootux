@@ -234,7 +234,7 @@ impl EventFile {
         }
     }
 
-    fn notify_event(&self) {
+    pub fn notify_event(&self) {
         let slaves = core::mem::replace(&mut *self.slaves.lock(), Vec::new());
         for slave in slaves {
             slave.ready()
@@ -270,7 +270,7 @@ impl File for EventFile {
     fn method_call<'f, 'a: 'f, 'b: 'f>(
         &'b self,
         method: &str,
-        arguments: &'a (dyn Any + Send + Sync + 'a),
+        arguments: &'a (dyn Any + Send + Sync + 'static),
     ) -> IoResult<'f, MethodRc> {
         impl_method_call!(method, arguments => async notify_event())
     }

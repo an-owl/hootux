@@ -11,20 +11,20 @@ use hootux::fs::sysfs::{SysfsDirectory, SysfsFile};
 use hootux::fs::vfs::MajorNum;
 use hootux::fs::{IoError, IoResult};
 use hootux::mem::dma::DmaBuff;
-use usb_cfg::descriptor::Descriptor;
+use usb_cfg::descriptor::{BaseDescriptor, Descriptor};
 
 #[derive(Clone)]
 #[file]
-pub(super) struct UsbDeviceFile {
+pub struct UsbDeviceFile {
     major_num: MajorNum,
     address: u8,
     usb_device_accessor: alloc::sync::Weak<UsbDeviceAccessor>,
 }
 
 impl UsbDeviceFile {
-    async fn acquire_ctl(
+    pub async fn acquire_ctl(
         &self,
-        driver: &Box<dyn crate::UsbDeviceDriver>,
+        driver: &dyn crate::UsbDeviceDriver,
     ) -> Result<frontend::UsbDevCtl, IoError> {
         let acc = self
             .usb_device_accessor
@@ -39,7 +39,7 @@ impl UsbDeviceFile {
             );
             return Err(IoError::AlreadyExists);
         }
-        *acc_driver = Some(crate::UsbDeviceDriver::clone(&**driver));
+        *acc_driver = Some(crate::UsbDeviceDriver::clone(driver));
         Ok(frontend::UsbDevCtl {
             acc: alloc::sync::Arc::downgrade(&acc),
             endpoints,
@@ -70,14 +70,6 @@ impl File for UsbDeviceFile {
 
     fn len(&self) -> IoResult<'_, u64> {
         async { Ok(hootux::fs::sysfs::SysfsDirectory::entries(self) as u64) }.boxed()
-    }
-
-    fn method_call<'f, 'a: 'f, 'b: 'f>(
-        &'b self,
-        method: &str,
-        arguments: &'a (dyn Any + Send + Sync + 'a),
-    ) -> IoResult<'f, MethodRc> {
-        impl_method_call!(method,arguments => acquire_ctl(Box<UsbDeviceDriver>))
     }
 }
 
@@ -235,6 +227,10 @@ impl UsbDeviceAccessor {
         };
         this.controller = alloc::sync::Arc::downgrade(&controller);
         l.port_files.insert(portnum, alloc::sync::Arc::new(this));
+        hootux::fs::sysfs::SysFsRoot::new()
+            .bus
+            .event_file()
+            .notify_event()
     }
 
     pub(super) fn get_file(self: &alloc::sync::Arc<Self>) -> Box<UsbDeviceFile> {
@@ -304,9 +300,15 @@ impl SysfsFile for ClassFinderFle {}
 
 impl Read<u8> for ClassFinderFle {
     /// This implementation allows the caller to determine whether the device implements a certain class.
-    /// the first 3 bytes of `pos` (le) indicate the class to be searched for. The fourth byte
-    /// contains a bitmap indicating the descriptors at which this a match can be found.
-    /// All other bits in the fourth byte are reserved and will return [IoError::EndOfFile].
+    /// the first 3 bytes of `pos` (le) indicate the class to be searched for. The lower bits of the
+    /// fourth byte contains a bitmap indicating the descriptors at which this a match can be found.
+    /// Bits 6..7 of the fourth byte indicate which class fields must be matched.
+    ///
+    /// - A value of `0` will match class subclass and protocol
+    /// - A value of `1` will match class and subclass.
+    /// - A value of `2` will match only match the class.
+    ///
+    /// All other values in the fourth byte are reserved and will return [IoError::EndOfFile].
     ///
     /// ``` ignore
     /// # use hootux::fs::file::NormalFile;
@@ -390,7 +392,7 @@ impl Read<u8> for ClassFinderFle {
                 let len = buff.len(); // todo this is the wrong len
                 return Err((IoError::MediaError, buff, len));
             };
-            if dev_descriptor.class() == class && descriptors.contains(DescriptorBitmap::DEVICE) {
+            if dev_descriptor.class()[descriptors.class_len()] == class[descriptors.class_len()] && descriptors.contains(DescriptorBitmap::DEVICE) {
                 // SAFETY: This is safe because `DmaTarget::data_ptr()` must be writable.
                 (&mut *buff)[0..2].copy_from_slice(&[0, 1]);
                 return Ok((buff, 2));
@@ -403,10 +405,13 @@ impl Read<u8> for ClassFinderFle {
 
             for configuration in 0..dev_descriptor.num_configurations {
                 let cfg_raw = get_descriptor_full!(usb_cfg::descriptor::ConfigurationDescriptor,configuration);
-                let Some(cfg_descriptor): Option<&usb_cfg::descriptor::ConfigurationDescriptor> = usb_cfg::descriptor::Descriptor::from_raw(&cfg_raw) else { return Err((IoError::MediaError, buff, 0)) };
+                let Some(cfg_descriptor): Option<&usb_cfg::descriptor::ConfigurationDescriptor> = Descriptor::from_raw(&cfg_raw) else { return Err((IoError::MediaError, buff, 0)) };
+
                 // SAFETY: We fetch the max size for a descriptor, so we definitely have the whole thing & it has not been modified.
-                for interface_desc in unsafe { cfg_descriptor.iter() } {
-                    if descriptors.contains(DescriptorBitmap::INTERFACE) && interface_desc.class() == class {
+                // `cast` is guaranteed by iter
+                for interface_descriptor in unsafe { cfg_descriptor.iter().filter(|h| h.cast::<usb_cfg::descriptor::DeviceDescriptor>().is_some()) } {
+                    let Some(BaseDescriptor::Interface(interface_descriptor)) = interface_descriptor.base_descriptor() else {unreachable!()};
+                    if descriptors.contains(DescriptorBitmap::INTERFACE) && interface_descriptor.class()[descriptors.class_len()] == class[descriptors.class_len()] {
                         (&mut *buff)[0..2].copy_from_slice(&[configuration, DescriptorBitmap::INTERFACE.bits()]);
                         return Ok((buff, 2));
                     }
@@ -433,6 +438,28 @@ bitflags::bitflags! {
     pub struct DescriptorBitmap: u8 {
         const DEVICE = 1;
         const INTERFACE = 1 << 1;
+        const MATCH_CLASS = 1 << 7;
+        const MATCH_SUBCLASS = 1 << 6;
+    }
+}
+
+impl DescriptorBitmap {
+    const fn class_len(&self) -> core::ops::Range<usize> {
+        if !self.contains(DescriptorBitmap::MATCH_CLASS)
+            && !self.contains(DescriptorBitmap::MATCH_SUBCLASS)
+        {
+            0..3
+        } else if !self.contains(DescriptorBitmap::MATCH_CLASS)
+            && self.contains(DescriptorBitmap::MATCH_SUBCLASS)
+        {
+            0..2
+        } else if self.contains(DescriptorBitmap::MATCH_CLASS)
+            && !self.contains(DescriptorBitmap::MATCH_SUBCLASS)
+        {
+            0..1
+        } else {
+            0..0 // invalid, will always cause EOF
+        }
     }
 }
 
@@ -461,11 +488,11 @@ impl Read<u8> for ConfigurationIo {
             let Some(acc) = self.usb_device_accessor.upgrade() else {
                 return Err((IoError::NotPresent, buff, 0));
             };
-            const DEVICE_DESCRIPTOR_ID: u8 = usb_cfg::DescriptorType::Device as u8;
-            const DEVICE_QUALIFIER_ID: u8 = usb_cfg::DescriptorType::DeviceQualifier as u8;
-            const CONFIGURATION_DESCRIPTOR_ID: u8 = usb_cfg::DescriptorType::Configuration as u8;
+            const DEVICE_DESCRIPTOR_ID: u8 = usb_cfg::DescriptorType::Device.0;
+            const DEVICE_QUALIFIER_ID: u8 = usb_cfg::DescriptorType::DeviceQualifier.0;
+            const CONFIGURATION_DESCRIPTOR_ID: u8 = usb_cfg::DescriptorType::Configuration.0;
             const OTHER_SPEED_CONFIGURATION: u8 =
-                usb_cfg::DescriptorType::OtherSpeedConfiguration as u8;
+                usb_cfg::DescriptorType::OtherSpeedConfiguration.0;
 
             let command = match pos.to_le_bytes() {
                 [0, DEVICE_DESCRIPTOR_ID, ..] => Vec::from(
@@ -545,6 +572,7 @@ impl Write<u8> for ConfigurationIo {
 
 pub mod frontend {
     use super::*;
+    use crate::ehci::PeriodicEndpointQueue;
     use alloc::sync::Arc;
     use core::task::Poll;
 
@@ -561,18 +589,8 @@ pub mod frontend {
         /// This may issue 2 transactions.
         pub async fn get_descriptor<T: usb_cfg::descriptor::RequestableDescriptor>(
             &mut self,
-            mut index: u8,
-        ) -> Result<Box<T>, IoError> {
-            let is_device = if core::any::TypeId::of::<T>()
-                == core::any::TypeId::of::<usb_cfg::descriptor::DeviceDescriptor>()
-                || core::any::TypeId::of::<T>()
-                    == core::any::TypeId::of::<usb_cfg::descriptor::DeviceQualifier>()
-            {
-                index = 0;
-                true
-            } else {
-                false
-            };
+            index: u8,
+        ) -> Result<Vec<u8>, IoError> {
             let base_len = size_of::<T>();
             let buffer = alloc::vec![0u8; base_len];
             let command = DmaBuff::from(Vec::from(
@@ -589,30 +607,26 @@ pub mod frontend {
                 return Err(IoError::MediaError);
             };
 
-            if is_device {
-                let op_len = u16::from_le_bytes((&b[2..3]).try_into().unwrap());
+            let op_len = u16::from_le_bytes((&b[2..=3]).try_into().unwrap());
 
-                let mut buffer: Vec<u8> = b.try_into().unwrap(); // Uses global, wont panic
-                buffer.resize(op_len as usize, 0);
-                let buffer = DmaBuff::from(buffer);
-                let ts = TransactionString::setup_transaction(
-                    DmaBuff::from(Vec::from(
-                        usb_cfg::CtlTransfer::get_descriptor::<T>(index, Some(op_len)).to_bytes(),
-                    )),
-                    Some((buffer, crate::PidCode::In)),
-                );
-                let (rc, _, Ok(_)) = acc.ctl_endpoint.append_cmd_string(ts).await.complete() else {
-                    return Err(IoError::MediaError);
-                };
-                b = rc;
-            }
+            let mut buffer: Vec<u8> = b.try_into().unwrap(); // Uses global, wont panic
+            buffer.resize(op_len as usize, 0);
+            let buffer = DmaBuff::from(buffer);
+            let ts = TransactionString::setup_transaction(
+                DmaBuff::from(Vec::from(
+                    usb_cfg::CtlTransfer::get_descriptor::<T>(index, Some(op_len)).to_bytes(),
+                )),
+                Some((buffer, crate::PidCode::In)),
+            );
+            let (rc, _, Ok(_)) = acc.ctl_endpoint.append_cmd_string(ts).await.complete() else {
+                return Err(IoError::MediaError);
+            };
+            b = rc;
 
-            if b[1] == T::DESCRIPTOR_TYPE as u8 {
+            if b[1] == T::DESCRIPTOR_TYPE.0 {
                 let mut v: Vec<u8> = b.try_into().unwrap();
                 v.shrink_to_fit();
-                let ptr = (&raw mut *v.leak()).cast::<T>();
-                // SAFETY: We have checked that this is T and that it is the correct size for T
-                Ok(unsafe { Box::from_raw(ptr) })
+                Ok(v)
             } else {
                 Err(IoError::MediaError)
             }
@@ -621,7 +635,7 @@ pub mod frontend {
         /// Sets the device's configuration to the `configuration`
         pub async fn set_configuration(&mut self, configuration: u8) -> Result<(), IoError> {
             let acc = self.acc.upgrade().ok_or(IoError::NotPresent)?;
-            if acc.configurations >= configuration {
+            if configuration > acc.configurations {
                 return Err(IoError::InvalidData);
             }
             let command =
@@ -638,7 +652,7 @@ pub mod frontend {
             Ok(())
         }
 
-        /// Configures an endpoint in the async list for the device.
+        /// Configures an endpoint for asynchronous or interrupt transactions.
         ///
         /// # Safety
         ///
@@ -647,6 +661,20 @@ pub mod frontend {
             &mut self,
             descriptor: &usb_cfg::descriptor::EndpointDescriptor,
         ) -> Result<Arc<EndpointQueue>, IoError> {
+            enum EndpointWrapper {
+                Async(Arc<EndpointQueue>),
+                Interrupt(PeriodicEndpointQueue),
+            }
+
+            impl EndpointWrapper {
+                fn as_endpoint(&self) -> &Arc<EndpointQueue> {
+                    match self {
+                        EndpointWrapper::Async(inner) => inner,
+                        EndpointWrapper::Interrupt(int) => &int.endpoint,
+                    }
+                }
+            }
+
             let acc = self.acc.upgrade().ok_or(IoError::NotPresent)?;
             let pid = if descriptor.attributes.transfer_type()
                 == usb_cfg::descriptor::EndpointTransferType::Control
@@ -660,18 +688,47 @@ pub mod frontend {
                 }
             };
             let dt_ctl = pid == crate::PidCode::Control;
-            let qh = EndpointQueue::new_async(
-                crate::Target {
-                    dev: acc.address,
-                    endpoint: descriptor.into(),
-                },
-                pid,
-                descriptor.max_packet_size.max_packet_size() as u32,
-                dt_ctl,
-            );
-            let qh = Arc::new(qh);
+
+            let ep = match descriptor.attributes.transfer_type() {
+                usb_cfg::descriptor::EndpointTransferType::Bulk
+                | usb_cfg::descriptor::EndpointTransferType::Control => {
+                    let qh = EndpointQueue::new_async(
+                        crate::Target {
+                            dev: acc.address,
+                            endpoint: descriptor.into(),
+                        },
+                        pid,
+                        descriptor.max_packet_size.max_packet_size() as u32,
+                        dt_ctl,
+                    );
+                    let qh = Arc::new(qh);
+                    EndpointWrapper::Async(qh)
+                }
+                usb_cfg::descriptor::EndpointTransferType::Interrupt => {
+                    let ep = EndpointQueue::new_periodic(
+                        crate::Target {
+                            dev: acc.address,
+                            endpoint: descriptor.into(),
+                        },
+                        pid,
+                        descriptor.max_packet_size.max_packet_size() as u32,
+                        1 << (descriptor.interval - 1),
+                    );
+
+                    EndpointWrapper::Interrupt(ep)
+                }
+                usb_cfg::descriptor::EndpointTransferType::Isochronous => {
+                    log::error!(
+                        "Called {}::{}::setup_endpoint() on Isochronous endpoint",
+                        module_path!(),
+                        core::any::type_name::<Self>()
+                    );
+                    return Err(IoError::InvalidData);
+                }
+            };
+
             match self.endpoints[descriptor.endpoint_address.endpoint() as usize]
-                .replace(qh.clone())
+                .replace(ep.as_endpoint().clone())
             {
                 None => {}
                 Some(old_head) => {
@@ -688,8 +745,17 @@ pub mod frontend {
                 .ok_or(IoError::NotPresent)?
                 .lock_arc()
                 .await;
-            ctl.insert_into_async(qh.clone());
-            Ok(qh)
+
+            match ep {
+                EndpointWrapper::Async(ref ep) => ctl.insert_into_async(ep.clone()),
+                EndpointWrapper::Interrupt(ref per) => {
+                    ctl.insert_into_periodic([per.clone()].into_iter())
+                        .await
+                        .map_err(|_| IoError::MediaError)?;
+                }
+            }
+
+            Ok(ep.as_endpoint().clone())
         }
 
         pub fn endpoint(&self, ep: impl Into<crate::Endpoint>) -> Option<Arc<EndpointQueue>> {
@@ -740,6 +806,78 @@ pub mod frontend {
                     .map(|arc| &**arc),
             )
             .await
+        }
+
+        /// Sends a generic command via the control pipe.
+        ///
+        /// # Safety
+        ///
+        /// Command that are defined in the USB serial bus specifications or any commands that
+        /// affect the generic device state may not be sent using this function.
+        pub async unsafe fn send_command(
+            &self,
+            command: usb_cfg::CtlTransfer,
+            buffer: Option<DmaBuff>,
+        ) -> (Option<DmaBuff>, Result<usize, IoError>) {
+            let Some(cmd_ep) = self
+                .acc
+                .upgrade()
+                .and_then(|e| Some(e.ctl_endpoint.clone()))
+            else {
+                return (buffer, Err(IoError::NotPresent));
+            };
+            let buffer_present = buffer.is_some();
+            if (command.data_len() == 0) == buffer_present {
+                log::debug!("Attempted to send command with invalid buffer");
+                return (buffer, Err(IoError::InvalidData));
+            } else if command.data_len() > buffer.as_ref().and_then(|b| Some(b.len())).unwrap_or(0)
+            {
+                log::debug!("Buffer was smaller than request size... Ignoring");
+            };
+
+            let pid = if command.is_rx_command() {
+                crate::PidCode::In
+            } else {
+                crate::PidCode::Out
+            };
+
+            let b = if let Some(buff) = buffer {
+                Some((buff, pid))
+            } else {
+                None
+            };
+
+            let cmd_ts =
+                TransactionString::setup_transaction(Vec::from(command.to_bytes()).into(), b);
+            let completion = cmd_ep.append_cmd_string(cmd_ts).await;
+            let (buffer, len, status) = completion.complete();
+            let status = match status {
+                Ok(crate::UsbError::RecoveredError) => {
+                    log::trace!("USB corrected error");
+                    Ok(len)
+                }
+                Ok(crate::UsbError::Ok) => Ok(len),
+                Err(()) => {
+                    log::error!("Device error: Halted");
+                    Err(IoError::MediaError)
+                }
+                Ok(crate::UsbError::Halted) => unreachable!(), // This is never returned by completion, Err(()) is used instead.
+            };
+            if buffer_present {
+                (Some(buffer), status)
+            } else {
+                (None, status) // Buffer is bogus, so this is fine to drop.
+            }
+        }
+
+        /// Returns a file object for self.
+        pub fn to_file(&self) -> Result<UsbDeviceFile, IoError> {
+            let accessor = self.acc.upgrade().ok_or(IoError::NotPresent)?;
+            Ok(UsbDeviceFile {
+                major_num: accessor.major_num,
+                address: accessor.address.into(),
+                usb_device_accessor: Arc::downgrade(&accessor),
+            })
         }
     }
 

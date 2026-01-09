@@ -34,6 +34,10 @@ pub struct Ehci {
     // At runtime callers can assume this is Some
     periodic_frame_list: Option<Box<PeriodicFrameList, DmaAlloc>>,
 
+    /// Periodic endpoints, this list contains the reverse order of execution of the periodic queues.
+    /// This must be sorted by the endpoints "period".
+    periodic_queue_heads: Vec<PeriodicEndpointQueue>,
+
     memory: InaccessibleAddr<[u8]>,
     address: u32,
     layout: core::alloc::Layout,
@@ -133,6 +137,7 @@ impl Ehci {
             address_bmp: 1,
             ports: port_vec.into_boxed_slice(),
             async_list: Vec::new(),
+            periodic_queue_heads: Vec::new(),
             periodic_frame_list: None,
             memory: InaccessibleAddr::new(hci_pointer),
             address: phys_address,
@@ -379,6 +384,11 @@ impl Ehci {
             cmd
         })
     }
+
+    /// Sets the periodic schedule execution. The periodic schedule execution will not stop immediately,
+    /// it will only stop on a periodic table entry boundary. Meaning it will only stop on a uframe*8 boundary.
+    ///
+    /// [Self::periodic_schedule_state] will return the current state of this bit.
     fn execute_periodic(&mut self, state: bool) {
         let regs = self.operational_registers;
         let cfg = volatile::map_field!(regs.usb_command);
@@ -386,6 +396,13 @@ impl Ehci {
             cmd.set_periodic_schedule_enable(state);
             cmd
         })
+    }
+
+    /// Returns whether the current state of the "periodic schedule enable" bit.
+    fn periodic_schedule_state(&self) -> bool {
+        let regs = self.operational_registers;
+        let cfg = volatile::map_field!(regs.usb_command);
+        cfg.read().periodic_schedule_enable()
     }
 
     fn controller_enable(&mut self, state: bool) {
@@ -396,7 +413,6 @@ impl Ehci {
             cmd
         })
     }
-
     // You know the music, it's time to dance.
     async fn drop_endpoints<'a, T: Iterator<Item = &'a EndpointQueue>>(&'a mut self, endpoints: T) {
         let sem = self.async_doorbell_mutex.acquire().await;
@@ -450,6 +466,130 @@ impl Ehci {
             !e.waiting_for_drop
                 .load(core::sync::atomic::Ordering::Relaxed)
         });
+    }
+
+    /// This will disable the periodic frame list, reconstruct the list then re-enable the list.
+    async fn rebuild_periodic_list(&mut self) -> Result<(), ()> {
+        self.execute_periodic(false);
+        if self.periodic_queue_heads.len() == 0 {
+            // No endpoints, just stop.
+            return Ok(());
+        }
+
+        // This *should* indicate 5ms of retires (which is intended), but this is not bound to an exit time.
+        // At the time of writing this should wait about 17ms before failing.
+        const RETRIES: usize = 5;
+        for i in 0..=RETRIES {
+            match i {
+                RETRIES => {
+                    log::error!(
+                        "EHCI {}: periodic list failed to stop ",
+                        self.major_num.get_raw()
+                    );
+                    return Err(());
+                }
+                n => {
+                    if !self.periodic_schedule_state() {
+                        if n > 2 {
+                            log::warn!(
+                                "EHCI {}: periodic schedule took longer than expected to stop",
+                                self.major_num.get_raw()
+                            );
+                        }
+                        break;
+                    }
+                    hootux::task::util::sleep(1).await
+                }
+            }
+        }
+
+        // SAFETY: Periodic schedule has been disabled.
+        unsafe { self.link_periodic_list() };
+
+        let Some(ref mut periodic) = self.periodic_frame_list else {
+            unreachable!()
+        };
+        for (i, ptr) in periodic.iter().enumerate() {
+            let Some(head) = self.periodic_queue_heads.iter().rfind(|&e| {
+                // If `long_period` is a multiple of the `e.rate/8` then we place it as the first entry in the list.
+                (i as u32).checked_rem(e.rate / 8).unwrap_or(0) == 0
+            }) else {
+                continue;
+            };
+
+            let head_addr = head.endpoint.head_addr();
+
+            ptr.set_address(head_addr);
+            ptr.set_type(ehci::frame_lists::FrameListLinkType::QueueHead);
+        }
+
+        // Dont wait for it, it'll start when its ready.
+        self.execute_periodic(true);
+        Ok(())
+    }
+
+    /// Links all periodic queues in order to be run.
+    ///
+    ///  # Safety
+    ///
+    /// The caller must ensure that the periodic frame list is not running.
+    unsafe fn link_periodic_list(&mut self) {
+        for i in (0..self.periodic_queue_heads.len()).rev() {
+            let this = &self.async_list[i];
+            let Some(next_index) = i.checked_sub(1) else {
+                this.terminate_horizontal();
+                return;
+            };
+            let next = &self.async_list[next_index];
+            this.set_next_endpoint_queue(&next);
+        }
+    }
+
+    /// Inserts `queues` into the periodic schedule and re-configures the periodic frame list.
+    ///
+    /// If this fn returns `Err(())` the controller failed to stop
+    pub async fn insert_into_periodic(
+        &mut self,
+        queues: impl Iterator<Item = PeriodicEndpointQueue>,
+    ) -> Result<(), ()> {
+        for queue in queues {
+            queue.set_bitmap();
+            let (Ok(entry) | Err(entry)) = self
+                .periodic_queue_heads
+                .binary_search_by(|f| f.rate.cmp(&queue.rate));
+            self.periodic_queue_heads.insert(entry, queue);
+        }
+
+        self.rebuild_periodic_list().await
+    }
+
+    /// Drops periodic endpoints from the execution list.
+    ///
+    /// When this fn returns `Err(())` the periodic list failed to stop.
+    pub async fn drop_periodic_endpoints(
+        &mut self,
+        endpoints: impl Iterator<Item = &PeriodicEndpointQueue>,
+    ) -> Result<(), ()> {
+        let mut dirty = false;
+        for endpoint in endpoints {
+            if let Some(index) = self
+                .periodic_queue_heads
+                .iter()
+                .position(|e| core::ptr::addr_eq(e.as_ref(), endpoint))
+            {
+                self.periodic_queue_heads.remove(index);
+                dirty = true;
+            } else {
+                log::warn!("Queue head at {endpoint:p} was not found",);
+            }
+        }
+
+        if dirty {
+            // Ignore error. There isn't
+            self.rebuild_periodic_list().await
+        } else {
+            Ok(())
+        }
     }
 }
 
@@ -518,6 +658,12 @@ impl Drop for Ehci {
         unsafe { alloc.deallocate(addr.cast(), self.layout) };
     }
 }
+
+// SAFETY: This is a bit sketchy, technically it does violate synchronization rules.
+// AsyncDoorbell requires access to `Ehci` but only uses it to set the async doorbell enable, which
+// is only access by this type and is guarded with a semaphore
+// No other values are accessed.
+unsafe impl Send for AsyncDoorbell<'_> {}
 
 /// The EndpointQueue maintains the state of queued operations for asynchronous jobs.
 ///
@@ -617,11 +763,12 @@ impl EndpointQueueInner {
         payload: DmaBuff,
         int_mode: StringInterruptConfiguration,
     ) -> impl Future<Output = StringCompletion> + use<> {
-        let mut st = TransactionString::new(payload, self.packet_size, int_mode);
+        let mut st = TransactionString::new(payload, self.packet_size, int_mode, self.pid);
         let fut = st.get_future();
         if let Some(last) = self.work.get_mut(self.work.len() - 1) {
             // SAFETY: Self ensures that the string is either run to completion or safely removed.
             unsafe { last.append_string(&st) }
+            self.work.push_back(st);
             fut
         } else {
             let t = self.terminator.as_mut().unwrap();
@@ -630,8 +777,10 @@ impl EndpointQueueInner {
                 .unwrap()
                 .try_into()
                 .unwrap();
+
             // SAFETY: addr is guaranteed to point to a valid QTD
-            unsafe { t.set_next(Some(addr)) };
+            unsafe { self.exit_idle_into(addr) };
+            self.work.push_back(st);
             fut
         }
     }
@@ -710,12 +859,19 @@ impl EndpointQueueInner {
         let current_addr = t.current_qtd();
         let mut rc = false;
 
-        while let Some(i) = self.work.pop_front() {
+        let mut current = 0u32;
+        let mut pull = current;
+        for i in self.work.iter_mut() {
+            current += 1;
             match i.evaluate_state(current_addr) {
                 (TransactionStringState::Completed, brk) => {
+                    pull = current;
                     log::trace!("Completion on {:?}", self.target);
                     rc = true;
-                    i.complete();
+
+                    // Replaces `i` with empty transaction string, which is then completed.
+                    // Empty TransactionString is will be removed after loop completes.
+                    core::mem::replace(i, TransactionString::empty()).complete();
                     if brk {
                         break;
                     }
@@ -728,11 +884,16 @@ impl EndpointQueueInner {
                     }
                 }
                 (TransactionStringState::Error, _) => {
+                    pull = current;
                     log::error!("USB error on {:?}", self.target);
-                    todo!(); // fixme: Remove this, errors should be handled by the device driver.
+                    core::mem::replace(i, TransactionString::empty()).complete();
+                    rc = true;
                 }
                 _ => {}
             }
+        }
+        for _ in 0..pull {
+            self.work.pop_front();
         }
         rc
     }
@@ -758,6 +919,32 @@ impl EndpointQueue {
                 data_toggle_ctl,
             )),
             waiting_for_drop: core::sync::atomic::AtomicBool::new(false),
+        }
+    }
+
+    /// Configures a new [PeriodicEndpointQueue]. Functionally this is the same as [Self] but includes extra metadata.
+    ///
+    /// # Panics
+    ///
+    /// `target` may not target either [DeviceAddress::Default] or endpoint 0.
+    /// `pid` may not be [PidCode::Control].
+    fn new_periodic(
+        target: Target,
+        pid: PidCode,
+        packet_size: u32,
+        period: u32,
+    ) -> PeriodicEndpointQueue {
+        assert_ne!(pid, PidCode::Control);
+        // SAFETY: Endpoint::new(0) will always return `Some(_)`
+        assert_ne!(target.endpoint, unsafe {
+            Endpoint::new(0).unwrap_unchecked()
+        });
+        assert_ne!(target.dev, DeviceAddress::Default);
+
+        let endpoint = Self::new_async(target, pid, packet_size, false);
+        PeriodicEndpointQueue {
+            endpoint: alloc::sync::Arc::new(endpoint),
+            rate: period,
         }
     }
 
@@ -825,6 +1012,11 @@ impl EndpointQueue {
             let mut l = self.inner.lock();
             l.head.set_next_queue_head(phys_addr);
         });
+    }
+
+    fn terminate_horizontal(&self) {
+        let mut l = self.inner.lock();
+        l.head.terminate_horizontal(true);
     }
 
     fn head_addr(&self) -> u32 {
@@ -1032,8 +1224,10 @@ impl TransactionString {
         mut payload: DmaBuff,
         transaction_len: u32,
         interrupt: StringInterruptConfiguration,
+        pid: crate::PidCode,
     ) -> Self {
         let len = payload.len();
+        // qTD pages are 4K aligned, so the pointer must be aligned down and the offset set to `offset_into_initial`
         let offset_into_initial = (&raw const payload[0]) as usize & PAGE_SIZE - 1;
 
         let mut prd = payload
@@ -1061,6 +1255,8 @@ impl TransactionString {
 
             let mut qtd = QueueElementTransferDescriptor::new();
 
+            qtd.set_pid(pid);
+
             for i in 0..qtd_pages {
                 if i == 5 && peek_last {
                     let addr = *prd.peek().expect(BOUNDS_ERR);
@@ -1071,6 +1267,7 @@ impl TransactionString {
                 qtd.set_buffer(i, prd.next().expect(BOUNDS_ERR))
             }
             cursor += qtd_len_bytes;
+            qtd.set_data_len(qtd_len_bytes as u32);
 
             let mut b = Box::<QueueElementTransferDescriptor, DmaAlloc>::new_uninit_in(
                 DmaAlloc::new(hootux::mem::MemRegion::Mem32, 32),
@@ -1091,6 +1288,11 @@ impl TransactionString {
                 };
             }
             string.push(b);
+        }
+
+        // First qtd must set offset into buffer
+        if let Some(qtd) = string.get_mut(0) {
+            qtd.set_offset(offset_into_initial as u32);
         }
 
         match interrupt {
@@ -1182,28 +1384,40 @@ impl TransactionString {
                     } else if !qtd.is_active() && (config.get_expected_size() != 0) {
                         return (TransactionStringState::Completed, false);
                     } else if !qtd.is_active() && config.get_interrupt_on_complete() {
-                        log::debug!("Config {config:?}");
                         rc = TransactionStringState::Interrupt
                     } else if config.active() && qtd_phys_addr != last_qtd && i == 0 {
                         // This detects if the last QTD transitioned to the alternate QTD instead of this one.
                         return (TransactionStringState::Completed, false);
                     }
                     // We have checked the last QTD
-                    if qtd_phys_addr == last_qtd {
-                        return (rc, true);
-                    } else if i == len {
+
+                    if i + 1 == len {
                         // this is the last qtd in this string. If we have made it here then this string has been completed.
                         return (TransactionStringState::Completed, false);
+                    } else if qtd_phys_addr == last_qtd {
+                        return (rc, true);
                     }
                 }
                 panic!("Evaluate state managed to escape the loop")
             }
             TransactionStringMetadata::Control => {
                 if !self.str.last().unwrap().get_config().active() {
-                    (TransactionStringState::Completed, false)
+                    return (TransactionStringState::Completed, false);
                 } else {
-                    (TransactionStringState::None, false)
+                    for (i, qtd) in self.str.iter().enumerate() {
+                        if qtd.is_active() {
+                            return (TransactionStringState::None, false);
+                        } else if qtd.get_config().error() {
+                            log::error!(
+                                "Command pipe qTD {i} completed with error - status bits: {:#010b}",
+                                qtd.get_config().0 & 0xff
+                            );
+                            return (TransactionStringState::Error, true);
+                        }
+                    }
                 }
+                log::debug!("How did we get here?");
+                panic!("How did we get here?")
             }
         }
     }
@@ -1513,6 +1727,13 @@ impl InterruptWorker {
         let parent = self.parent.upgrade().unwrap();
         let parent = parent.lock_arc().await;
         let mut found_int = false;
+
+        for i in &parent.periodic_queue_heads {
+            if i.endpoint.check_state() {
+                found_int = true;
+            }
+        }
+
         for i in &parent.async_list {
             if i.check_state() {
                 found_int = true
@@ -1612,3 +1833,37 @@ enum InterruptMessage {
 // SAFETY: auto Send is blocked by VolatilePtr<UsbSts>, but this must be (Send + Sync) to facilitate interrupts.
 unsafe impl Send for IntHandler {}
 unsafe impl Sync for IntHandler {}
+
+#[derive(Clone)]
+pub struct PeriodicEndpointQueue {
+    endpoint: alloc::sync::Arc<EndpointQueue>,
+    rate: u32,
+}
+
+impl PeriodicEndpointQueue {
+    fn set_bitmap(&self) {
+        let bitmap_sparce = match self.rate {
+            0 => unreachable!(),
+            n @ 1..8 => n,
+            _ => 8,
+        };
+        let mut bitmap = 0;
+        let mut index = 0;
+        while index < u8::BITS {
+            bitmap |= 1 << index;
+            index += bitmap_sparce;
+        }
+
+        self.endpoint
+            .inner
+            .lock()
+            .head
+            .set_interrupt_schedule_mask(bitmap)
+    }
+}
+
+impl AsRef<EndpointQueue> for PeriodicEndpointQueue {
+    fn as_ref(&self) -> &EndpointQueue {
+        &self.endpoint
+    }
+}

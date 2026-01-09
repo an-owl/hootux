@@ -559,6 +559,11 @@ impl DeviceIdDistributer {
 
     /// Allocates a unique [DevID]
     pub fn alloc_id(&self) -> DevID {
+        let major = self.major();
+        DevID::new(major, self.minor.fetch_add(1, atomic::Ordering::Relaxed))
+    }
+
+    pub fn major(&self) -> MajorNum {
         let mut l = self.major.lock();
         let major = if let Some(major) = l.as_mut() {
             *major
@@ -567,7 +572,7 @@ impl DeviceIdDistributer {
             *l = Some(n);
             n
         };
-        DevID::new(major, self.minor.fetch_add(1, atomic::Ordering::Relaxed))
+        major
     }
 }
 

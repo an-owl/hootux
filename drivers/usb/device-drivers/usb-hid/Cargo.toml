@@ -1,0 +1,17 @@
+[package]
+name = "usb-hid"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+hidreport = { git = "https://github.com/an-owl/hidreport/", default-features = false, branch = "no_std" }
+cast_trait_object = { version = "0.1.4", default-features = false }
+async-lock = { version = "3.4", default-features = false }
+spin = { version = "0.10.0", default-features = false }
+log = { version = "0.4", default-features = false }
+futures-util = { version = "0.3.31", default-features = false }
+
+usb-cfg = { path = "../../usb-proto" }
+usb = { path = "../../../usb" }
+hootux = { path = "../../../../kernel" }
+hid = { path = "../../../../lib/hid" }

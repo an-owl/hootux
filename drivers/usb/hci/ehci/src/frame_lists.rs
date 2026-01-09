@@ -83,7 +83,7 @@ impl From<Address> for u8 {
 
 bitfield::bitfield! {
     #[derive(Copy, Clone)]
-    struct FrameListLinkPointer(u32);
+    pub struct FrameListLinkPointer(u32);
     impl Debug;
 
     /// When set this bit indicates that indicates that [Self::ptr] is invalid
@@ -94,9 +94,16 @@ bitfield::bitfield! {
 }
 
 impl FrameListLinkPointer {
-    fn set_address(&mut self, address: u32) {
+    /// Sets the link address for this link pointer.
+    ///
+    /// [Self::set_type] must also be called, to set the link type.
+    pub fn set_address(&mut self, address: u32) {
         self.set_ptr(address >> 5);
         self.set_end(false)
+    }
+
+    pub fn set_type(&mut self, link_type: FrameListLinkType) {
+        self.set_link_type(link_type)
     }
 
     fn get_address(&self) -> u32 {
@@ -233,6 +240,15 @@ impl QueueHead {
         self.next_link_ptr.set_address(addr);
         self.next_link_ptr
             .set_link_type(FrameListLinkType::QueueHead);
+        self.terminate_horizontal(false);
+    }
+
+    pub fn set_interrupt_schedule_mask(&mut self, mask: u8) {
+        self.ctl1.set_inerupt_schedule_mask(mask);
+    }
+
+    pub fn terminate_horizontal(&mut self, terminate: bool) {
+        self.next_pointer.set_end(terminate)
     }
 }
 
@@ -710,6 +726,23 @@ impl PeriodicFrameList {
         Self {
             list: [FrameListLinkPointer(1); 1024],
         }
+    }
+
+    pub fn iter(&mut self) -> impl Iterator<Item = &mut FrameListLinkPointer> {
+        self.list.iter_mut()
+    }
+}
+
+impl core::ops::Index<usize> for PeriodicFrameList {
+    type Output = FrameListLinkPointer;
+    fn index(&self, index: usize) -> &Self::Output {
+        &self.list[index]
+    }
+}
+
+impl core::ops::IndexMut<usize> for PeriodicFrameList {
+    fn index_mut(&mut self, index: usize) -> &mut Self::Output {
+        &mut self.list[index]
     }
 }
 

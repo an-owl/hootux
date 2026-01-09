@@ -261,8 +261,38 @@ impl Command for BuiltinCommands {
                 let file = match file.file_type() {
                     FileType::NormalFile => cast_file!(NormalFile: file).unwrap(),
                     FileType::CharDev => {
-                        log::info!("Read: Can currently operate on {:?}", FileType::NormalFile);
-                        return CommandResult::Err;
+                        let mut chardev = cast_file!(Fifo<u8>: file).unwrap();
+                        let Ok(_) = chardev
+                            .open(OpenMode::Read)
+                            .inspect_err(|e| log::error!("failed to open chardev {e:?}"))
+                        else {
+                            return CommandResult::Err;
+                        };
+                        let mut buff = Vec::new();
+
+                        let Ok(len) = captures["len"].parse().inspect_err(|e| {
+                            log::error!("Read: got invalid len {e:?}");
+                        }) else {
+                            return CommandResult::BadMatch;
+                        };
+                        let Ok(pos) = captures["pos"]
+                            .parse()
+                            .inspect_err(|e| log::error!("Read: got invalid position {e:?}"))
+                        else {
+                            return CommandResult::BadMatch;
+                        };
+                        buff.resize(len, 0);
+                        match chardev.read(pos, buff.into()).await {
+                            Ok((buff, len)) => match str::from_utf8(&buff[..len]) {
+                                Ok(s) => println!("{}", s),
+                                Err(_) => println!("{:?}", &buff[..len]),
+                            },
+                            Err((err, ..)) => {
+                                log::error!("Failed to read file: {err:?}");
+                                return CommandResult::Err;
+                            }
+                        }
+                        return CommandResult::Ok;
                     }
                     f => {
                         log::error!("Read: unsupported file type: {f:?}");
