@@ -173,8 +173,19 @@ extern "x86-interrupt" fn except_seg_not_present(sf: InterruptStackFrame, e: u64
     panic!("**SEGMENT NOT PRESENT**\n{sf:#?}\n{e:#x}")
 }
 
+static NMI_BLOCK: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
 extern "x86-interrupt" fn except_nmi(_sf: InterruptStackFrame) {
+    NMI_BLOCK.store(false, atomic::Ordering::Release);
     vector_tables::INT_LOG.log(2)
+}
+
+/// Blocks the thread until an NMI occurs.
+pub fn block_on_nmi() {
+    NMI_BLOCK.store(true, atomic::Ordering::Relaxed);
+    while NMI_BLOCK.load(atomic::Ordering::Acquire) {
+        core::hint::spin_loop();
+    }
 }
 
 #[test_case]
