@@ -28,9 +28,9 @@ bitflags::bitflags! {
         const NO_BITFIELD = 0x1 << 63;
         const QUERY = 0x1 << 62;
 
-        const KEYBOARD = 0x1 << crate::KEYBOARD;
+        const KEYBOARD = 0x1 << crate::KEYBOARD -1;
         /// Mouse, hamster etc.
-        const RODENT = 0x1 << crate::RODENT;
+        const RODENT = 0x1 << crate::RODENT -1;
     }
 }
 
@@ -54,7 +54,7 @@ impl HidIndexFlags {
                 false
             } else {
                 let raw = self.bits() as u32; // truncate
-                (raw & 1 << interface) != 0
+                (raw & 1 << (interface - 1)) != 0
             }
         }
     }
