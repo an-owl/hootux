@@ -196,7 +196,12 @@ impl DriverRuntime {
             protocol: crate::requests::Protocol::Boot,
         };
         // This is a class specific request, so is always safe.
-        unsafe { devctl.send_command(command.into(), None).await };
+        match unsafe { devctl.send_command(command.into(), None).await } {
+            (_, Ok(_)) => {}
+            (_, Err(e)) => {
+                log::error!("Failed to set protocol {e:?}")
+            }
+        }
         drop(l);
 
         let rc = match self.mainloop(input_size, output_size).await {
@@ -523,7 +528,7 @@ impl HidPipeInner {
     /// objects immediately it will be queued until it is received by all open file objects.
     async fn send_op(&self, payload: &[u8], interface_index: u32) {
         let mut queue = self.pending.lock().await;
-        let mut count = self.open_read.load(Ordering::Relaxed) - queue.len();
+        let count = self.open_read.load(Ordering::Relaxed) - queue.len();
         self.serial.fetch_add(1, Ordering::Relaxed);
 
         // Send to pending FOs
