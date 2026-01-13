@@ -771,7 +771,6 @@ impl EndpointQueueInner {
             self.work.push_back(st);
             fut
         } else {
-            let t = self.terminator.as_mut().unwrap();
             let tgt: &QueueElementTransferDescriptor = &**st.str.last().unwrap();
             let addr = hootux::mem::mem_map::translate_ptr(tgt)
                 .unwrap()
