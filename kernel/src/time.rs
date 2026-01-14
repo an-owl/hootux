@@ -207,6 +207,7 @@ impl Duration {
     }
 }
 
+#[derive(Copy, Clone, Ord, PartialOrd, Eq, PartialEq)]
 pub struct AbsoluteTime {
     nanos: u64,
 }
@@ -215,6 +216,12 @@ impl AbsoluteTime {
     /// Returns true if the time represented by self has passed.
     pub fn is_future(&self) -> bool {
         self.nanos < get_sys_time()
+    }
+
+    pub fn now() -> Self {
+        Self {
+            nanos: get_sys_time(),
+        }
     }
 }
 
