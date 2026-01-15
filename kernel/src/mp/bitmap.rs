@@ -47,7 +47,7 @@ impl CpuBMap {
             l.resize_with(index + 1, || Default::default());
             l[index].fetch_and(!(1 << offset), atomic::Ordering::Relaxed);
         } else {
-            l[index].fetch_or(!(1 << offset), atomic::Ordering::Relaxed);
+            l[index].fetch_and(!(1 << offset), atomic::Ordering::Relaxed);
         }
     }
 
