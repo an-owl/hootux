@@ -3,11 +3,8 @@ use core::sync::atomic::{AtomicU64, Ordering};
 use core::task::{Context, Poll};
 use core::{future::Future, pin::Pin};
 
-pub mod executor;
 pub mod int_message_queue;
 pub mod kernel_scheduler;
-pub mod mp_executor;
-pub mod simple_executor;
 pub mod util;
 
 static SYS_EXECUTOR: spin::RwLock<
