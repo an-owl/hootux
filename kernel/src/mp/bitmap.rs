@@ -47,7 +47,7 @@ impl CpuBMap {
             l.resize_with(index + 1, || Default::default());
             l[index].fetch_and(!(1 << offset), atomic::Ordering::Relaxed);
         } else {
-            l[index].fetch_or(!(1 << offset), atomic::Ordering::Relaxed);
+            l[index].fetch_and(!(1 << offset), atomic::Ordering::Relaxed);
         }
     }
 
@@ -88,6 +88,41 @@ impl CpuBMap {
             .resize_with(self.map.read().len(), || Default::default());
         core::mem::swap(self, &mut n);
         n
+    }
+
+    pub fn find_first_one(&self) -> Option<super::CpuIndex> {
+        let mut n = 0;
+        for i in self.map.read().iter() {
+            let zeros = i.load(atomic::Ordering::Relaxed).trailing_zeros() as usize;
+            if zeros != usize::BITS as usize {
+                return if n + zeros < crate::mp::num_cpus() as usize {
+                    Some((n + zeros) as u32)
+                } else {
+                    None
+                };
+            } else {
+                n += zeros;
+            }
+        }
+        None
+    }
+
+    pub fn find_first_zero(&self) -> Option<super::CpuIndex> {
+        let mut n = 0;
+        for i in self.map.read().iter() {
+            let ones = i.load(atomic::Ordering::Relaxed).trailing_ones() as usize;
+            if ones != usize::BITS as usize {
+                return Some((n + ones) as u32);
+            } else {
+                n += ones;
+            }
+        }
+        // If we have a short tail then the next bit should be treated as zero.
+        if n != crate::mp::num_cpus() as usize {
+            Some(n as u32)
+        } else {
+            None
+        }
     }
 }
 

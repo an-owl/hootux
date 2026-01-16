@@ -3,14 +3,12 @@ use core::sync::atomic::{AtomicU64, Ordering};
 use core::task::{Context, Poll};
 use core::{future::Future, pin::Pin};
 
-pub mod executor;
 pub mod int_message_queue;
-pub mod mp_executor;
-pub mod simple_executor;
+pub mod kernel_scheduler;
 pub mod util;
 
 static SYS_EXECUTOR: spin::RwLock<
-    alloc::collections::BTreeMap<crate::mp::CpuIndex, mp_executor::LocalExec>,
+    alloc::collections::BTreeMap<crate::mp::CpuIndex, kernel_scheduler::LocalExecutor>,
 > = spin::RwLock::new(alloc::collections::BTreeMap::new());
 
 /// InterruptQueue is the type to pass interrupt message to drivers. The exact type used is
@@ -75,7 +73,7 @@ impl From<()> for TaskResult {
 }
 
 pub fn run_task(fut: Pin<Box<dyn Future<Output = TaskResult> + Send>>) {
-    let t = mp_executor::Task::new(fut);
+    let t = kernel_scheduler::Task::new(fut);
 
     let b = SYS_EXECUTOR.upgradeable_read();
     if let Some(e) = b.get(&crate::who_am_i()) {
@@ -83,7 +81,7 @@ pub fn run_task(fut: Pin<Box<dyn Future<Output = TaskResult> + Send>>) {
         e.spawn(t);
     } else {
         let mut w = b.upgrade();
-        w.insert(crate::who_am_i(), mp_executor::LocalExec::new());
+        w.insert(crate::who_am_i(), kernel_scheduler::LocalExecutor::new());
         w.get(&crate::who_am_i()).unwrap().spawn(t);
     }
 }
@@ -101,7 +99,7 @@ pub fn run_exec() -> ! {
 pub(crate) fn ap_setup_exec() {
     let rc = SYS_EXECUTOR
         .write()
-        .insert(crate::who_am_i(), mp_executor::LocalExec::new());
+        .insert(crate::who_am_i(), kernel_scheduler::LocalExecutor::new());
     if let Some(_) = rc {
         panic!("Attempted to initialize CPU executor when it is already initialized")
     }
