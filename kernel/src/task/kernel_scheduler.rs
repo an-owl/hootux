@@ -476,6 +476,22 @@ impl Task {
         }
     }
 
+    pub fn run(self) {
+        let id = self.context.id;
+        let this = Arc::new(spin::Mutex::new(self));
+        GLOBAL_EXECUTOR
+            .global_task_list
+            .write()
+            .insert(id, this.clone());
+        super::SYS_EXECUTOR
+            .read()
+            .get(&crate::who_am_i())
+            .unwrap()
+            .stealable_queue
+            .push(id)
+            .expect_err("stealable queue full");
+    }
+
     /// Determines whether this was called within an async context and calls either
     /// [Self::new] or [Self::new_from_context].
     /// This fn should only be preferred for internal use.
