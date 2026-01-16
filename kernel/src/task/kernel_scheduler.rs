@@ -169,12 +169,7 @@ impl LocalExecutor {
         let task = if local {
             self.fetch_from_cache(tid)
         } else {
-            GLOBAL_EXECUTOR
-                .global_task_list
-                .read()
-                .get(&tid)
-                .cloned()
-                .expect("No task found")
+            GLOBAL_EXECUTOR.global_task_list.read().get(&tid).cloned()?
         };
 
         Some(task)
@@ -210,38 +205,39 @@ impl LocalExecutor {
         let waker = match task.waker {
             Some(ref waker) => waker.clone(),
             None => {
-                let affinity_count = task.context.affinity.count().unwrap_or(0);
-                let waker = if crate::mp::num_cpus() - affinity_count == 1 {
-                    Arc::new(KernelWaker {
-                        id: task.context.id,
-                        queue: Arc::downgrade(&self.local_queue),
-                    })
-                } else {
-                    Arc::new(KernelWaker {
-                        id: task.context.id,
-                        queue: Arc::downgrade(&self.stealable_queue),
-                    })
-                };
-
-                task.waker = Some(waker.into());
-                let Some(t) = task.waker.clone() else {
-                    unreachable!()
-                };
-                t
+                let waker = KernelWaker::new(&task.context);
+                task.waker = Some(waker.clone());
+                waker
             }
         };
 
-        match task.poll(Context::from_waker(&waker)) {
+        match task.poll(Context::from_waker(&waker.into())) {
             Poll::Ready(e @ TaskResult::ExitedNormally | e @ TaskResult::StoppedExternally) => {
-                log::trace!("Task {} exited with {e:?}", task.context)
+                log::trace!("Task {} exited with {e:?}", task.context);
+                let _ = GLOBAL_EXECUTOR
+                    .global_task_list
+                    .write()
+                    .remove(&task.context.id);
             }
             Poll::Ready(TaskResult::Error) => {
-                log::error!("Task {} exited with error", task.context)
+                log::error!("Task {} exited with error", task.context);
+                let _ = GLOBAL_EXECUTOR
+                    .global_task_list
+                    .write()
+                    .remove(&task.context.id);
             }
             Poll::Ready(TaskResult::Panicked) => {
-                log::error!("Task {} panicked and was caught", task.context)
+                log::error!("Task {} panicked and was caught", task.context);
+                let _ = GLOBAL_EXECUTOR
+                    .global_task_list
+                    .write()
+                    .remove(&task.context.id);
             }
-            Poll::Pending => {}
+            Poll::Pending => {
+                if task.context.reload_waker.load(atomic::Ordering::Relaxed) {
+                    task.waker.as_ref().unwrap().reload(&task.context);
+                }
+            }
         }
     }
 
@@ -406,13 +402,13 @@ impl IdleWorkList {
 pub struct Task {
     context: TaskContext,
     future: Pin<Box<dyn Future<Output = TaskResult> + Send>>,
-    waker: Option<Waker>,
+    waker: Option<Arc<KernelWaker>>,
 }
 
 pub struct TaskContext {
     id: TaskId,
     /// CPUs set to `true` may not run this task.
-    pub affinity: CpuBMap,
+    affinity: CpuBMap,
     /// Indicates the parent process of `self`.
     /// This will be assigned automatically when the task is started. If set to `None` then this
     /// indicates that this was not started within a task context.
@@ -424,6 +420,8 @@ pub struct TaskContext {
     pub device: Option<crate::fs::vfs::DevID>,
     /// Indicates whether the task has exited.
     exited: bool,
+    /// Waker should be dropped on exit. Causing it to be rebuilt on next entry.
+    reload_waker: core::sync::atomic::AtomicBool,
 }
 
 impl Task {
@@ -452,6 +450,7 @@ impl Task {
             name: name.unwrap_or(cx.name.clone()),
             device: None,
             exited: false,
+            reload_waker: core::sync::atomic::AtomicBool::new(false),
         };
         Self {
             context: tc,
@@ -470,6 +469,7 @@ impl Task {
                 name: String::new(),
                 device: None,
                 exited: false,
+                reload_waker: core::sync::atomic::AtomicBool::new(false),
             },
             future,
             waker: None,
@@ -514,6 +514,20 @@ impl Task {
 impl TaskContext {
     pub fn parent(&self) -> Option<TaskId> {
         self.parent
+    }
+
+    pub fn id(&self) -> u64 {
+        self.id.0
+    }
+
+    pub fn set_affinity(&mut self, cpu: crate::mp::CpuIndex, enabled: bool) {
+        let enabled = !enabled;
+        if enabled {
+            self.affinity.set_bit(cpu);
+        } else {
+            self.affinity.clear_bit(cpu);
+        };
+        self.reload_waker.store(true, atomic::Ordering::Relaxed);
     }
 }
 
@@ -565,6 +579,7 @@ impl IdleTask {
             name,
             device: None,
             exited: false,
+            reload_waker: core::sync::atomic::AtomicBool::new(false),
         };
 
         let task = IdleTask {
@@ -602,13 +617,87 @@ unsafe impl Send for IdleTask {}
 
 struct KernelWaker {
     id: TaskId,
-    queue: alloc::sync::Weak<crossbeam_queue::ArrayQueue<TaskId>>,
+    /// Indicates whether this task should be pushed to the local queue.
+    local: core::sync::atomic::AtomicBool,
+    /// Indicates whether `owner` is valid.
+    is_owned: core::sync::atomic::AtomicBool,
+    owner: core::sync::atomic::AtomicU32,
+}
+
+impl KernelWaker {
+    fn new(context: &TaskContext) -> Arc<Self> {
+        let this = Self {
+            id: context.id,
+            local: core::sync::atomic::AtomicBool::new(false),
+            is_owned: core::sync::atomic::AtomicBool::new(false),
+            owner: core::sync::atomic::AtomicU32::new(0),
+        };
+        this.reload(context);
+        Arc::new(this)
+    }
+
+    fn reload(&self, context: &TaskContext) {
+        let mut allowed_cpus = context
+            .affinity
+            .count()
+            .map(|e| crate::mp::num_cpus() - e)
+            .unwrap_or(crate::mp::num_cpus());
+        if allowed_cpus == 0 {
+            log::error!(
+                "Task {} no affinity. Affinity will be ignored",
+                context.id.0
+            );
+            allowed_cpus = crate::mp::num_cpus();
+        }
+
+        if allowed_cpus == 1 {
+            let owner = context.affinity.find_first_zero().unwrap(); // Unwrap
+            self.owner.store(owner as u32, atomic::Ordering::Release);
+            self.is_owned.store(true, atomic::Ordering::Release);
+            self.local.store(true, atomic::Ordering::Release);
+        } else {
+            self.local.store(false, atomic::Ordering::Release);
+            self.is_owned.store(false, atomic::Ordering::Release);
+        }
+
+        context.reload_waker.store(false, atomic::Ordering::Relaxed);
+    }
 }
 
 impl alloc::task::Wake for KernelWaker {
     fn wake(self: Arc<Self>) {
-        if let Some(queue) = self.queue.upgrade() {
-            queue.push(self.id).expect("Work queue full")
+        let local = self.local.load(atomic::Ordering::Relaxed);
+        let owner = self.owner.load(atomic::Ordering::Relaxed);
+
+        // In the event that a task is woken *before* the executor starts this will prevent a deadlock.
+        // It's fine to return early without properly waking the process because the task was woken
+        // when the task was spawned.
+        let Some(rl) = super::SYS_EXECUTOR.try_read() else {
+            return;
+        };
+        let id = self.id.0;
+
+        match self.is_owned.load(atomic::Ordering::Relaxed) {
+            false => {
+                let Some(exec) = rl.get(&crate::who_am_i()) else {
+                    unreachable!()
+                };
+                if local {
+                    exec.local_queue.push(self.id).expect("task queue full");
+                } else {
+                    exec.stealable_queue.push(self.id).expect("task queue full");
+                }
+            }
+            true => {
+                let Some(exec) = rl.get(&owner) else {
+                    unreachable!()
+                };
+                if local {
+                    exec.local_queue.push(self.id).expect("task queue full");
+                } else {
+                    exec.stealable_queue.push(self.id).expect("task queue full");
+                }
+            }
         }
     }
 }
