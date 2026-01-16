@@ -1,3 +1,18 @@
+//! The Hootux scheduler is intended to be split into kernel and user components.
+//! The kernel component being a cooperative scheduler and the user component being and preemptive scheduler.
+//!
+//! The kernel executor is an attempt at being FIFO. Due to work stealing optimizations this is not
+//! always the case. For all intents and purposes tasks should assume that scheduling is FIFO but
+//! should not rely on this behaviour for correctness.
+//! The kernel executor provides access to task context information via [ContextContainer::get],
+//! which can be used to fetch and set contextual information about the task.
+//!
+//! The default method to spawn a task is [super::run_task] however, [Task::new] and [Task::run]
+//! should be preferred. This allows setting the task name before starting it.
+//!
+//! The kernel scheduler will always run kernel work before yielding to other work.
+//! This means that the kernel scheduler assumes that it will never be starved for CPU time.
+
 use crate::mp::bitmap::CpuBMap;
 use crate::task::{TaskId, TaskResult};
 use crate::util::PhantomUnsend;
@@ -90,15 +105,6 @@ impl Drop for ContextPointerGuard<'_> {
 
 /// This contains kernel executor state that is local to this CPU.
 /// Tasks are split into 2 queues, one which can be stolen from and one which cant.
-/// A monotonic number is given to each job in the work queue, this is used to maintain the FIFO nature
-/// of the kernel executor.
-///
-/// FIFO for kernel work is expected but is not a strict requirement.
-/// The kernel should prevent idling so its expected that FIFO will violated when
-///
-/// - The executor cannot lock a resource required to run the next job.
-/// - Work has been stolen from another CPU.
-/// - "this" CPU cannot run the task for whatever reason.
 pub(crate) struct LocalExecutor {
     /// This arbiter indicates which queue should be preferred.
     /// When `true` the scheduler should use the local queue.
