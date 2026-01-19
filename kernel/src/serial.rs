@@ -10,6 +10,7 @@
 //! If I ever write serial drivers for other devices (i.e PCI) I need to check if this module owns
 //! the device  and claim ownership.  
 
+use crate::fs::device::{Fifo, OpenMode};
 use crate::serial::dispatcher::SerialDispatcher;
 use alloc::boxed::Box;
 use core::pin::Pin;
@@ -40,7 +41,9 @@ pub fn _print(args: core::fmt::Arguments) {
     use core::fmt::Write;
 
     if let Some(s) = COM.read().get(0) {
-        let _ = s.write_sync(args); // What exactly are we supposed to do for an error?
+        let mut dispatcher = s.clone();
+        let _ = dispatcher.open(OpenMode::Write);
+        let _ = dispatcher.write_sync(args); // What exactly are we supposed to do for an error?
     } else {
         x86_64::instructions::interrupts::without_interrupts(|| {
             SP0.lock()
