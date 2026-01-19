@@ -173,7 +173,7 @@ impl LocalExecutor {
         };
 
         let task = if local {
-            self.fetch_from_cache(tid)
+            self.fetch_from_cache(tid)?
         } else {
             GLOBAL_EXECUTOR.global_task_list.read().get(&tid).cloned()?
         };
@@ -182,19 +182,14 @@ impl LocalExecutor {
     }
 
     /// Fetches a local task. If it's not in the local cache then the local cache will be filled.
-    fn fetch_from_cache(&self, tid: TaskId) -> Arc<spin::Mutex<Task>> {
+    fn fetch_from_cache(&self, tid: TaskId) -> Option<Arc<spin::Mutex<Task>>> {
         let mut l = self.local_task_cache.lock();
         if let Some(task) = l.get(&tid) {
-            task.clone()
+            Some(task.clone())
         } else {
-            let task = GLOBAL_EXECUTOR
-                .global_task_list
-                .read()
-                .get(&tid)
-                .expect("No task found")
-                .clone();
+            let task = GLOBAL_EXECUTOR.global_task_list.read().get(&tid)?.clone();
             l.insert(tid, task.clone());
-            task
+            Some(task)
         }
     }
 
