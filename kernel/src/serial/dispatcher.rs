@@ -40,7 +40,7 @@ pub struct SerialDispatcher {
 }
 
 struct SerialDispatcherInner {
-    real: alloc::sync::Weak<Serial>,
+    pub(super) real: alloc::sync::Weak<Serial>,
     quota: atomic::Atomic<usize>,
 
     pend: spin::Mutex<alloc::collections::VecDeque<core::task::Waker>>,
@@ -96,7 +96,7 @@ impl SerialDispatcher {
                     self.inner.stream.wake();
                 }
 
-                x86_64::instructions::interrupts::without_interrupts(|| {
+                self.without_interrupts(|| {
                     let mut l = r.write_buff.lock();
 
                     if l.len() > l.valid_len() {
@@ -142,6 +142,19 @@ impl SerialDispatcher {
             return;
         };
         real.set_char_mode(*data_bits, *parity, *stop_bits)
+    }
+
+    /// Blocks interrupts from the device.
+    ///
+    /// Note this currently disables interrupts from all serial ports.
+    fn without_interrupts<R, F>(&self, f: F) -> R
+    where
+        F: FnOnce() -> R,
+    {
+        let original = super::block_interrupts(true);
+        let rc = f();
+        super::block_interrupts(original);
+        rc
     }
 }
 

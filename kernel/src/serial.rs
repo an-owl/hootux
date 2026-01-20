@@ -15,6 +15,7 @@ use crate::serial::dispatcher::SerialDispatcher;
 use alloc::boxed::Box;
 use core::pin::Pin;
 use core::task::{Context, Poll};
+use hootux::interrupts::apic::ioapic::GlobalSystemInterrupt;
 use lazy_static::lazy_static;
 use modular_bitfield::{BitfieldSpecifier, bitfield};
 use spin::Mutex;
@@ -27,6 +28,9 @@ static COM_REAL: spin::RwLock<alloc::vec::Vec<alloc::sync::Arc<Serial>>> =
 
 pub static COM: spin::RwLock<alloc::vec::Vec<dispatcher::SerialDispatcher>> =
     spin::RwLock::new(alloc::vec::Vec::new());
+
+static INTERRUPTS: Mutex<alloc::vec::Vec<GlobalSystemInterrupt>> =
+    spin::Mutex::new(alloc::vec::Vec::new());
 
 lazy_static! {
     pub static ref SP0: Mutex<SerialPort> = {
@@ -408,6 +412,17 @@ impl Serial {
     }
 }
 
+fn block_interrupts(blocked: bool) -> bool {
+    let mut l = INTERRUPTS.lock();
+    let mut state = false;
+    for i in l.iter_mut() {
+        state = i.mask;
+        i.mask = blocked;
+        unsafe { i.set() }.unwrap();
+    }
+    state
+}
+
 /// This implementation acts only to wake the dispatcher all the important processing is
 /// handled by the interrupt handler
 impl futures_util::Future for &Serial {
@@ -620,6 +635,7 @@ pub fn init_rt_serial() {
             );
             gsi.set().expect("Failed to set GSI");
         }
+        INTERRUPTS.lock().push(gsi);
     }
 
     for i in &com {
