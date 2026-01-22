@@ -42,6 +42,10 @@ pub enum Runlevel {
     // todo: Not currently implemented
     Init,
 
+    /// Multiprocessing is enabled, but the scheduler has not been started yet.
+    /// The kernel may not access "racy" data.
+    Mp,
+
     /// Indicates that Kernel multitasking is running
     /// Multiprocessing (where available) is running
     Kernel,

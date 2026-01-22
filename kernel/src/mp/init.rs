@@ -47,6 +47,7 @@ pub(super) unsafe fn start_mp(tls_data: *const u8, tls_file_size: usize, tls_dat
     if cpus.application_processors.len() == 0 {
         return;
     }
+    crate::runlevel::update_runlevel(crate::runlevel::Runlevel::Mp);
 
     // Enables shootdowns, default state is disabled.
     // Shootdowns only need to be enabled if running in MP

@@ -87,6 +87,7 @@ pub fn run_task(fut: Pin<Box<dyn Future<Output = TaskResult> + Send>>) {
 }
 
 pub fn run_exec() -> ! {
+    crate::runlevel::update_runlevel(crate::runlevel::Runlevel::Kernel);
     SYS_EXECUTOR.read().get(&crate::who_am_i()).unwrap().run()
 }
 
