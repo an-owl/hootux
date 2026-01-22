@@ -17,6 +17,7 @@ use crate::mp::bitmap::CpuBMap;
 use crate::task::{TaskId, TaskResult};
 use crate::util::PhantomUnsend;
 use alloc::boxed::Box;
+use alloc::collections::BTreeMap;
 use alloc::string::String;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
@@ -423,6 +424,9 @@ pub struct TaskContext {
     exited: bool,
     /// Waker should be dropped on exit. Causing it to be rebuilt on next entry.
     reload_waker: core::sync::atomic::AtomicBool,
+
+    /// Contains environment variables.
+    pub envs: BTreeMap<String, String>,
 }
 
 impl Task {
@@ -452,6 +456,7 @@ impl Task {
             device: None,
             exited: false,
             reload_waker: core::sync::atomic::AtomicBool::new(false),
+            envs: BTreeMap::new(),
         };
         Self {
             context: tc,
@@ -471,6 +476,7 @@ impl Task {
                 device: None,
                 exited: false,
                 reload_waker: core::sync::atomic::AtomicBool::new(false),
+                envs: Default::default(),
             },
             future,
             waker: None,
@@ -597,6 +603,7 @@ impl IdleTask {
             device: None,
             exited: false,
             reload_waker: core::sync::atomic::AtomicBool::new(false),
+            envs: BTreeMap::new(),
         };
 
         let task = IdleTask {
@@ -692,7 +699,6 @@ impl alloc::task::Wake for KernelWaker {
         let Some(rl) = super::SYS_EXECUTOR.try_read() else {
             return;
         };
-        let id = self.id.0;
 
         match self.is_owned.load(atomic::Ordering::Relaxed) {
             false => {
