@@ -207,7 +207,7 @@ impl Duration {
     }
 }
 
-#[derive(Copy, Clone, Ord, PartialOrd, Eq, PartialEq)]
+#[derive(Copy, Clone, Ord, PartialOrd, Eq, PartialEq, Debug)]
 pub struct AbsoluteTime {
     nanos: u64,
 }
@@ -222,6 +222,17 @@ impl AbsoluteTime {
         Self {
             nanos: get_sys_time(),
         }
+    }
+}
+
+impl core::fmt::Display for AbsoluteTime {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(
+            f,
+            "{}.{:09}",
+            self.nanos / 1000000000,
+            self.nanos % 1000000000
+        )
     }
 }
 
