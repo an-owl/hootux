@@ -249,6 +249,6 @@ impl core::fmt::Display for Duration {
         let sec = self.nanos / 1000000000;
         let rem = self.nanos % 1000000000;
 
-        write!(f, "{}.{}", sec, rem)
+        write!(f, "{}.{:09}", sec, rem)
     }
 }
