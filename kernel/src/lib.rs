@@ -119,6 +119,8 @@ pub fn init_logger() {
     log::set_max_level(log::LevelFilter::Trace);
 }
 
+pub use logger::RecallLog;
+
 #[inline]
 pub fn stop() -> ! {
     loop {

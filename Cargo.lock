@@ -134,6 +134,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "buf-trait"
+version = "0.4.1"
+source = "git+https://github.com/mcy/strings.git?rev=refs%2Fpull%2F13%2Fhead#d9aaaaa44a3cce630b4c40474bb224a9e0045657"
+dependencies = [
+ "zerocopy",
+]
+
+[[package]]
+name = "byteorder"
+version = "1.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1fd0f2584146f6f2ef48085050886acf353beff7305ebd1ae69500e27c67f64b"
+
+[[package]]
+name = "byteyarn"
+version = "0.5.1"
+source = "git+https://github.com/mcy/strings.git?rev=refs%2Fpull%2F13%2Fhead#d9aaaaa44a3cce630b4c40474bb224a9e0045657"
+dependencies = [
+ "buf-trait",
+]
+
+[[package]]
 name = "camino"
 version = "1.1.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -479,6 +501,7 @@ dependencies = [
  "atomic",
  "bitflags 2.10.0",
  "bitmap-fontgen",
+ "byteyarn",
  "cast_trait_object",
  "cfg-if",
  "conquer-once",
@@ -1364,4 +1387,25 @@ dependencies = [
  "lazy_static",
  "num_enum 0.7.4",
  "raw-cpuid 10.7.0",
+]
+
+[[package]]
+name = "zerocopy"
+version = "0.7.35"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1b9b4fd18abc82b8136838da5d50bae7bdea537c574d8dc1a34ed098d6c166f0"
+dependencies = [
+ "byteorder",
+ "zerocopy-derive",
+]
+
+[[package]]
+name = "zerocopy-derive"
+version = "0.7.35"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fa4f8080344d4671fb4e831a13ad1e68092748387dfc4f55e356242fae12ce3e"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.100",
 ]

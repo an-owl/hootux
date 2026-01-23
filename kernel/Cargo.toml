@@ -36,6 +36,7 @@ modular-bitfield = "0.11.2"
 cfg-if = "1.0.0"
 async-lock = { version = "3.3.0", default-features = false }
 ustar = { git = "https://github.com/an-owl/ustar" }
+byteyarn = { git = "https://github.com/mcy/strings.git", rev = "refs/pull/13/head" }
 
 hatcher = { path = "../lib/libboot", features = ["uefi", "multiboot2"] }
 cast_trait_object = "0.1.4"
