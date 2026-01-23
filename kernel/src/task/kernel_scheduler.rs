@@ -532,6 +532,10 @@ impl Task {
     fn is_valid(&self) -> bool {
         !self.context.affinity.get(crate::who_am_i())
     }
+
+    fn get_context(&mut self) -> &mut TaskContext {
+        &mut self.context
+    }
 }
 
 impl TaskContext {
