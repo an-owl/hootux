@@ -10,9 +10,11 @@ use x86_64::structures::paging::{
 };
 use x86_64::{PhysAddr, VirtAddr};
 
+const OPT_NOT_INIT: &str = "OffsetPageTable not initialized";
+
 pub struct OffsetPageTable {
     offset_base: VirtAddr,
-    l4_table: &'static mut PageTable,
+    l4_table: Option<&'static mut PageTable>,
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -35,13 +37,23 @@ impl OffsetPageTable {
 
             Self {
                 offset_base,
-                l4_table,
+                l4_table: Some(l4_table),
             }
         }
     }
 
+    pub const unsafe fn uninit() -> Self {
+        Self {
+            offset_base: VirtAddr::zero(),
+            l4_table: None,
+        }
+    }
+
     pub(crate) fn get_l4_table(&self) -> &PageTable {
-        self.l4_table
+        let Some(l4) = self.l4_table else {
+            panic!(OPT_NOT_INIT)
+        };
+        l4
     }
 
     /// Returns all mapped pages and their frames from `start` to `end`
@@ -216,7 +228,10 @@ impl OffsetPageTable {
 
     /// Returns number of active PageTables
     pub(super) fn count_tables(&self) -> usize {
-        self.count_tables_inner(self.l4_table, PageTableLevel::L4)
+        let Some(l4_table) = self.l4_table else {
+            panic!(OPT_NOT_INIT)
+        };
+        self.count_tables_inner(l4_table, PageTableLevel::L4)
     }
 
     fn count_tables_inner(&self, table: &PageTable, level: PageTableLevel) -> usize {
@@ -248,10 +263,10 @@ impl OffsetPageTable {
         page: Page<S>,
     ) -> Result<&mut PageTable, InternalError> {
         if level == PageTableLevel::L4 {
-            return Ok(self.l4_table);
+            return Ok(self.l4_table.expect(OPT_NOT_INIT));
         }
         let page = Page::containing_address(page.start_address());
-        let l4 = unsafe { &mut *(self.l4_table as *mut PageTable) };
+        let l4 = unsafe { &mut *(self.l4_table.expect(OPT_NOT_INIT) as *mut PageTable) };
         self.traverse_inner_mut(PageTableLevel::L4, level, page, l4)
     }
 
@@ -293,10 +308,15 @@ impl OffsetPageTable {
         page: Page<S>,
     ) -> Result<&PageTable, InternalError> {
         if level == PageTableLevel::L4 {
-            return Ok(self.l4_table);
+            return Ok(self.l4_table.expect(OPT_NOT_INIT));
         }
         let page = Page::containing_address(page.start_address());
-        self.traverse_inner(PageTableLevel::L4, level, page, self.l4_table)
+        self.traverse_inner(
+            PageTableLevel::L4,
+            level,
+            page,
+            self.l4_table.expect(OPT_NOT_INIT),
+        )
     }
 
     fn traverse_inner(
