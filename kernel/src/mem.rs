@@ -456,6 +456,23 @@ impl PageTableLevel {
             L4 => page.p4_index(),
         };
     }
+
+    pub const fn from_page_size<S: PageSize>() -> Self {
+        #[cfg(not(target_arch = "x86_64"))]
+        compile_error!("Unsupported architecture");
+
+        #[cfg(target_arch = "x86_64")]
+        if core::any::TypeId::of::<S>() == core::any::TypeId::of::<Size4KiB>() {
+            PageTableLevel::L1
+        } else if core::any::TypeId::of::<S>() == core::any::TypeId::of::<Size2MiB>() {
+            PageTableLevel::L2
+        } else if core::any::TypeId::of::<S>() == core::any::TypeId::of::<Size1GiB>() {
+            PageTableLevel::L3
+        } else {
+            // SAFETY: These are the only 3 possible variants.
+            unsafe { core::hint::unreachable_unchecked() };
+        }
+    }
 }
 
 #[derive(Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Debug, Default)]
