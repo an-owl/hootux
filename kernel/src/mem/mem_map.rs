@@ -16,10 +16,9 @@ static MEMORY_MAP: crate::util::mutex::ReentrantMutex<offset_page_table::OffsetP
     crate::util::mutex::ReentrantMutex::new(offset_page_table::OffsetPageTable::uninit());
 
 /// Maps the given pages into memory using frames given by the system frame allocator. This is the
-/// preferred method Mapping memory ranges. This fn will flush all the given pages
-/// from the tlb
+/// preferred method Mapping memory ranges.
 ///
-/// #Panics
+/// # Panics
 ///
 /// This fn will panic if a page within range is already mapped
 ///
@@ -48,7 +47,7 @@ pub unsafe fn map_range<'a, S: PageSize + core::fmt::Debug, I: Iterator<Item = P
             let frame = PhysFrame::from_start_address(PhysAddr::new(frame_addr as u64)).unwrap();
 
             match mm.map_to(page, frame, flags, &mut DummyFrameAlloc) {
-                Ok(flush) => flush.flush(),
+                Ok(_) => {}
                 Err(err) => {
                     panic!("{:?}", err);
                 }
@@ -88,6 +87,8 @@ where
                 break;
             };
 
+            let mut flags = entry.flags();
+            flags.set(PageTableFlags::PRESENT, false);
             // clear present flag
             entry.set_flags(PageTableFlags::empty());
             end_addr = Some(page);
@@ -315,17 +316,18 @@ where
             _ => unreachable!(),
         };
 
-        drop(mm);
-
         if entry.flags().contains(PageTableFlags::PRESENT) {
-            shootdown_hint(|| {
-                // SAFETY: This is actually unsafe.
-                // Note this can (and should) panic if another CPU modifies the tables.
-                entry.set_flags(PageTableFlags::empty());
-                x86_64::instructions::tlb::flush(page.start_address());
-                shootdown(page.into());
-                entry.set_flags(flags);
-            })
+            let warn = ShootDownWarn::new();
+            // SAFETY: This is actually unsafe.
+            // Note this can (and should) panic if another CPU modifies the tables.
+            entry.set_flags(PageTableFlags::empty());
+            x86_64::instructions::tlb::flush(page.start_address());
+            shootdown(page.into());
+            let mut l = MEMORY_MAP.lock();
+            // SAFETY: Entry is not present.
+            // Entry was fetched earlier so unwrap will not panic.
+            l.get_entry_ref(page).unwrap().set_flags(flags);
+            drop(warn);
         } else {
             entry.set_flags(flags);
         }
@@ -429,7 +431,7 @@ macro_rules! update_flags {
         }
     };
 }
-use crate::mem::tlb::{shootdown, shootdown_hint};
+use crate::mem::tlb::{ShootDownWarn, shootdown, shootdown_hint};
 pub use update_flags;
 
 /// Iterates over `iter` updating each page.
@@ -460,15 +462,11 @@ struct UnmappedPageIter<'a, S: PageSize + 'static> {
     range: PageRangeInclusive<S>,
 }
 
-impl<'a, S: PageSize + 'static> Iterator for UnmappedPageIter<'a, S> {
-    type Item = &'a mut PageTableEntry;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        let n = self.range.next()?;
-        // SAFETY: Present will always be clear, and will be synchronized prior.
-        // Transmute: Compiler thinks we are passing self.mapper to get_entry_ref().
-        // But we are passing *self.mapper, which has lifetime 'a not 'self.
-        // The returned reference is allowed to outlive 'self
-        unsafe { core::mem::transmute(self.mapper.get_entry_ref(n).ok()) }
+impl<S: PageSize + 'static> UnmappedPageIter<'_, S> {
+    pub fn next_page(&mut self) -> Option<&mut PageTableEntry> {
+        // SAFETY: Self is only constructed after the entry is set to not-present and the TLB is synchronized.
+        self.range.next().map(|page| {
+            unsafe { self.mapper.get_entry_ref(page) }.expect("Mapper was modified unexpectedly")
+        })
     }
 }
