@@ -1,4 +1,4 @@
-use crate::mem::allocator::{buddy_alloc, combined_allocator, fixed_size_block};
+use core::alloc::Layout;
 use x86_64::{
     PhysAddr, VirtAddr,
     structures::paging::{
@@ -33,47 +33,6 @@ pub const PAGE_SIZE: usize = 4096;
 pub unsafe fn set_sys_frame_alloc(mem_map: hatcher::boot_info::MemoryMap) {
     unsafe { buddy_frame_alloc::init_mem_map(mem_map) }
 }
-/// This is the page table tree for the higher half kernel is shared by all CPU's. It should be used
-/// in the higher half of all user mode programs too.
-pub(crate) static SYS_MAPPER: SysMapper = SysMapper {};
-
-// TODO: remove in favour of re-working memory management.
-pub(crate) struct SysMapper {}
-
-impl SysMapper {
-    pub fn get(&self) -> MapperWorkaround {
-        MapperWorkaround {
-            inner: allocator::COMBINED_ALLOCATOR.lock(),
-        }
-    }
-}
-pub(crate) struct MapperWorkaround {
-    inner: crate::util::mutex::ReentrantMutexGuard<
-        'static,
-        combined_allocator::DualHeap<
-            buddy_alloc::BuddyHeap,
-            fixed_size_block::NewFixedBlockAllocator,
-        >,
-    >,
-}
-
-impl core::ops::Deref for MapperWorkaround {
-    type Target = offset_page_table::OffsetPageTable;
-    fn deref(&self) -> &Self::Target {
-        self.inner.mapper()
-    }
-}
-
-impl core::ops::DerefMut for MapperWorkaround {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        self.inner.mapper_mut()
-    }
-}
-
-#[deprecated]
-pub unsafe fn set_sys_mem_tree_no_cr3(new_mapper: offset_page_table::OffsetPageTable) {
-    allocator::COMBINED_ALLOCATOR.lock().cfg_mapper(new_mapper);
-}
 
 /// Dummy frame allocator that amy be used with PageTableTree because PageTableTree will
 /// never call the passed &impl FrameAllocator
@@ -81,11 +40,14 @@ pub struct DummyFrameAlloc;
 
 unsafe impl FrameAllocator<Size4KiB> for DummyFrameAlloc {
     fn allocate_frame(&mut self) -> Option<PhysFrame<Size4KiB>> {
-        allocator::COMBINED_ALLOCATOR
+        // SAFETY: The layout is not zero, is power of two and size is already aligned.
+        allocator::PHYS_ALLOCATOR
             .lock()
-            .phys_alloc()
-            .get()
-            .allocate_frame()
+            .allocate(
+                unsafe { Layout::from_size_align_unchecked(PAGE_SIZE, PAGE_SIZE) },
+                MemRegion::Mem64,
+            )
+            .map(|n| PhysFrame::from_start_address(PhysAddr::new(n as u64)).unwrap())
     }
 }
 unsafe impl FrameAllocator<Size2MiB> for DummyFrameAlloc {
