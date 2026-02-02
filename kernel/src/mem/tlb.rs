@@ -13,6 +13,7 @@
 use crate::interrupts::apic;
 use crate::interrupts::apic::Apic;
 use core::ops::Deref;
+use x86_64::structures::paging::Page;
 
 const SHOOTDOWN_VECTOR: crate::interrupts::InterruptIndex =
     crate::interrupts::InterruptIndex::TlbShootdown; // This uses a u8 because it needs to use a vector not an IRQ. This will use a private kernel API
@@ -538,6 +539,8 @@ pub enum ShootdownContent {
     None,
     /// Drop a single memory region
     Short(TlbDropEntry),
+
+    Iter(*const (), *const ()),
     /// Invalidate multiple memory regions
     ///
     /// If the vec is longer than 256 entries then dropping `self` may raise another shootdown.
@@ -554,6 +557,14 @@ impl ShootdownContent {
         match self {
             ShootdownContent::None => {} // do nothing
             ShootdownContent::Short(t) => t.flush(),
+            ShootdownContent::Iter(start, end) => {
+                let start = *start as usize;
+                let end = *end as usize;
+
+                for i in (start..end).step_by(crate::mem::PAGE_SIZE) {
+                    x86_64::instructions::tlb::flush(x86_64::VirtAddr::new(i as u64));
+                }
+            }
             ShootdownContent::Long(l) => {
                 for i in l {
                     let u: TlbDropEntry = (*i).into();
@@ -580,11 +591,23 @@ impl ShootdownContent {
     }
 }
 
-impl<S: x86_64::structures::paging::PageSize + 'static> From<x86_64::structures::paging::Page<S>>
-    for ShootdownContent
-{
-    fn from(value: x86_64::structures::paging::Page<S>) -> Self {
+impl<S: x86_64::structures::paging::PageSize + 'static> From<Page<S>> for ShootdownContent {
+    fn from(value: Page<S>) -> Self {
         Self::Short(value.into())
+    }
+}
+
+impl<T, S: x86_64::structures::paging::PageSize> From<T> for ShootdownContent
+where
+    T: Iterator<Item = Page<S>> + Copy,
+{
+    fn from(mut value: T) -> Self {
+        let len = value.clone().count();
+        let start = value.next().expect("Empty page range given to shootdown");
+        Self::Iter(
+            start.start_address().as_ptr(),
+            ((start + len as u64).start_address() + crate::mem::PAGE_SIZE as u64).as_ptr(),
+        )
     }
 }
 
