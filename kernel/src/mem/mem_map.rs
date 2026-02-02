@@ -1,17 +1,19 @@
 //! This module contains helper functions for mapping virtual memory, and this module should be the
 //! preferred methods of doing so.
 
-// todo: consider adding closures as args in these fro handling errors
-
 use super::*;
 use crate::mem::buddy_frame_alloc::FrameAllocRef;
-use x86_64::structures::paging::mapper::{FlagUpdateError, TranslateError};
+use x86_64::structures::paging::mapper::TranslateError;
+use x86_64::structures::paging::page_table::PageTableEntry;
 
 /// Flags for Normal data in L1 (4K) pages.
 pub const PROGRAM_DATA_FLAGS: PageTableFlags = PageTableFlags::from_bits_truncate((1 << 63) | 0b11);
 
 /// Flags for memory mapped I/O. Sets caching mode to UC uncacheable
 pub const MMIO_FLAGS: PageTableFlags = PageTableFlags::from_bits_truncate((1 << 63) | 0b10011);
+
+static MEMORY_MAP: crate::util::mutex::ReentrantMutex<offset_page_table::OffsetPageTable> =
+    crate::util::mutex::ReentrantMutex::new(offset_page_table::OffsetPageTable::uninit());
 
 /// Maps the given pages into memory using frames given by the system frame allocator. This is the
 /// preferred method Mapping memory ranges. This fn will flush all the given pages
@@ -32,11 +34,11 @@ pub unsafe fn map_range<'a, S: PageSize + core::fmt::Debug, I: Iterator<Item = P
     offset_page_table::OffsetPageTable: Mapper<S>,
 {
     unsafe {
-        let b = allocator::COMBINED_ALLOCATOR.lock();
+        let b = allocator::PHYS_ALLOCATOR.lock();
+        let mut mm = MEMORY_MAP.lock();
 
         for page in pages {
             let frame_addr = b
-                .phys_alloc()
                 .allocate(
                     alloc::alloc::Layout::from_size_align(S::SIZE as usize, S::SIZE as usize)
                         .unwrap(),
@@ -45,10 +47,7 @@ pub unsafe fn map_range<'a, S: PageSize + core::fmt::Debug, I: Iterator<Item = P
                 .expect("System ran out of memory");
             let frame = PhysFrame::from_start_address(PhysAddr::new(frame_addr as u64)).unwrap();
 
-            match SYS_MAPPER
-                .get()
-                .map_to(page, frame, flags, &mut DummyFrameAlloc)
-            {
+            match mm.map_to(page, frame, flags, &mut DummyFrameAlloc) {
                 Ok(flush) => flush.flush(),
                 Err(err) => {
                     panic!("{:?}", err);
@@ -61,29 +60,58 @@ pub unsafe fn map_range<'a, S: PageSize + core::fmt::Debug, I: Iterator<Item = P
 /// Unmaps pages without deallocating physical frames. Unmapped pages are skipped.
 /// Pages will always bee flushed from the tlb.
 ///
-/// # Panics
-///
-/// This fn will panic a mapped page is not `page<S>` or the frame address is invalid
-///
 /// # Safety
 ///
 /// This fn is unsafe because it can be used to unmap in use pages that contain in use data.
-pub unsafe fn unmap_range<'a, S: PageSize + core::fmt::Debug, I: Iterator<Item = Page<S>>>(pages: I)
+pub unsafe fn unmap_range<
+    'a,
+    S: PageSize + core::fmt::Debug + 'static,
+    I: Iterator<Item = Page<S>>,
+>(
+    pages: I,
+) -> UnmappedPageIter<'a, S>
 where
     offset_page_table::OffsetPageTable: Mapper<S>,
 {
-    use x86_64::structures::paging::mapper::UnmapError;
-    for page in pages {
-        match SYS_MAPPER.get().unmap(page) {
-            Ok((_, flush)) => flush.flush(),
+    let mut mm = MEMORY_MAP.lock();
+    let mut start_addr = None;
+    let mut end_addr = None;
 
-            Err(UnmapError::PageNotMapped) => continue,
-
-            Err(err) => {
-                panic!("{:?}", err)
+    shootdown_hint(|| {
+        for page in pages {
+            if start_addr.is_none() {
+                start_addr = Some(page);
             }
+
+            // SAFETY:
+            let Ok(entry) = (unsafe { mm.get_entry_ref(page) }) else {
+                break;
+            };
+
+            // clear present flag
+            entry.set_flags(PageTableFlags::empty());
+            end_addr = Some(page);
         }
-    }
+
+        let start_addr = start_addr.unwrap_or(Page::containing_address(VirtAddr::new(0)));
+
+        let range = PageRangeInclusive {
+            start: start_addr,
+            end: end_addr.unwrap_or(Page::containing_address(VirtAddr::new(0))),
+        };
+
+        // Free mutex to prevent deadlocks (and reduce lock contention) while shootdown is performed.
+        drop(mm);
+        shootdown(range.into());
+
+        UnmappedPageIter {
+            mapper: MEMORY_MAP.lock(),
+            range: PageRangeInclusive {
+                start: start_addr,
+                end: end_addr.unwrap_or(Page::containing_address(VirtAddr::new(0))),
+            },
+        }
+    })
 }
 
 /// Maps a single page of memory, flushing the tlb entry for the given page. This is the preferred
@@ -102,19 +130,18 @@ where
     offset_page_table::OffsetPageTable: Mapper<S>,
 {
     unsafe {
-        let b = allocator::COMBINED_ALLOCATOR.lock();
+        let b = allocator::PHYS_ALLOCATOR.lock();
 
         let frame_addr = b
-            .phys_alloc()
             .allocate(
-                alloc::alloc::Layout::from_size_align(S::SIZE as usize, S::SIZE as usize).unwrap(),
+                Layout::from_size_align(S::SIZE as usize, S::SIZE as usize).unwrap(),
                 MemRegion::Mem64,
             )
             .expect("System ran out of memory");
         let frame = PhysFrame::from_start_address(PhysAddr::new(frame_addr as u64)).unwrap();
 
-        match SYS_MAPPER
-            .get()
+        match MEMORY_MAP
+            .lock()
             .map_to(page, frame, flags, &mut DummyFrameAlloc)
         {
             Ok(flush) => flush.flush(),
@@ -136,12 +163,18 @@ where
 /// # Safety
 ///
 /// See [unmap_range](unmap_range#Safety)
-pub unsafe fn unmap_page<'a, S: PageSize + core::fmt::Debug>(page: Page<S>)
+pub unsafe fn unmap_page<'a, S: PageSize + core::fmt::Debug + 'static>(
+    page: Page<S>,
+) -> PhysFrame<S>
 where
     offset_page_table::OffsetPageTable: Mapper<S>,
 {
-    match SYS_MAPPER.get().unmap(page) {
-        Ok((_, flush)) => flush.flush(),
+    match MEMORY_MAP.lock().unmap(page) {
+        Ok((f, flush)) => {
+            flush.flush();
+            shootdown(page.into());
+            f
+        }
 
         Err(err) => {
             panic!("{:?}", err)
@@ -153,7 +186,7 @@ pub(crate) unsafe fn unmap_and_free(addr: VirtAddr) -> Result<(), ()> {
     unsafe {
         let page = Page::<Size4KiB>::containing_address(addr);
 
-        let free = |entry: x86_64::structures::paging::page_table::PageTableEntry, len| {
+        let free = |entry: PageTableEntry, len| {
             if entry
                 .flags()
                 .contains(frame_attribute_table::FRAME_ATTR_ENTRY_FLAG)
@@ -171,8 +204,8 @@ pub(crate) unsafe fn unmap_and_free(addr: VirtAddr) -> Result<(), ()> {
 
                 // if no fae is present
                 if free {
-                    let l = allocator::COMBINED_ALLOCATOR.lock();
-                    l.phys_alloc().dealloc(entry.addr().as_u64() as usize, len)
+                    let l = allocator::PHYS_ALLOCATOR.lock();
+                    l.dealloc(entry.addr().as_u64() as usize, len)
                 }
             };
         };
@@ -184,7 +217,8 @@ pub(crate) unsafe fn unmap_and_free(addr: VirtAddr) -> Result<(), ()> {
                 if !e.flags().contains(PageTableFlags::PRESENT) {
                     return Err(());
                 }
-                unmap_page(Page::<Size4KiB>::containing_address(addr));
+
+                unmap_page(Page::<Size4KiB>::containing_address(addr)); // Note that MEMORY_MAP is already dropped.
                 free(e, 0x1000);
             }
             Err(GetEntryErr::NotMapped) => return Err(()),
@@ -218,16 +252,16 @@ pub fn translate(addr: usize) -> Option<u64> {
         // 4k
         let page = Page::<Size4KiB>::containing_address(addr);
         let offset = addr.as_u64() & (0x1000 - 1);
-        let ret = match SYS_MAPPER.get().translate_page(page) {
+        let ret = match MEMORY_MAP.lock().translate_page(page) {
             Err(TranslateError::ParentEntryHugePage) => {
                 let page = Page::<Size2MiB>::containing_address(addr);
                 let offset = addr.as_u64() & (0x200000 - 1);
-                match SYS_MAPPER.get().translate_page(page) {
+                match MEMORY_MAP.lock().translate_page(page) {
                     Err(TranslateError::ParentEntryHugePage) => {
                         let page = Page::<Size1GiB>::containing_address(addr);
                         let offset = addr.as_u64() & (0x40000000 - 1);
-                        SYS_MAPPER
-                            .get()
+                        MEMORY_MAP
+                            .lock()
                             .translate_page(page)
                             .ok()?
                             .start_address()
@@ -255,25 +289,47 @@ pub fn translate_ptr<T>(ptr: *const T) -> Option<u64> {
 
 /// Updates the page flags of the given page
 /// Only supports 4k pages atm
-pub(crate) fn set_flags<S>(page: Page<S>, flags: PageTableFlags) -> Result<(), UpdateFlagsErr>
+pub(crate) fn set_flags<S: 'static>(
+    page: Page<S>,
+    flags: PageTableFlags,
+) -> Result<(), UpdateFlagsErr>
 where
     Page<S>: Copy,
     S: PageSize,
     offset_page_table::OffsetPageTable: Mapper<S>,
 {
-    let r = unsafe {
-        SYS_MAPPER.get().update_flags(
-            Page::<S>::from_start_address(VirtAddr::new(page.start_address().as_u64()))
-                .map_err(|_| UpdateFlagsErr::InvalidAddress)?,
-            flags,
-        )
+    unsafe {
+        let mut mm = MEMORY_MAP.lock();
+
+        // SAFETY: This is safe because the TLB entry will be shot down
+        let entry = match mm.get_entry_ref(page) {
+            Ok(entry) => entry,
+            Err(TranslateError::PageNotMapped) => {
+                return Err(UpdateFlagsErr::PageNotMapped(page.start_address().as_u64()));
+            }
+            Err(TranslateError::ParentEntryHugePage) => {
+                return Err(UpdateFlagsErr::ParentHugePage(
+                    page.start_address().as_u64(),
+                ));
+            }
+            _ => unreachable!(),
+        };
+
+        drop(mm);
+
+        if entry.flags().contains(PageTableFlags::PRESENT) {
+            shootdown_hint(|| {
+                // SAFETY: This is actually unsafe.
+                // Note this can (and should) panic if another CPU modifies the tables.
+                entry.set_flags(PageTableFlags::empty());
+                x86_64::instructions::tlb::flush(page.start_address());
+                shootdown(page.into());
+                entry.set_flags(flags);
+            })
+        } else {
+            entry.set_flags(flags);
+        }
     };
-    let p = page.start_address();
-    r.map_err(|e| match e {
-        FlagUpdateError::PageNotMapped => UpdateFlagsErr::PageNotMapped(p.as_u64()),
-        FlagUpdateError::ParentEntryHugePage => UpdateFlagsErr::ParentHugePage(p.as_u64()),
-    })?
-    .flush();
     Ok(())
 }
 
@@ -283,21 +339,12 @@ pub(crate) use offset_page_table::GetEntryErr;
 /// This can be used to update the entries flags.
 pub(crate) fn get_entry<S: PageSize + core::fmt::Debug + 'static>(
     page: Page<S>,
-) -> Result<x86_64::structures::paging::page_table::PageTableEntry, GetEntryErr> {
-    let l = allocator::COMBINED_ALLOCATOR.lock();
+) -> Result<PageTableEntry, GetEntryErr> {
+    let l = MEMORY_MAP.lock();
 
     // This can be completely removed by the compiler.
-    let level = if core::any::TypeId::of::<S>() == core::any::TypeId::of::<Size4KiB>() {
-        PageTableLevel::L1
-    } else if core::any::TypeId::of::<S>() == core::any::TypeId::of::<Size2MiB>() {
-        PageTableLevel::L2
-    } else if core::any::TypeId::of::<S>() == core::any::TypeId::of::<Size1GiB>() {
-        PageTableLevel::L3
-    } else {
-        // SAFETY: These are the only 3 possible variants.
-        unsafe { core::hint::unreachable_unchecked() };
-    };
-    l.mapper().get_entry(level, page.start_address())
+
+    l.get_entry(PageTableLevel::from_page_size::<S>(), page.start_address())
 }
 
 /// Maps the specified frame to the specified page, with the given flags.
@@ -315,12 +362,8 @@ where
     offset_page_table::OffsetPageTable: Mapper<S>,
 {
     let page = Page::<S>::containing_address(page);
-    let mut l = allocator::COMBINED_ALLOCATOR.lock();
-    unsafe {
-        l.mapper_mut()
-            .map_to(page, frame, flags, &mut DummyFrameAlloc)
-    }
-    .map(|f| f.ignore())
+    let mut l = MEMORY_MAP.lock();
+    unsafe { l.map_to(page, frame, flags, &mut DummyFrameAlloc) }.map(|f| f.ignore())
 }
 
 /// Updates page table flags regardless of page size.
@@ -386,11 +429,12 @@ macro_rules! update_flags {
         }
     };
 }
+use crate::mem::tlb::{shootdown, shootdown_hint};
 pub use update_flags;
 
 /// Iterates over `iter` updating each page.
 /// If an error is encountered while this is running then all pages before the one returned will have updated flags.
-pub(crate) fn set_flags_iter<P: PageSize, T: Iterator<Item = Page<P>>>(
+pub(crate) fn set_flags_iter<P: PageSize + 'static, T: Iterator<Item = Page<P>>>(
     iter: T,
     flags: PageTableFlags,
 ) -> Result<(), UpdateFlagsErr>
@@ -409,4 +453,22 @@ pub enum UpdateFlagsErr {
     PageNotMapped(u64),
     ParentHugePage(u64),
     InvalidAddress,
+}
+
+struct UnmappedPageIter<'a, S: PageSize + 'static> {
+    mapper: crate::util::mutex::ReentrantMutexGuard<'a, offset_page_table::OffsetPageTable>,
+    range: PageRangeInclusive<S>,
+}
+
+impl<'a, S: PageSize + 'static> Iterator for UnmappedPageIter<'a, S> {
+    type Item = &'a mut PageTableEntry;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let n = self.range.next()?;
+        // SAFETY: Present will always be clear, and will be synchronized prior.
+        // Transmute: Compiler thinks we are passing self.mapper to get_entry_ref().
+        // But we are passing *self.mapper, which has lifetime 'a not 'self.
+        // The returned reference is allowed to outlive 'self
+        unsafe { core::mem::transmute(self.mapper.get_entry_ref(n).ok()) }
+    }
 }
