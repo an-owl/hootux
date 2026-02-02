@@ -35,6 +35,24 @@ where
     rc
 }
 
+/// Enables alternate mode for handling shootdown warnings without requiring a closure.
+pub struct ShootDownWarn {
+    _private: (),
+}
+
+impl ShootDownWarn {
+    pub fn new() -> Self {
+        SHOOTDOWN_WARN.fetch_add(1, atomic::Ordering::Acquire);
+        Self { _private: () }
+    }
+}
+
+impl Drop for ShootDownWarn {
+    fn drop(&mut self) {
+        SHOOTDOWN_WARN.fetch_sub(1, atomic::Ordering::Release);
+    }
+}
+
 /// Initiates a TLB shootdown to all CPUs on the memory regions provided in `shootdown_content`.
 /// This should only be used to shootdown kernel memory regions.
 pub fn shootdown(shootdown_content: ShootdownContent) {
