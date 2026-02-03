@@ -101,13 +101,13 @@ where
         drop(mm);
         shootdown(range.into());
 
-        UnmappedPageIter {
-            mapper: MEMORY_MAP.lock(),
-            range: PageRangeInclusive {
+        UnmappedPageIter::new(
+            MEMORY_MAP.lock(),
+            PageRangeInclusive {
                 start: start_addr,
                 end: end_addr.unwrap_or(Page::containing_address(VirtAddr::new(0))),
             },
-        }
+        )
     })
 }
 
@@ -455,14 +455,30 @@ pub enum UpdateFlagsErr {
 
 struct UnmappedPageIter<'a, S: PageSize + 'static> {
     mapper: crate::util::mutex::ReentrantMutexGuard<'a, offset_page_table::OffsetPageTable>,
+    initial: PageRangeInclusive<S>,
     range: PageRangeInclusive<S>,
 }
 
-impl<S: PageSize + 'static> UnmappedPageIter<'_, S> {
+impl<'a, S: PageSize + 'static> UnmappedPageIter<'a, S> {
+    fn new(
+        mapper: crate::util::mutex::ReentrantMutexGuard<'a, offset_page_table::OffsetPageTable>,
+        range: PageRangeInclusive<S>,
+    ) -> Self {
+        Self {
+            mapper,
+            initial: range,
+            range,
+        }
+    }
+
     pub fn next_page(&mut self) -> Option<&mut PageTableEntry> {
         // SAFETY: Self is only constructed after the entry is set to not-present and the TLB is synchronized.
         self.range.next().map(|page| {
             unsafe { self.mapper.get_entry_ref(page) }.expect("Mapper was modified unexpectedly")
         })
+    }
+
+    pub fn reload(&mut self) {
+        self.range = self.initial;
     }
 }
