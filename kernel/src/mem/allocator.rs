@@ -1,4 +1,5 @@
 use crate::mem;
+use crate::mem::allocator::combined_allocator::{InferiorAllocator, SuperiorAllocator};
 use core::alloc::{AllocError, Layout};
 use core::ptr::NonNull;
 use mem::mem_map::*;
@@ -35,13 +36,17 @@ impl<A> Locked<A> {
 pub const HEAP_START: usize = 0xffff808000000000;
 pub const HEAP_SIZE: usize = 1024 * 1024;
 
-#[global_allocator]
-pub(super) static COMBINED_ALLOCATOR: crate::util::mutex::ReentrantMutex<
-    combined_allocator::DualHeap<buddy_alloc::BuddyHeap, fixed_size_block::NewFixedBlockAllocator>,
-> = crate::util::mutex::ReentrantMutex::new(combined_allocator::DualHeap::new(
+pub(super) static MEMORY_ALLOCATORS: crate::util::mutex::ReentrantMutex<(
+    buddy_alloc::BuddyHeap,
+    fixed_size_block::NewFixedBlockAllocator,
+)> = crate::util::mutex::ReentrantMutex::new((
     buddy_alloc::BuddyHeap::new(),
     fixed_size_block::NewFixedBlockAllocator::new(),
 ));
+
+pub(super) static PHYS_ALLOCATOR: crate::util::mutex::ReentrantMutex<
+    super::buddy_frame_alloc::BuddyFrameAlloc,
+> = crate::util::mutex::ReentrantMutex::new(super::buddy_frame_alloc::BuddyFrameAlloc::new());
 
 /// Maps memory to addr and uses it to initialize the allocator
 pub unsafe fn init_comb_heap(addr: usize) {
@@ -49,7 +54,7 @@ pub unsafe fn init_comb_heap(addr: usize) {
         assert_eq!(addr & (buddy_alloc::ORDER_MAX_SIZE - 1), 0);
 
         let ptr = addr as *mut u8;
-        let mut lock = COMBINED_ALLOCATOR.lock();
+        let mut lock = MEMORY_ALLOCATORS.lock();
 
         // map mem
         map_page(
@@ -57,7 +62,8 @@ pub unsafe fn init_comb_heap(addr: usize) {
             PROGRAM_DATA_FLAGS,
         ); // unwrap shouldn't panic
         let ptr = addr as *mut [u8; mem::PAGE_SIZE];
-        lock.init(ptr);
+        lock.1.init(ptr);
+        lock.0.init(ptr as usize);
     }
 }
 
