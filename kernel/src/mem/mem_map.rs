@@ -21,11 +21,7 @@ static MEMORY_MAP: crate::util::mutex::ReentrantMutex<offset_page_table::OffsetP
 /// # Panics
 ///
 /// This fn will panic if a page within range is already mapped
-///
-/// #Safety
-///
-/// see [Mapper::map_to]
-pub unsafe fn map_range<'a, S: PageSize + core::fmt::Debug, I: Iterator<Item = Page<S>>>(
+pub fn map_range<'a, S: PageSize + core::fmt::Debug, I: Iterator<Item = Page<S>>>(
     pages: I,
     flags: PageTableFlags,
 ) where
