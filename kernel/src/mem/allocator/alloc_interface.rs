@@ -1,15 +1,127 @@
 //! This module contains public interfaces for memory allocation
 
+use crate::mem::allocator::MEMORY_ALLOCATORS;
+use crate::mem::mem_map::{PROGRAM_DATA_FLAGS, map_frame_to_page, map_range};
+use crate::{mem, mem::allocator::HeapAlloc};
+use core::ptr::null_mut;
 use core::{
     alloc::{AllocError, Allocator, Layout},
     ptr::NonNull,
 };
-
-use crate::{mem, mem::allocator::HeapAlloc};
+use hootux::mem::frame_attribute_table::FatOperation;
 use x86_64::{
     PhysAddr, VirtAddr,
-    structures::paging::{Mapper, Page, PageTableFlags, Size4KiB, page::PageRangeInclusive},
+    structures::paging::{Page, PageTableFlags, Size4KiB, page::PageRangeInclusive},
 };
+
+#[global_allocator]
+static KERNEL_ALLOCATOR: KernelAllocator = KernelAllocator;
+
+struct KernelAllocator;
+
+impl KernelAllocator {
+    const ALLOC_SIZE_SEP: usize = super::super::PAGE_SIZE / 2;
+}
+
+unsafe impl core::alloc::GlobalAlloc for KernelAllocator {
+    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+        let size = layout.size().max(layout.align());
+        let l = MEMORY_ALLOCATORS.lock();
+        match size {
+            ..Self::ALLOC_SIZE_SEP => {
+                l.1.allocate(layout)
+                    .map(|e| e.as_ptr().cast())
+                    .unwrap_or(null_mut())
+            }
+            Self::ALLOC_SIZE_SEP.. => {
+                let Ok(virt_addr) = l.0.virt_allocate(layout) else {
+                    return null_mut();
+                };
+                drop(l);
+
+                map_range(
+                    PageRangeInclusive {
+                        start: Page::<Size4KiB>::containing_address(VirtAddr::from_ptr(
+                            virt_addr.as_ptr(),
+                        )),
+                        end: Page::<Size4KiB>::containing_address(VirtAddr::new(x86_64::align_up(
+                            size as u64,
+                            super::super::PAGE_SIZE as u64,
+                        ))),
+                    },
+                    PROGRAM_DATA_FLAGS,
+                );
+                virt_addr.as_ptr().cast()
+            }
+        }
+    }
+
+    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+        let size = layout.size().max(layout.align());
+        match size {
+            0..Self::ALLOC_SIZE_SEP => {
+                // SAFETY: Safety is upheld by caller.
+                unsafe {
+                    MEMORY_ALLOCATORS.lock().1.deallocate(
+                        NonNull::new(ptr).expect("Attempted to free nullptr"),
+                        layout,
+                    )
+                }
+            }
+
+            Self::ALLOC_SIZE_SEP.. => {
+                let start = Page::<Size4KiB>::containing_address(VirtAddr::from_ptr(ptr));
+
+                let end = Page::<Size4KiB>::containing_address(VirtAddr::new(
+                    (ptr as usize + size) as u64,
+                ));
+                let iter = PageRangeInclusive { start, end };
+                // SAFETY: Caller upholds safety
+                let mut iter = unsafe { mem::mem_map::unmap_range(iter) };
+                while let Some(entry) = iter.next_page() {
+                    let addr = entry.addr();
+
+                    if entry
+                        .flags()
+                        .contains(mem::frame_attribute_table::FRAME_ATTR_ENTRY_FLAG)
+                    {
+                        try_free_frame(addr)
+                    } else {
+                        // SAFETY: Upheld by caller.
+                        unsafe {
+                            super::PHYS_ALLOCATOR
+                                .lock()
+                                .dealloc(addr.as_u64() as usize, mem::PAGE_SIZE)
+                        }
+                    }
+                    entry.set_addr(PhysAddr::zero(), PageTableFlags::empty())
+                }
+            }
+        }
+    }
+}
+
+/// Attempts to free `frame`. If frame is aliased then it will not be freed.
+fn try_free_frame(addr: PhysAddr) {
+    let will_free = {
+        let fae = mem::frame_attribute_table::ATTRIBUTE_TABLE_HEAD
+            .do_op_phys(addr, FatOperation::UnAlias);
+        if let Some(fae) = fae {
+            fae.alias_count() == 0
+        } else {
+            true
+        }
+    };
+
+    if will_free {
+        // SAFETY: We have checked that the frame is not in use by
+        unsafe {
+            super::PHYS_ALLOCATOR
+                .lock()
+                .dealloc(addr.as_u64() as usize, mem::PAGE_SIZE)
+        }
+    }
+}
 
 /// Used to Allocate Physical memory regions. All allocations via this type are guaranteed to be the
 /// size of the allocation aligned up to [mem::PAGE_SIZE]
@@ -76,22 +188,16 @@ unsafe impl Allocator for MmioAlloc {
             | PageTableFlags::NO_EXECUTE
             | PageTableFlags::NO_CACHE; // huge page
 
-        let ptr = super::COMBINED_ALLOCATOR.lock().virt_allocate(layout)?;
+        let ptr = MEMORY_ALLOCATORS.lock().0.virt_allocate(layout)?;
 
         let pages = self.get_page_range(&layout, &ptr);
-        let mut phys_frame = x86_64::structures::paging::PhysFrame::<Size4KiB>::containing_address(
+        let phys_frame = x86_64::structures::paging::PhysFrame::<Size4KiB>::containing_address(
             PhysAddr::new(self.addr as u64),
         );
 
-        for page in pages {
-            unsafe {
-                mem::SYS_MAPPER
-                    .get()
-                    .map_to(page, phys_frame, flags, &mut mem::DummyFrameAlloc)
-                    .unwrap() // idk debug
-                    .ignore(); // not mapped so not cached
-            }
-            phys_frame = phys_frame + 1;
+        for (i, page) in pages.enumerate() {
+            map_frame_to_page(page.start_address(), phys_frame + i as u64, flags)
+                .expect("Failed to map frame");
         }
 
         Ok(self.offset_addr(ptr, layout.size()))
@@ -109,23 +215,16 @@ unsafe impl Allocator for MmioAlloc {
         let pages = self.get_page_range(&layout, &ptr);
 
         // align down to page boundary
-        let mut addr = ptr.as_ptr() as *mut u8 as usize;
+        let mut addr = ptr.as_ptr() as usize;
         addr &= !(mem::PAGE_SIZE - 1);
+
+        // SAFETY: Upheld by caller.
+        unsafe { mem::mem_map::unmap_range(pages) }; // Note that the returned iter is dropped immediately.
 
         let ptr = NonNull::new(addr as *mut u8).expect("Tried to deallocate illegal address");
 
-        for page in pages {
-            mem::SYS_MAPPER
-                .get()
-                .unmap(page)
-                .expect("Tried to deallocate unhandled memory")
-                .1
-                .flush();
-        }
-
-        super::COMBINED_ALLOCATOR
-            .lock()
-            .virt_deallocate(ptr, layout);
+        // SAFETY: Upheld by caller.
+        MEMORY_ALLOCATORS.lock().0.virt_deallocate(ptr, layout);
     }
 
     unsafe fn grow(
@@ -201,7 +300,7 @@ unsafe impl Allocator for DmaAlloc {
             layout = layout.pad_to_align();
         }
 
-        let addr = super::COMBINED_ALLOCATOR.lock().virt_allocate(layout)?;
+        let addr = MEMORY_ALLOCATORS.lock().0.virt_allocate(layout)?;
         {
             let start = addr.cast::<u8>().as_ptr() as usize as u64;
             let end = unsafe { addr.as_ref().len() as u64 + start } - 1; // sub one to get last byte
@@ -212,9 +311,8 @@ unsafe impl Allocator for DmaAlloc {
             };
 
             // mem::mem_map cannot be used because DMA areas must be contiguous
-            let phys_addr = mem::allocator::COMBINED_ALLOCATOR
+            let phys_addr = mem::allocator::PHYS_ALLOCATOR
                 .lock()
-                .phys_alloc()
                 .allocate(
                     Layout::from_size_align(layout.size(), self.phys_align).unwrap(),
                     self.region,
@@ -231,13 +329,9 @@ unsafe impl Allocator for DmaAlloc {
                     end,
                 ),
             };
-            let mut lock = mem::SYS_MAPPER.get();
+
             for (p, f) in core::iter::zip(range, p_range) {
-                unsafe {
-                    lock.map_to(p, f, mem::mem_map::MMIO_FLAGS, &mut mem::DummyFrameAlloc)
-                        .unwrap()
-                        .flush()
-                };
+                map_frame_to_page(p.start_address(), f, mem::mem_map::MMIO_FLAGS).unwrap();
             }
         }
         Ok(addr)
@@ -253,9 +347,35 @@ unsafe impl Allocator for DmaAlloc {
                 end: Page::containing_address(VirtAddr::new(end as u64)),
             };
 
-            for i in range.map(|p| p.start_address()) {
-                mem::mem_map::unmap_and_free(i).unwrap()
+            let mut iter = mem::mem_map::unmap_range(range);
+
+            let mut free_separate = false;
+            while let Some(entry) = iter.next_page() {
+                if entry
+                    .flags()
+                    .contains(mem::frame_attribute_table::FRAME_ATTR_ENTRY_FLAG)
+                {
+                    free_separate = true;
+                    break;
+                }
             }
+            iter.reload();
+            if free_separate {
+                while let Some(entry) = iter.next_page() {
+                    try_free_frame(entry.addr())
+                }
+            } else {
+                let Some(entry) = iter.next_page() else {
+                    return;
+                };
+                let start_address = entry.addr();
+                super::PHYS_ALLOCATOR.lock().dealloc(
+                    start_address.as_u64() as usize,
+                    layout.size().max(layout.align()),
+                );
+            }
+
+            MEMORY_ALLOCATORS.lock().0.virt_deallocate(ptr, layout);
         }
     }
 }
@@ -283,7 +403,7 @@ impl VirtAlloc {
 
 unsafe impl Allocator for VirtAlloc {
     fn allocate(&self, layout: Layout) -> Result<NonNull<[u8]>, AllocError> {
-        super::COMBINED_ALLOCATOR.lock().virt_allocate(layout)
+        MEMORY_ALLOCATORS.lock().0.virt_allocate(layout)
     }
 
     fn allocate_zeroed(&self, _layout: Layout) -> Result<NonNull<[u8]>, AllocError> {
@@ -296,9 +416,7 @@ unsafe impl Allocator for VirtAlloc {
             let off = ptr.as_ptr() as usize & (mem::PAGE_SIZE - 1);
             ptr = ptr.byte_sub(off);
 
-            super::COMBINED_ALLOCATOR
-                .lock()
-                .virt_deallocate(ptr, layout);
+            MEMORY_ALLOCATORS.lock().0.virt_deallocate(ptr, layout);
             for i in ptr.as_ptr() as usize..ptr.as_ptr() as usize + layout.size() {
                 let addr = VirtAddr::from_ptr(i as *const u8);
                 let _ = mem::mem_map::unmap_and_free(addr); // this is likely to fail, we just want to ensure that the memory isn't mapped
