@@ -167,8 +167,8 @@ impl FrameAttributeTable {
                 // SAFETY: This struct handles TLB synchronization internally
                 crate::mem::tlb::without_shootdowns(||
                 // SAFETY: This page is checked above for data, this only occurs if not useful data is present in the page.
-                crate::mem::mem_map::unmap_page(x86_64::structures::paging::Page::<x86_64::structures::paging::Size4KiB>::containing_address(addr)))
-            }
+                crate::mem::mem_map::unmap_and_free(addr).unwrap())
+            };
         }
     }
 
@@ -464,9 +464,8 @@ impl FrameAttributeTable {
 
         // If page is not present and fixups are enabled then copy the frame and update the entry
         if flags.contains(AttributeFlags::COPY_ON_FAULT) {
-            let frame = crate::mem::allocator::COMBINED_ALLOCATOR
+            let frame = crate::mem::allocator::PHYS_ALLOCATOR
                 .lock()
-                .phys_alloc()
                 .allocate(
                     core::alloc::Layout::from_size_align(size, size).unwrap(),
                     flags.get_mem_region(),
