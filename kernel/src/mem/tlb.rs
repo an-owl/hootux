@@ -12,7 +12,6 @@
 
 use crate::interrupts::apic;
 use crate::interrupts::apic::Apic;
-use core::any;
 use core::ops::Deref;
 use x86_64::structures::paging::Page;
 
@@ -610,78 +609,21 @@ impl ShootdownContent {
     }
 }
 
-impl<T, S: x86_64::structures::paging::PageSize> From<T> for ShootdownContent
-where
-    T: Iterator<Item = Page<S>> + Copy + 'static,
-    S: 'static,
-{
-    fn from(mut value: T) -> Self {
-        if any::TypeId::of::<T>() == any::TypeId::of::<Page<S>>() {
-            Self::Short(value.next().unwrap().into())
-        } else {
-            let len = value.clone().count();
-            let start = value.next().expect("Empty page range given to shootdown");
-            Self::Iter(
-                start.start_address().as_ptr(),
-                ((start + len as u64).start_address() + crate::mem::PAGE_SIZE as u64).as_ptr(),
-            )
-        }
+impl<S: x86_64::structures::paging::PageSize + 'static> From<Page<S>> for ShootdownContent {
+    fn from(value: Page<S>) -> Self {
+        Self::Short(value.into())
     }
 }
 
-/*
-impl<T,U> From<T> for ShootdownContent
-    where
-        T: Iterator<Item = U>,
-        U: Into<TlbDropEntry>
+impl<S: x86_64::structures::paging::PageSize>
+    From<x86_64::structures::paging::page::PageRangeInclusive<S>> for ShootdownContent
 {
-    fn from(value: T) -> Self {
-        let mut v = alloc::vec::Vec::new();
-        let mut hold = None;
-
-        for i in value.map(|i| i.into()) {
-            if hold == None {
-                hold = Some(i);
-            } else {
-                if let Some(mut of) = hold.as_mut().unwrap().append(i) {
-                    loop {
-                        match of.try_into() {
-                            Ok(comp) => {
-                                v.push(comp);
-                                break;
-                            },
-                            Err((comp,oof)) => {
-                                v.push(comp);
-                                // do it again.
-                                of = oof;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        loop {
-            match hold.map(|i| i.try_into()) {
-                Some(Ok(comp)) => {
-                    v.push(comp);
-                    break;
-                },
-                Some(Err((comp, of))) => {
-                    v.push(comp);
-                    // do it again.
-                    hold = Some(of);
-                }
-                None => {break}
-            }
-        }
-
-        if v.len() > 0 {
-            Self::Long(v)
-        } else {
-            Self::Short(hold.unwrap()) // if v.len() is 0 then this cannot be None
-        }
+    fn from(mut value: x86_64::structures::paging::page::PageRangeInclusive<S>) -> Self {
+        let len = value.clone().count();
+        let start = value.next().expect("Empty page range given to shootdown");
+        Self::Iter(
+            start.start_address().as_ptr(),
+            ((start + len as u64).start_address() + crate::mem::PAGE_SIZE as u64).as_ptr(),
+        )
     }
 }
-
- */
