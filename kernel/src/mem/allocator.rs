@@ -6,15 +6,13 @@ use mem::mem_map::*;
 use x86_64::VirtAddr;
 use x86_64::structures::paging::{Page, Size4KiB};
 
-pub mod bump;
-pub mod fixed_size_block;
-pub mod linked_list;
-pub mod page_table_allocator;
-//pub mod mmio_bump_alloc;
 pub mod alloc_interface;
 pub(self) mod allocator_linked_list;
 pub(super) mod buddy_alloc;
+pub mod bump;
 pub(super) mod combined_allocator;
+pub mod fixed_size_block;
+pub mod linked_list;
 
 pub struct Locked<A> {
     inner: spin::Mutex<A>,
