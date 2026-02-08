@@ -197,9 +197,8 @@ pub fn drain_map() {
     //for i in f_alloc.mem_16.free_list {}
 
     assert!(
-        super::allocator::COMBINED_ALLOCATOR
+        super::allocator::PHYS_ALLOCATOR
             .lock()
-            .phys_alloc()
             .alloc
             .lock()
             .is_fully_init
@@ -208,23 +207,20 @@ pub fn drain_map() {
 
     // Must be in smallest -> largest order or alloc will try to return the wrong region
     drain_map_inner(MemRegion::Mem16);
-    super::allocator::COMBINED_ALLOCATOR
+    super::allocator::PHYS_ALLOCATOR
         .lock()
-        .phys_alloc()
         .alloc
         .lock()
         .is_fully_init = Some(MemRegion::Mem16);
     drain_map_inner(MemRegion::Mem32);
-    super::allocator::COMBINED_ALLOCATOR
+    super::allocator::PHYS_ALLOCATOR
         .lock()
-        .phys_alloc()
         .alloc
         .lock()
         .is_fully_init = Some(MemRegion::Mem32);
     drain_map_inner(MemRegion::Mem64);
-    super::allocator::COMBINED_ALLOCATOR
+    super::allocator::PHYS_ALLOCATOR
         .lock()
-        .phys_alloc()
         .alloc
         .lock()
         .is_fully_init = Some(MemRegion::Mem64);
@@ -265,9 +261,8 @@ fn drain_map_inner(region: MemRegion) {
             len + base
         );
 
-        let b = super::allocator::COMBINED_ALLOCATOR.lock();
         #[cfg(not(feature = "alloc-debug-serial"))]
-        let f_alloc = b.phys_alloc().get().frame_alloc.alloc.lock();
+        let f_alloc = mem::allocator::PHYS_ALLOCATOR.lock();
 
         #[cfg(feature = "alloc-debug-serial")]
         let mut f_alloc = b.phys_alloc().get().frame_alloc.alloc.lock();
@@ -284,12 +279,7 @@ fn drain_map_inner(region: MemRegion) {
         drop(f_alloc);
 
         // SAFETY: region is given by frame allocator and is unused
-        unsafe {
-            super::allocator::COMBINED_ALLOCATOR
-                .lock()
-                .phys_alloc()
-                .dealloc(base, len)
-        }
+        unsafe { super::allocator::PHYS_ALLOCATOR.lock().dealloc(base, len) }
 
         #[cfg(feature = "alloc-debug-serial")]
         {
@@ -917,26 +907,16 @@ impl BuddyFrameAlloc {
                 .unwrap_or_else(|()| alloc.dealloc_exact(ptr, len));
         }
     }
-
-    /// Creates a FrameAllocRef for using with the [FrameAllocator] trait
-    /// FrameAllocator cannot be implemented on BuddyFrameAlloc because its methods take a &mut self
-    pub fn get(&self) -> FrameAllocRef<'_> {
-        FrameAllocRef { frame_alloc: &self }
-    }
 }
 
-// FrameAllocator uses &mut but i need it to be &
-pub struct FrameAllocRef<'a> {
-    frame_alloc: &'a BuddyFrameAlloc,
-}
-
+use crate::mem;
 use x86_64::structures::paging::{
     FrameAllocator, FrameDeallocator, PhysFrame, Size1GiB, Size2MiB, Size4KiB,
 };
 
-unsafe impl<'a> FrameAllocator<Size4KiB> for FrameAllocRef<'a> {
+unsafe impl<'a> FrameAllocator<Size4KiB> for BuddyFrameAlloc {
     fn allocate_frame(&mut self) -> Option<PhysFrame<Size4KiB>> {
-        let addr = self.frame_alloc.allocate(
+        let addr = self.allocate(
             core::alloc::Layout::from_size_align(0x1000, 0x1000).unwrap(),
             MemRegion::Mem64,
         )?;
@@ -945,11 +925,10 @@ unsafe impl<'a> FrameAllocator<Size4KiB> for FrameAllocRef<'a> {
     }
 }
 
-impl<'a> FrameDeallocator<Size4KiB> for FrameAllocRef<'a> {
+impl<'a> FrameDeallocator<Size4KiB> for BuddyFrameAlloc {
     unsafe fn deallocate_frame(&mut self, frame: PhysFrame<Size4KiB>) {
         unsafe {
-            self.frame_alloc
-                .alloc
+            self.alloc
                 .lock()
                 .dealloc(frame.start_address().as_u64() as usize, 0x1000)
                 .unwrap(); // shouldn't panic
@@ -957,9 +936,9 @@ impl<'a> FrameDeallocator<Size4KiB> for FrameAllocRef<'a> {
     }
 }
 
-unsafe impl<'a> FrameAllocator<Size2MiB> for FrameAllocRef<'a> {
+unsafe impl<'a> FrameAllocator<Size2MiB> for BuddyFrameAlloc {
     fn allocate_frame(&mut self) -> Option<PhysFrame<Size2MiB>> {
-        let addr = self.frame_alloc.allocate(
+        let addr = self.allocate(
             core::alloc::Layout::from_size_align(0x200000, 0x200000).unwrap(),
             MemRegion::Mem64,
         )?;
@@ -968,11 +947,10 @@ unsafe impl<'a> FrameAllocator<Size2MiB> for FrameAllocRef<'a> {
     }
 }
 
-impl<'a> FrameDeallocator<Size2MiB> for FrameAllocRef<'a> {
+impl<'a> FrameDeallocator<Size2MiB> for BuddyFrameAlloc {
     unsafe fn deallocate_frame(&mut self, frame: PhysFrame<Size2MiB>) {
         unsafe {
-            self.frame_alloc
-                .alloc
+            self.alloc
                 .lock()
                 .dealloc(frame.start_address().as_u64() as usize, 0x200000)
                 .unwrap(); // shouldn't panic
@@ -980,9 +958,9 @@ impl<'a> FrameDeallocator<Size2MiB> for FrameAllocRef<'a> {
     }
 }
 
-unsafe impl<'a> FrameAllocator<Size1GiB> for FrameAllocRef<'a> {
+unsafe impl<'a> FrameAllocator<Size1GiB> for BuddyFrameAlloc {
     fn allocate_frame(&mut self) -> Option<PhysFrame<Size1GiB>> {
-        let addr = self.frame_alloc.allocate(
+        let addr = self.allocate(
             core::alloc::Layout::from_size_align(0x40000000, 0x40000000).unwrap(),
             MemRegion::Mem64,
         )?;
@@ -991,11 +969,10 @@ unsafe impl<'a> FrameAllocator<Size1GiB> for FrameAllocRef<'a> {
     }
 }
 
-impl<'a> FrameDeallocator<Size1GiB> for FrameAllocRef<'a> {
+impl<'a> FrameDeallocator<Size1GiB> for BuddyFrameAlloc {
     unsafe fn deallocate_frame(&mut self, frame: PhysFrame<Size1GiB>) {
         unsafe {
-            self.frame_alloc
-                .alloc
+            self.alloc
                 .lock()
                 .dealloc_exact(frame.start_address().as_u64() as usize, 0x40000000);
         }
