@@ -3,7 +3,6 @@ use crate::mem;
 use core::alloc::{AllocError, Layout};
 use core::ptr::NonNull;
 use x86_64::VirtAddr;
-use x86_64::structures::paging::Mapper;
 
 // Shamelessly nicked
 // todo: replace when https://github.com/rust-lang/rust/pull/103093 is pulled
@@ -122,7 +121,7 @@ impl BuddyHeapInner {
     unsafe fn stack_extend(&mut self) {
         unsafe {
             use super::combined_allocator::InferiorAllocator;
-            use x86_64::structures::paging::{FrameAllocator, page_table::PageTableFlags};
+            use x86_64::structures::paging::page_table::PageTableFlags;
 
             // map new region
             let end_page = x86_64::structures::paging::Page::
@@ -131,18 +130,8 @@ impl BuddyHeapInner {
         ).expect("BuddyAlloc has become misaligned");
             let flags =
                 PageTableFlags::PRESENT | PageTableFlags::WRITABLE | PageTableFlags::HUGE_PAGE;
-            let frame = mem::allocator::COMBINED_ALLOCATOR
-                .lock()
-                .phys_alloc()
-                .get()
-                .allocate_frame()
-                .expect("System ran out of memory");
 
-            mem::SYS_MAPPER
-                .get()
-                .map_to(end_page, frame, flags, &mut mem::DummyFrameAlloc)
-                .expect("Failed to map memory for System Allocator")
-                .flush();
+            mem::mem_map::map_page(end_page, flags);
 
             // deallocate new region to inferior
             InteriorAlloc::new().force_dealloc(
