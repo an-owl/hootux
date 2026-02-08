@@ -207,7 +207,7 @@ impl<'a> CachedFixup<'a> {
         // Force check that this can be acquired safely again.
         // We are just going to panic on a page fault if this fails anyway.
         // This shouldn't panic but if it does we **need** to catch and fix it.
-        let l = super::allocator::COMBINED_ALLOCATOR
+        let l = super::allocator::MEMORY_ALLOCATORS
             .try_lock_pedantic()
             .expect("Tried to fixup page while mm is in use");
 
