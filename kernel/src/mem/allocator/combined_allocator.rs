@@ -169,39 +169,28 @@ impl InteriorAlloc {
 
 unsafe impl HeapAlloc for InteriorAlloc {
     fn virt_allocate(&self, layout: Layout) -> Result<NonNull<[u8]>, AllocError> {
-        super::COMBINED_ALLOCATOR
-            .lock()
-            .superior
-            .virt_allocate(layout)
+        super::MEMORY_ALLOCATORS.lock().0.virt_allocate(layout)
     }
 
     fn virt_deallocate(&self, ptr: NonNull<u8>, layout: Layout) {
-        super::COMBINED_ALLOCATOR
+        super::MEMORY_ALLOCATORS
             .lock()
-            .superior
+            .0
             .virt_deallocate(ptr, layout)
     }
 }
 
 unsafe impl core::alloc::Allocator for InteriorAlloc {
     fn allocate(&self, layout: Layout) -> Result<NonNull<[u8]>, AllocError> {
-        super::COMBINED_ALLOCATOR.lock().inferior.allocate(layout)
+        super::MEMORY_ALLOCATORS.lock().1.allocate(layout)
     }
 
     fn allocate_zeroed(&self, layout: Layout) -> Result<NonNull<[u8]>, AllocError> {
-        super::COMBINED_ALLOCATOR
-            .lock()
-            .inferior
-            .allocate_zeroed(layout)
+        super::MEMORY_ALLOCATORS.lock().1.allocate_zeroed(layout)
     }
 
     unsafe fn deallocate(&self, ptr: NonNull<u8>, layout: Layout) {
-        unsafe {
-            super::COMBINED_ALLOCATOR
-                .lock()
-                .inferior
-                .deallocate(ptr, layout)
-        }
+        unsafe { super::MEMORY_ALLOCATORS.lock().1.deallocate(ptr, layout) }
     }
 
     unsafe fn grow(
@@ -211,9 +200,9 @@ unsafe impl core::alloc::Allocator for InteriorAlloc {
         new_layout: Layout,
     ) -> Result<NonNull<[u8]>, AllocError> {
         unsafe {
-            super::COMBINED_ALLOCATOR
+            super::MEMORY_ALLOCATORS
                 .lock()
-                .inferior
+                .1
                 .grow(ptr, old_layout, new_layout)
         }
     }
@@ -225,9 +214,9 @@ unsafe impl core::alloc::Allocator for InteriorAlloc {
         new_layout: Layout,
     ) -> Result<NonNull<[u8]>, AllocError> {
         unsafe {
-            super::COMBINED_ALLOCATOR
+            super::MEMORY_ALLOCATORS
                 .lock()
-                .inferior
+                .1
                 .grow(ptr, old_layout, new_layout)
         }
     }
@@ -239,9 +228,9 @@ unsafe impl core::alloc::Allocator for InteriorAlloc {
         new_layout: Layout,
     ) -> Result<NonNull<[u8]>, AllocError> {
         unsafe {
-            super::COMBINED_ALLOCATOR
+            super::MEMORY_ALLOCATORS
                 .lock()
-                .inferior
+                .1
                 .shrink(ptr, old_layout, new_layout)
         }
     }
@@ -265,12 +254,7 @@ impl InferiorAllocator for InteriorAlloc {
     }
 
     unsafe fn force_dealloc(&self, ptr: NonNull<u8>, layout: Layout) {
-        unsafe {
-            super::COMBINED_ALLOCATOR
-                .lock()
-                .inferior
-                .force_dealloc(ptr, layout)
-        }
+        unsafe { super::MEMORY_ALLOCATORS.lock().1.force_dealloc(ptr, layout) }
     }
 }
 
