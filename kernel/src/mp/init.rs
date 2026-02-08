@@ -1,9 +1,11 @@
 // Most of this module will be unused when MP is disabled.
 #![cfg_attr(not(feature = "multiprocessing"), allow(dead_code))]
 
+use crate::mem;
 use acpi::platform::ProcessorState;
 use alloc::boxed::Box;
 use alloc::vec::Vec;
+use x86_64::VirtAddr;
 use x86_msr::Msr;
 use x86_msr::MsrFlags;
 
@@ -254,8 +256,7 @@ fn allocate_trampoline() -> Result<
     (),
 > {
     use x86_64::{
-        PhysAddr, structures::paging::Mapper, structures::paging::PageTableFlags,
-        structures::paging::frame::PhysFrame,
+        PhysAddr, structures::paging::PageTableFlags, structures::paging::frame::PhysFrame,
     };
     // copy _trampoline into `region`
     let tra = _trampoline as *const fn() as *const [u8; 4096];
@@ -276,17 +277,13 @@ fn allocate_trampoline() -> Result<
     )
     .unwrap();
     let flags = PageTableFlags::PRESENT | PageTableFlags::NO_CACHE | PageTableFlags::WRITABLE;
-    unsafe {
-        crate::mem::SYS_MAPPER
-            .get()
-            .identity_map(addr, flags, &mut crate::mem::DummyFrameAlloc)
-            .map_err(|e| {
-                log::error!("Unable to load ap trampoline {e:?}");
-            })
-    }?
-    .flush();
 
-    Ok((x86_64::VirtAddr::new(addr.start_address().as_u64()), region))
+    mem::mem_map::map_frame_to_page(VirtAddr::new(addr.start_address().as_u64()), addr, flags)
+        .map_err(|e| {
+            log::error!("Unable to load ap trampoline {e:?}");
+        })?;
+
+    Ok((VirtAddr::new(addr.start_address().as_u64()), region))
 }
 
 struct StartupCache {
@@ -352,10 +349,10 @@ impl StartupCache {
         let (l4_addr, _) = x86_64::registers::control::Cr3::read();
         let (addr, table) = if l4_addr.start_address().as_u64() > u32::MAX as u64 {
             let table = Box::new_in(
-                crate::mem::SYS_MAPPER.get().get_l4_table().clone(),
-                crate::alloc_interface::DmaAlloc::new(crate::mem::MemRegion::Mem16, 4096),
+                mem::mem_map::get_l4_table().clone(),
+                crate::alloc_interface::DmaAlloc::new(mem::MemRegion::Mem16, 4096),
             );
-            let addr = x86_64::PhysAddr::new(crate::mem::mem_map::translate_ptr(&*table).unwrap()); // no fuckin chance this panics
+            let addr = x86_64::PhysAddr::new(mem::mem_map::translate_ptr(&*table).unwrap()); // no fuckin chance this panics
             (addr, Some(table))
         } else {
             (l4_addr.start_address(), None)
