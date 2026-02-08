@@ -12,6 +12,7 @@
 
 use crate::interrupts::apic;
 use crate::interrupts::apic::Apic;
+use core::any;
 use core::ops::Deref;
 use x86_64::structures::paging::Page;
 
@@ -609,23 +610,22 @@ impl ShootdownContent {
     }
 }
 
-impl<S: x86_64::structures::paging::PageSize + 'static> From<Page<S>> for ShootdownContent {
-    fn from(value: Page<S>) -> Self {
-        Self::Short(value.into())
-    }
-}
-
 impl<T, S: x86_64::structures::paging::PageSize> From<T> for ShootdownContent
 where
-    T: Iterator<Item = Page<S>> + Copy,
+    T: Iterator<Item = Page<S>> + Copy + 'static,
+    S: 'static,
 {
     fn from(mut value: T) -> Self {
-        let len = value.clone().count();
-        let start = value.next().expect("Empty page range given to shootdown");
-        Self::Iter(
-            start.start_address().as_ptr(),
-            ((start + len as u64).start_address() + crate::mem::PAGE_SIZE as u64).as_ptr(),
-        )
+        if any::TypeId::of::<T>() == any::TypeId::of::<Page<S>>() {
+            Self::Short(value.next().unwrap().into())
+        } else {
+            let len = value.clone().count();
+            let start = value.next().expect("Empty page range given to shootdown");
+            Self::Iter(
+                start.start_address().as_ptr(),
+                ((start + len as u64).start_address() + crate::mem::PAGE_SIZE as u64).as_ptr(),
+            )
+        }
     }
 }
 
