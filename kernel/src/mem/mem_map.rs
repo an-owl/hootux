@@ -2,7 +2,6 @@
 //! preferred methods of doing so.
 
 use super::*;
-use crate::mem::buddy_frame_alloc::FrameAllocRef;
 use x86_64::structures::paging::mapper::TranslateError;
 use x86_64::structures::paging::page_table::PageTableEntry;
 
@@ -12,8 +11,8 @@ pub const PROGRAM_DATA_FLAGS: PageTableFlags = PageTableFlags::from_bits_truncat
 /// Flags for memory mapped I/O. Sets caching mode to UC uncacheable
 pub const MMIO_FLAGS: PageTableFlags = PageTableFlags::from_bits_truncate((1 << 63) | 0b10011);
 
-static MEMORY_MAP: crate::util::mutex::ReentrantMutex<offset_page_table::OffsetPageTable> =
-    crate::util::mutex::ReentrantMutex::new(offset_page_table::OffsetPageTable::uninit());
+static MEMORY_MAP: crate::util::mutex::ReentrantMutex<Option<offset_page_table::OffsetPageTable>> =
+    crate::util::mutex::ReentrantMutex::new(None);
 
 /// Maps the given pages into memory using frames given by the system frame allocator. This is the
 /// preferred method Mapping memory ranges.
@@ -25,7 +24,6 @@ pub fn map_range<'a, S: PageSize + core::fmt::Debug, I: Iterator<Item = Page<S>>
     pages: I,
     flags: PageTableFlags,
 ) where
-    FrameAllocRef<'a>: FrameAllocator<S>,
     offset_page_table::OffsetPageTable: Mapper<S>,
 {
     unsafe {
@@ -42,7 +40,11 @@ pub fn map_range<'a, S: PageSize + core::fmt::Debug, I: Iterator<Item = Page<S>>
                 .expect("System ran out of memory");
             let frame = PhysFrame::from_start_address(PhysAddr::new(frame_addr as u64)).unwrap();
 
-            match mm.map_to(page, frame, flags, &mut DummyFrameAlloc) {
+            match mm
+                .as_mut()
+                .unwrap()
+                .map_to(page, frame, flags, &mut DummyFrameAlloc)
+            {
                 Ok(_) => {}
                 Err(err) => {
                     panic!("{:?}", err);
@@ -79,7 +81,7 @@ where
             }
 
             // SAFETY:
-            let Ok(entry) = (unsafe { mm.get_entry_ref(page) }) else {
+            let Ok(entry) = (unsafe { mm.as_mut().unwrap().get_entry_ref(page) }) else {
                 break;
             };
 
@@ -123,7 +125,6 @@ where
 /// see [Mapper::map_to]
 pub unsafe fn map_page<'a, S: PageSize + core::fmt::Debug>(page: Page<S>, flags: PageTableFlags)
 where
-    FrameAllocRef<'a>: FrameAllocator<S>,
     offset_page_table::OffsetPageTable: Mapper<S>,
 {
     unsafe {
@@ -139,6 +140,8 @@ where
 
         match MEMORY_MAP
             .lock()
+            .as_mut()
+            .unwrap()
             .map_to(page, frame, flags, &mut DummyFrameAlloc)
         {
             Ok(flush) => flush.flush(),
@@ -166,7 +169,7 @@ pub unsafe fn unmap_page<'a, S: PageSize + core::fmt::Debug + 'static>(
 where
     offset_page_table::OffsetPageTable: Mapper<S>,
 {
-    match MEMORY_MAP.lock().unmap(page) {
+    match MEMORY_MAP.lock().as_mut().unwrap().unmap(page) {
         Ok((f, flush)) => {
             flush.flush();
             shootdown(page.into());
@@ -249,16 +252,18 @@ pub fn translate(addr: usize) -> Option<u64> {
         // 4k
         let page = Page::<Size4KiB>::containing_address(addr);
         let offset = addr.as_u64() & (0x1000 - 1);
-        let ret = match MEMORY_MAP.lock().translate_page(page) {
+        let ret = match MEMORY_MAP.lock().as_mut().unwrap().translate_page(page) {
             Err(TranslateError::ParentEntryHugePage) => {
                 let page = Page::<Size2MiB>::containing_address(addr);
                 let offset = addr.as_u64() & (0x200000 - 1);
-                match MEMORY_MAP.lock().translate_page(page) {
+                match MEMORY_MAP.lock().as_mut().unwrap().translate_page(page) {
                     Err(TranslateError::ParentEntryHugePage) => {
                         let page = Page::<Size1GiB>::containing_address(addr);
                         let offset = addr.as_u64() & (0x40000000 - 1);
                         MEMORY_MAP
                             .lock()
+                            .as_mut()
+                            .unwrap()
                             .translate_page(page)
                             .ok()?
                             .start_address()
@@ -297,6 +302,7 @@ where
 {
     unsafe {
         let mut mm = MEMORY_MAP.lock();
+        let mm = mm.as_mut().unwrap();
 
         // SAFETY: This is safe because the TLB entry will be shot down
         let entry = match mm.get_entry_ref(page) {
@@ -320,6 +326,7 @@ where
             x86_64::instructions::tlb::flush(page.start_address());
             shootdown(page.into());
             let mut l = MEMORY_MAP.lock();
+            let l = l.as_mut().unwrap();
             // SAFETY: Entry is not present.
             // Entry was fetched earlier so unwrap will not panic.
             l.get_entry_ref(page).unwrap().set_flags(flags);
@@ -339,8 +346,7 @@ pub(crate) fn get_entry<S: PageSize + core::fmt::Debug + 'static>(
     page: Page<S>,
 ) -> Result<PageTableEntry, GetEntryErr> {
     let l = MEMORY_MAP.lock();
-
-    // This can be completely removed by the compiler.
+    let l = l.as_ref().unwrap();
 
     l.get_entry(PageTableLevel::from_page_size::<S>(), page.start_address())
 }
@@ -361,6 +367,7 @@ where
 {
     let page = Page::<S>::containing_address(page);
     let mut l = MEMORY_MAP.lock();
+    let l = l.as_mut().unwrap();
     unsafe { l.map_to(page, frame, flags, &mut DummyFrameAlloc) }.map(|f| f.ignore())
 }
 
@@ -453,15 +460,18 @@ pub enum UpdateFlagsErr {
     InvalidAddress,
 }
 
-struct UnmappedPageIter<'a, S: PageSize + 'static> {
-    mapper: crate::util::mutex::ReentrantMutexGuard<'a, offset_page_table::OffsetPageTable>,
+pub struct UnmappedPageIter<'a, S: PageSize + 'static> {
+    mapper: crate::util::mutex::ReentrantMutexGuard<'a, Option<offset_page_table::OffsetPageTable>>,
     initial: PageRangeInclusive<S>,
     range: PageRangeInclusive<S>,
 }
 
 impl<'a, S: PageSize + 'static> UnmappedPageIter<'a, S> {
     fn new(
-        mapper: crate::util::mutex::ReentrantMutexGuard<'a, offset_page_table::OffsetPageTable>,
+        mapper: crate::util::mutex::ReentrantMutexGuard<
+            'a,
+            Option<offset_page_table::OffsetPageTable>,
+        >,
         range: PageRangeInclusive<S>,
     ) -> Self {
         Self {
@@ -474,11 +484,18 @@ impl<'a, S: PageSize + 'static> UnmappedPageIter<'a, S> {
     pub fn next_page(&mut self) -> Option<&mut PageTableEntry> {
         // SAFETY: Self is only constructed after the entry is set to not-present and the TLB is synchronized.
         self.range.next().map(|page| {
-            unsafe { self.mapper.get_entry_ref(page) }.expect("Mapper was modified unexpectedly")
+            unsafe { self.mapper.as_mut().unwrap().get_entry_ref(page) }
+                .expect("Mapper was modified unexpectedly")
         })
     }
 
     pub fn reload(&mut self) {
         self.range = self.initial;
     }
+}
+
+/// Returns the current l4 page table.
+pub(crate) fn get_l4_table() -> PageTable {
+    let l = MEMORY_MAP.lock();
+    l.as_ref().unwrap().get_l4_copy()
 }
