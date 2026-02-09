@@ -59,7 +59,7 @@ fn kernel_main(b: *mut hatcher::boot_info::BootInfo) -> ! {
 
         mem::set_sys_frame_alloc(b.memory_map.take().unwrap()); // memory map is guaranteed to be present
 
-        mem::set_sys_mem_tree_no_cr3(mapper);
+        mem::mem_map::init_kernel_mem_map(mapper);
 
         mem::allocator::init_comb_heap(0x4444_4000_0000);
         mem::buddy_frame_alloc::drain_map();

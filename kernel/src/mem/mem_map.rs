@@ -499,3 +499,10 @@ pub(crate) fn get_l4_table() -> PageTable {
     let l = MEMORY_MAP.lock();
     l.as_ref().unwrap().get_l4_copy()
 }
+
+pub fn init_kernel_mem_map(map: offset_page_table::OffsetPageTable) {
+    match MEMORY_MAP.lock().replace(map) {
+        None => {}
+        Some(_) => panic!("Kernel mem map already initialized"),
+    }
+}
