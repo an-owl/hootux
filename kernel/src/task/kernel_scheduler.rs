@@ -26,7 +26,7 @@ use core::pin::Pin;
 use core::task::{Context, Poll, Waker};
 use futures_util::Stream;
 
-const WORK_QUEUE_SIZE: usize = 128;
+const WORK_QUEUE_SIZE: usize = 256;
 
 #[thread_local]
 static CONTEXT: ContextPointer = ContextPointer::empty();
@@ -496,7 +496,7 @@ impl Task {
             .unwrap()
             .stealable_queue
             .push(id)
-            .expect_err("stealable queue full");
+            .expect("stealable queue full");
     }
 
     /// Determines whether this was called within an async context and calls either
