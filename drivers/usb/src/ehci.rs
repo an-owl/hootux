@@ -870,7 +870,10 @@ impl EndpointQueueInner {
 
                     // Replaces `i` with empty transaction string, which is then completed.
                     // Empty TransactionString is will be removed after loop completes.
-                    core::mem::replace(i, TransactionString::empty()).complete();
+                    if let Some(term) = core::mem::replace(i, TransactionString::empty()).complete()
+                    {
+                        self.terminator = Some(term);
+                    }
                     if brk {
                         break;
                     }
@@ -885,7 +888,10 @@ impl EndpointQueueInner {
                 (TransactionStringState::Error, _) => {
                     pull = current;
                     log::error!("USB error on {:?}", self.target);
-                    core::mem::replace(i, TransactionString::empty()).complete();
+                    if let Some(term) = core::mem::replace(i, TransactionString::empty()).complete()
+                    {
+                        self.terminator = Some(term);
+                    }
                     rc = true;
                 }
                 _ => {}
@@ -1438,14 +1444,17 @@ impl TransactionString {
         last.set_int_on_complete()
     }
 
-    fn complete(self) {
+    /// Completes the transaction, waking the requesting task and passing the completed struct to it.
+    /// The final QTD will then be passed to the caller to allow updating the terminating QTD.
+    #[must_use]
+    fn complete(self) -> Option<Box<QueueElementTransferDescriptor, DmaAlloc>> {
         let comp = match self.meta {
             TransactionStringMetadata::Control => {
                 // Control always has 3 QTDs only the middle one gets counted.
                 let len = self.data_buffer.len()
                     - (self.str[1].get_config().get_expected_size() as usize);
                 let mut state = crate::UsbError::Ok;
-                for i in self.str {
+                for i in &self.str {
                     if i.get_config().missed_mocro_frame() {
                         state += crate::UsbError::RecoveredError
                     }
@@ -1473,7 +1482,7 @@ impl TransactionString {
             TransactionStringMetadata::NormalData => {
                 let mut len = self.data_buffer.len();
                 let mut state = crate::UsbError::Ok;
-                for i in self.str {
+                for i in &self.str {
                     len -= i.get_config().get_expected_size() as usize;
                     if i.get_config().missed_mocro_frame() {
                         state += crate::UsbError::RecoveredError
@@ -1501,6 +1510,7 @@ impl TransactionString {
         };
 
         self.send.complete(comp);
+        self.str.into_vec().pop()
     }
 }
 
