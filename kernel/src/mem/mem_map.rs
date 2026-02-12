@@ -60,6 +60,7 @@ pub fn map_range<'a, S: PageSize + core::fmt::Debug, I: Iterator<Item = Page<S>>
 /// # Safety
 ///
 /// This fn is unsafe because it can be used to unmap in use pages that contain in use data.
+#[must_use]
 pub unsafe fn unmap_range<
     'a,
     S: PageSize + core::fmt::Debug + 'static,
@@ -90,6 +91,7 @@ where
             // clear present flag
             entry.set_flags(PageTableFlags::empty());
             end_addr = Some(page);
+            x86_64::instructions::tlb::flush(page.start_address());
         }
 
         let start_addr = start_addr.unwrap_or(Page::containing_address(VirtAddr::new(0)));
@@ -327,9 +329,17 @@ where
             shootdown(page.into());
             let mut l = MEMORY_MAP.lock();
             let l = l.as_mut().unwrap();
+
+            // Caller may not know if memory is huge page, so we must override the flag.
+            let nflag = if core::any::TypeId::of::<S>() != core::any::TypeId::of::<Size4KiB>() {
+                flags | PageTableFlags::HUGE_PAGE
+            } else {
+                flags
+            };
+
             // SAFETY: Entry is not present.
             // Entry was fetched earlier so unwrap will not panic.
-            l.get_entry_ref(page).unwrap().set_flags(flags);
+            l.get_entry_ref(page).unwrap().set_flags(nflag);
             drop(warn);
         } else {
             entry.set_flags(flags);
@@ -460,6 +470,14 @@ pub enum UpdateFlagsErr {
     InvalidAddress,
 }
 
+/// An interator over a range of pages returned by [unmap_range].
+/// This allows the caller explicitly handle cleanup of memory which may not be possible due to
+/// different requirements from the caller.
+///
+/// # Panics
+///
+/// Failing to call
+#[must_use]
 pub struct UnmappedPageIter<'a, S: PageSize + 'static> {
     mapper: crate::util::mutex::ReentrantMutexGuard<'a, Option<offset_page_table::OffsetPageTable>>,
     initial: PageRangeInclusive<S>,
@@ -491,6 +509,19 @@ impl<'a, S: PageSize + 'static> UnmappedPageIter<'a, S> {
 
     pub fn reload(&mut self) {
         self.range = self.initial;
+    }
+
+    /// Clears all remaining page table entries.
+    pub fn clear(mut self) {
+        while let Some(page) = self.next_page() {
+            *page = PageTableEntry::new();
+        }
+    }
+
+    /// Clears all pages, not just remaining entries.
+    pub fn clear_all(mut self) {
+        self.reload();
+        self.clear()
     }
 }
 

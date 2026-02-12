@@ -44,10 +44,12 @@ unsafe impl core::alloc::GlobalAlloc for KernelAllocator {
                         start: Page::<Size4KiB>::containing_address(VirtAddr::from_ptr(
                             virt_addr.as_ptr(),
                         )),
-                        end: Page::<Size4KiB>::containing_address(VirtAddr::new(x86_64::align_up(
-                            size as u64,
-                            super::super::PAGE_SIZE as u64,
-                        ))),
+                        end: Page::<Size4KiB>::containing_address(VirtAddr::new(
+                            // When size == 4096 this will only require one page
+                            // The `-1` keeps the final byte within the size
+                            // Without it size == 4096 will map 2 pages
+                            (virt_addr.addr().get() as u64 + size as u64) - 1,
+                        )),
                     },
                     PROGRAM_DATA_FLAGS,
                 );
@@ -73,7 +75,7 @@ unsafe impl core::alloc::GlobalAlloc for KernelAllocator {
                 let start = Page::<Size4KiB>::containing_address(VirtAddr::from_ptr(ptr));
 
                 let end = Page::<Size4KiB>::containing_address(VirtAddr::new(
-                    (ptr as usize + size) as u64,
+                    ((ptr as usize + size) as u64) - 1,
                 ));
                 let iter = PageRangeInclusive { start, end };
                 // SAFETY: Caller upholds safety
@@ -94,7 +96,7 @@ unsafe impl core::alloc::GlobalAlloc for KernelAllocator {
                                 .dealloc(addr.as_u64() as usize, mem::PAGE_SIZE)
                         }
                     }
-                    entry.set_addr(PhysAddr::zero(), PageTableFlags::empty())
+                    *entry = x86_64::structures::paging::page_table::PageTableEntry::new();
                 }
             }
         }
@@ -219,7 +221,7 @@ unsafe impl Allocator for MmioAlloc {
         addr &= !(mem::PAGE_SIZE - 1);
 
         // SAFETY: Upheld by caller.
-        unsafe { mem::mem_map::unmap_range(pages) }; // Note that the returned iter is dropped immediately.
+        unsafe { mem::mem_map::unmap_range(pages).clear() }; // Note that the returned iter is dropped immediately.
 
         let ptr = NonNull::new(addr as *mut u8).expect("Tried to deallocate illegal address");
 
@@ -362,7 +364,8 @@ unsafe impl Allocator for DmaAlloc {
             iter.reload();
             if free_separate {
                 while let Some(entry) = iter.next_page() {
-                    try_free_frame(entry.addr())
+                    try_free_frame(entry.addr());
+                    *entry = x86_64::structures::paging::page_table::PageTableEntry::new();
                 }
             } else {
                 let Some(entry) = iter.next_page() else {
@@ -373,6 +376,7 @@ unsafe impl Allocator for DmaAlloc {
                     start_address.as_u64() as usize,
                     layout.size().max(layout.align()),
                 );
+                iter.clear_all();
             }
 
             MEMORY_ALLOCATORS.lock().0.virt_deallocate(ptr, layout);
