@@ -642,6 +642,8 @@ pub(crate) mod pm {
     unsafe extern "C" {
         pub fn hatcher_multiboot2_pm_entry() -> !;
     }
+
+    #[unsafe(no_mangle)]
     extern "C" fn hatcher_entry_mb2pm(mbi: *mut multiboot2::BootInformationHeader) -> ! {
         // I cant remember if switching to long mode clears the higher half of the register, so clear the higher bits anyway;
         let mbi_ptr = (mbi.addr() & (metric!(4Gi) - 1)) as *mut multiboot2::BootInformationHeader;
@@ -1184,15 +1186,14 @@ pub(crate) mod pm {
     #[allow(dead_code)] // This gets used in asm, but rustc doesn't know that.
     struct InitialStack([u8; 0x3000]);
     #[unsafe(link_section = ".text.hatcher.entry.multiboot2.pm_arena")]
-    static mut PB_ARENA: InitialStack = InitialStack([0; 0x3000]);
+    #[unsafe(no_mangle)]
+    static mut MB2_PB_ARENA: InitialStack = InitialStack([0; 0x3000]);
 
     global_asm!(
         "
         .section .text.hatcher.entry.multiboot2.protected_mode
         .code32
         .global hatcher_multiboot2_pm_entry
-
-        //.equ entry_64_offset, hatcher_multiboot2_pm_entry-{entry_64}
 
         .equ entry_pointer_offset, hatcher_multiboot2_pm_entry-.L_get_eip
 
@@ -1215,7 +1216,7 @@ pub(crate) mod pm {
             call .L_get_eip
 
             .L_get_eip:
-            pop ebp
+            pop ebp // `ebp` contains the address of this instruction
 
             lea ebp,[ebp+entry_pointer_offset] // locates the address of hatcher_multiboot2_pm_entry if we are relocated
             mov esp,ebp
@@ -1225,10 +1226,8 @@ pub(crate) mod pm {
             mov ecx,{CR4_INITIAL}
             mov cr4,ecx
 
-            lea eax,[hatcher_multiboot2_pm_entry]
-            sub eax,ebp
-            lea ecx,{INITIAL_STACK}+(0x1000*3)
-            add ecx,eax
+            lea ecx,[mb2_pm_stack_offset+(0x1000*3)] // mb2_pm_stack_offset is defined in scripts/kernel.ld as MB2_PB_ARENA-hatcher_multiboot2_pm_entry
+            add ecx,ebp
             mov esp,ecx // last page in INITIAL_STACK
         _l3_setup:
         .L_setup_l3_table:
@@ -1278,13 +1277,10 @@ pub(crate) mod pm {
             long_mode:
             sub esp,16 // allocate stack space (aligned to 16)
             /// Calculate the entry address
-            /// Compiler is having a hissy fit about doing this at build time so it's being done at runtime
-            lea ecx,[hatcher_multiboot2_pm_entry] // get VMA offset (when not relocated result will be 0)
-            sub ecx,ebp // for whatever reason if I try to do this in the above instruction it always adds the symbol and never subs it
-            lea eax,{entry_64}
-            add ecx,eax // add {entry_64} VMA, this will get the absolute address at runtime
-            mov dword ptr [esp-6],ecx
-            mov word ptr [esp-2],{KNL_CODE_SEG}
+
+            mov eax,code_64
+            mov dword ptr [esp-6],eax
+            mov word ptr [esp-2], {KNL_CODE_SEG}
 
             // set segment registers
             mov cx,{KNL_DATA_SEG}
@@ -1299,10 +1295,17 @@ pub(crate) mod pm {
 
         .L_fail:
             ud2
+
+        .code64
+        .L_hatcher_entry:
+            .8byte {HATCHER_ENTRY}
+        code_64:
+            lea rax,[.L_hatcher_entry]
+            jmp rax
         ",
+        HATCHER_ENTRY = sym hatcher_entry_mb2pm,
         CR0_INITIAL = const 0x20010001u32,
         CR4_INITIAL = const 0x00000020u32,
-        INITIAL_STACK = sym PB_ARENA,
         MULTIBOOT2_MAGIC = const 0x36d76289u32,
         PAGE = const 0x1000u32,
         GIANT_PAGE_BITS = const 0x83u32, // set present,page_size,writable bits
@@ -1314,6 +1317,5 @@ pub(crate) mod pm {
         EFER_ADDR = const 0xC000_0080u32,
         KNL_DATA_SEG_BITS = const 0xcf93000000ffffu64,
         KNL_CODE_SEG_BITS = const 0xaf9b000000ffffu64,
-        entry_64 = sym hatcher_entry_mb2pm
     );
 }
