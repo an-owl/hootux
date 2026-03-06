@@ -27,7 +27,7 @@ kernel_proc_macro::multiboot2_header! {
     multiboot2_header::FramebufferHeaderTag::new(multiboot2_header::HeaderTagFlag::Optional,0,0,32)
     Pad::new()
     multiboot2_header::EfiBootServiceHeaderTag::new(multiboot2_header::HeaderTagFlag::Optional),
-    multiboot2_header::EntryEfi64HeaderTag::new(multiboot2_header::HeaderTagFlag::Required, 0x200000), // address is specified in linker script
+    //multiboot2_header::EntryEfi64HeaderTag::new(multiboot2_header::HeaderTagFlag::Required, 0x200000), // address is specified in linker script
     Pad::new(),
 }
 
