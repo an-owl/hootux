@@ -1199,6 +1199,8 @@ pub(crate) mod pm {
 
         .equ initial_gdt_offset, initial_gdt-hatcher_multiboot2_pm_entry
 
+        .equ entry_64_offset, code_64 - hatcher_multiboot2_pm_entry
+
         initial_gdt:
             .8byte 0
             .8byte {KNL_CODE_SEG_BITS}
@@ -1253,6 +1255,7 @@ pub(crate) mod pm {
             pop esi
             or esi,{PAGE_BITS}&0xf // set lower bits
             mov [edi],esi // set first entry
+            mov [edi+0x800],esi // set higher-half first entry
             mov cr3,edi
 
         _setup_gdt:
@@ -1278,7 +1281,8 @@ pub(crate) mod pm {
             sub esp,16 // allocate stack space (aligned to 16)
             /// Calculate the entry address
 
-            mov eax,code_64
+            mov eax, offset entry_64_offset
+            add eax,ebp
             mov dword ptr [esp-6],eax
             mov word ptr [esp-2], {KNL_CODE_SEG}
 
@@ -1297,11 +1301,8 @@ pub(crate) mod pm {
             ud2
 
         .code64
-        .L_hatcher_entry:
-            .8byte {HATCHER_ENTRY}
         code_64:
-            lea rax,[.L_hatcher_entry]
-            jmp rax
+            jmp {HATCHER_ENTRY}
         ",
         HATCHER_ENTRY = sym hatcher_entry_mb2pm,
         CR0_INITIAL = const 0x20010001u32,

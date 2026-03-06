@@ -10,7 +10,6 @@ runner = "cargo +nightly run --package loader --target x86_64-unknown-linux-gnu"
 
 [target.x86_64-unknown-none]
 rustflags = [
-    "-C", "relocation-model=static",
-    "-C", "code-model=large",
-    "-C", "link-arg=-T./scripts/kernel.ld"
+    "-C", "relocation-model=pic",
+    "-C", "link-arg=-T./scripts/kernel.ld",
 ]
