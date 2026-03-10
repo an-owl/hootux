@@ -44,36 +44,54 @@ impl BootInfo {
             .as_ref()?
             .elf_sections_tag()?
             .sections();
-        let mut len = 0;
         let mut init = None;
+        let mut start: Option<u64> = None;
+        let mut end: Option<u64> = None;
         for s in sections {
             if let Ok(n) = s.name() {
                 match n {
                     ".tdata" => {
                         // SAFETY: This address and size is given by the bootloader
+                        if let Some(st) = start {
+                            start = Some(st.min(s.start_address()));
+                        } else {
+                            start = Some(s.start_address());
+                        }
                         init = Some(unsafe {
                             core::slice::from_raw_parts(
                                 s.start_address() as usize as *const u8,
                                 s.size() as usize,
                             )
                         });
-                        len += s.size() as usize
+                        if let Some(ed) = end {
+                            end = Some(ed.max(s.end_address()));
+                        } else {
+                            end = Some(s.end_address())
+                        }
                     }
                     ".tbss" => {
-                        len += s.size() as usize;
+                        if let Some(st) = start {
+                            start = Some(st.min(s.start_address()));
+                        } else {
+                            start = Some(s.start_address());
+                        }
+                        if let Some(ed) = end {
+                            end = Some(ed.max(s.end_address()));
+                        } else {
+                            end = Some(s.end_address())
+                        }
                     }
                     _ => {}
                 }
             }
         }
 
-        if len == 0 {
-            None
-        } else {
-            Some(TlsTemplate {
+        match (start, end) {
+            (Some(start), Some(end)) => Some(TlsTemplate {
                 file: init.unwrap_or(&[]),
-                size: len,
-            })
+                size: (end - start).try_into().expect("TLS too large"),
+            }),
+            _ => None,
         }
     }
 
