@@ -15,8 +15,10 @@ members = [
     "lib/hid-8042",
     "drivers/hid-ps2",
     "drivers/usb", "drivers/usb/common", "drivers/usb/hci/ehci", "drivers/usb/usb-proto",
-    "drivers/usb/device-drivers/usb-hid"
-, "lib/hid"]
+    "drivers/usb/device-drivers/usb-hid",
+    "lib/hid",
+    "lib/elfload"
+]
 
 [profile.dev]
 opt-level = 0

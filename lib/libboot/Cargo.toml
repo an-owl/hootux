@@ -6,6 +6,7 @@ edition = "2024"
 [features]
 debug-bits = [] # for debugging the library, may also help with debugging a kernel too.
 define-start = []
+relocate = ["elfload", "elf"] # This feature will relocate the kernel on startup, see crate documentation for details.
 
 [dependencies]
 cfg-if = "1.0.0"
@@ -15,3 +16,5 @@ uefi = { version = "0.27.0", optional = true }
 multiboot2 = { version = "0.23.1", optional = true }
 suffix = { git = "https://github.com/an-owl/suffix" }
 ranges = "0.4.0"
+elfload = { path = "../elfload", features = ["rela_self"], optional = true }
+elf = { version = "0.8", default-features = false, optional = true }

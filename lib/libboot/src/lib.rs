@@ -15,6 +15,16 @@
 //! which bootloaders will call by default after loading the kernel. This will attempt to resolve
 //! which protocol the kernel was booted with and jump to the required initialization mechanism.
 //! A kernel may override this and explicitly and provide an entry point explicitly.
+//!
+//! ## Linking
+//!
+//! Some linker symbols are required for some features.
+//! * The `multiboot2` features requires the symbol `mb2_pm_stack_offset` which is defined as
+//! `MB2_PB_ARENA-hatcher_multiboot2_pm_entry`, both of these symbols defined internally.
+//! * The `relocate` feature requires 3 symbols
+//!     * `__ELF_BASE = 0`: This is needed to locate the base file offset address which is required to handle relocation.
+//!     * `__RELA_START` & `__RELA_END` Which should point to the start and end of the `.rela.dyn` section.
+//!     These are required to locate the `.rela.dyn` section.
 
 #[cfg(feature = "multiboot2")]
 pub extern crate multiboot2;

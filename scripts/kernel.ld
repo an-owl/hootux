@@ -1,6 +1,7 @@
 ENTRY(_start)
 
 mb2_pm_stack_offset = MB2_PB_ARENA-hatcher_multiboot2_pm_entry;
+__ELF_BASE = 0;
 SECTIONS {
 
     . = 1M;
@@ -41,6 +42,12 @@ SECTIONS {
 
    .dynsym : {
         *(.dynsym) *(dynsym.*)
+   }
+
+   .rela.dyn : {
+        __RELA_START = .;
+        *(.rela.dyn) *(.rela.dyn.*)
+        __RELA_END = .;
    }
 
 }

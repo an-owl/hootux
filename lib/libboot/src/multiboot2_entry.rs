@@ -609,7 +609,7 @@ pub(crate) mod pm {
     }
 
     use crate::boot_info::{BootInfo, GraphicInfo};
-    use core::arch::global_asm;
+    use core::arch::{asm, global_asm};
     use suffix::metric;
     use x86_64::PhysAddr;
     use x86_64::structures::paging::page_table::PageTableFlags as Flags;
@@ -641,12 +641,44 @@ pub(crate) mod pm {
 
     unsafe extern "C" {
         pub fn hatcher_multiboot2_pm_entry() -> !;
+        pub static __ELF_BASE: *const u8;
+        pub static __RELA_START: *const u8;
+        pub static __RELA_END: *const u8;
     }
 
     #[unsafe(no_mangle)]
     extern "C" fn hatcher_entry_mb2pm(mbi: *mut multiboot2::BootInformationHeader) -> ! {
         // I cant remember if switching to long mode clears the higher half of the register, so clear the higher bits anyway;
         let mbi_ptr = (mbi.addr() & (metric!(4Gi) - 1)) as *mut multiboot2::BootInformationHeader;
+
+        #[cfg(feature = "relocate")]
+        {
+            // This section is an asm block because for whatever reason rustc insists on using the GOT to look these up
+            let elf_base: *const u8;
+            let rela_start: *const elf::relocation::Elf64_Rela;
+            let rela_size: usize;
+            unsafe {
+                asm!(
+                "lea {rela_start}, [rip+__RELA_START]",
+                "lea rax, [rip+__RELA_END]",
+                "sub rax,{rela_start}", // rela_bytes = __RELA_END - __RELA_START
+                "xor rdx,rdx",
+                "div {rela_size}", // rela_bytes / {RELA_SIZE}
+
+                "lea {base}, [rip+__ELF_BASE]",
+                rela_size = in(reg) size_of::<elf::relocation::Elf64_Rela>(),
+                out("rax") rela_size,
+                rela_start = out(reg) rela_start,
+                base = lateout(reg) elf_base,
+                out("rdx") _,
+                options(pure, nomem),
+
+                //RELA_SIZE = const size_of::<elf::relocation::Elf64_Rela>(),
+                )
+            }
+
+            unsafe { elfload::relocation::relocate_simple(elf_base, rela_start, rela_size) };
+        }
 
         // SAFETY: *mbi_ptr will not be modified and is a valid pointer
         let mbi = pb_unwrapr(unsafe { multiboot2::BootInformation::load(mbi_ptr) });

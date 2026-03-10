@@ -329,6 +329,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "60b1af1c220855b6ceac025d3f6ecdd2b7c4894bfe9cd9bda4fbb4bc7c0d4cf0"
 
 [[package]]
+name = "elf"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "55dd888a213fc57e957abf2aa305ee3e8a28dbe05687a251f33b637cd46b0070"
+
+[[package]]
+name = "elfload"
+version = "0.1.0"
+dependencies = [
+ "elf",
+]
+
+[[package]]
 name = "equivalent"
 version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -447,6 +460,8 @@ name = "hatcher"
 version = "0.1.0"
 dependencies = [
  "cfg-if",
+ "elf",
+ "elfload",
  "multiboot2 0.23.1",
  "ranges",
  "suffix",
