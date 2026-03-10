@@ -1,9 +1,13 @@
 use getopts::{Fail, HasArg, Occur};
+use std::fmt::Write as _;
 use std::io::{Read, Write};
+use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use toml::value::Value;
 
 const QEMU: &str = "qemu-system-x86_64";
+
+const LIMINE_TOOLS_PATH: &str = "/usr/share/limine/";
 
 static BRIEF: &str = r#"\
 Usage `cargo run -- [OPTIONS]`
@@ -32,7 +36,7 @@ fn main() {
         eprintln!("Failed to get path to kernel");
         std::process::exit(0x26)
     };
-    let img = opts.build_grub_img(&kernel);
+    let img = opts.build_image(&kernel);
 
     let mut qemu = if let Some(q) = opts.build_exec(&img, &toml) {
         eprintln!("{q:?}");
@@ -120,6 +124,13 @@ struct Options {
     daemonize: bool,
     grub_cfg: String,
     modules: Vec<String>,
+    loader: Loader,
+}
+
+#[derive(Debug, Ord, PartialOrd, Eq, PartialEq, Copy, Clone)]
+enum Loader {
+    Grub,
+    Limine,
 }
 
 impl Options {
@@ -198,6 +209,14 @@ impl Options {
             "",
             HasArg::Yes,
             Occur::Multi,
+        );
+        opts.opt(
+            "l",
+            "loader",
+            "Which loader to use (default: grub)",
+            "grub | limine",
+            HasArg::Yes,
+            Occur::Optional,
         );
 
         let matches = match opts.parse(std::env::args_os()) {
@@ -303,6 +322,14 @@ impl Options {
                 )
             }
         };
+        let loader = matches
+            .opt_str("loader")
+            .map(|s| match &*s {
+                "limine" => Loader::Limine,
+                "grub" => Loader::Grub,
+                _ => panic!("Invalid loader type: Expected \"limine\" | \"grub\""),
+            })
+            .unwrap_or(Loader::Limine);
 
         Options {
             subcommand,
@@ -319,6 +346,7 @@ impl Options {
             daemonize: matches.opt_present("daemonize"),
             grub_cfg,
             modules,
+            loader,
         }
     }
 
@@ -529,6 +557,13 @@ impl Options {
         };
     }
 
+    fn build_image(&self, kernel: impl AsRef<std::path::Path>) -> PathBuf {
+        match self.loader {
+            Loader::Grub => self.build_grub_img(kernel),
+            Loader::Limine => self.build_limine_img(kernel),
+        }
+    }
+
     fn build_grub_img(&self, kernel: impl AsRef<std::path::Path>) -> std::path::PathBuf {
         macro_rules! mkdir {
             ($path:expr) => {
@@ -605,6 +640,111 @@ impl Options {
             }
         }
         img
+    }
+
+    fn build_limine_img(&self, kernel: impl AsRef<std::path::Path>) -> PathBuf {
+        let tgt = PathBuf::from("target");
+        let output_image = tgt.join("image.iso");
+
+        if output_image.exists() {
+            // If output_image is newer than kernel then the current image is up to date, and we dont need to build a new one.
+            if output_image.metadata().unwrap().modified().unwrap()
+                > kernel.as_ref().metadata().unwrap().modified().unwrap()
+            {
+                eprintln!("Disk image up to date skipping disk build");
+                return output_image;
+            }
+        }
+
+        let limine_dir = tgt.join("limine");
+        let efi_dir = limine_dir.join("BOOT");
+        match std::fs::create_dir(&limine_dir) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
+            e => e.unwrap(),
+        }
+        match std::fs::create_dir(&efi_dir) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
+            e => e.unwrap(),
+        }
+
+        let mut limine_files = Vec::new();
+
+        for i in std::fs::read_dir(std::path::Path::new(LIMINE_TOOLS_PATH))
+            .expect("LIMINE_TOOLS_PATH was not present")
+        {
+            let file = i.unwrap();
+            limine_files.push(file.file_name().to_string_lossy().into_owned());
+
+            let file_dest = if file.path().extension() == Some(std::ffi::OsStr::new("EFI")) {
+                &efi_dir
+            } else {
+                &limine_dir
+            };
+            std::fs::copy(file.path(), file_dest.join(file.file_name())).unwrap();
+        }
+
+        let mut strip = Command::new("strip");
+        strip
+            .arg(kernel.as_ref().to_str().unwrap())
+            .arg("-o")
+            .arg(limine_dir.join("hootux"));
+        strip.status().unwrap();
+
+        for i in &self.modules {
+            let file: PathBuf = i.into();
+            std::fs::copy(&file, limine_dir.join(file.file_name().unwrap())).unwrap();
+        }
+
+        let mut config = std::fs::File::create(limine_dir.join("limine.conf")).unwrap();
+        config.write_all(&self.limine_cfg().as_bytes()).unwrap();
+
+        let mut xorriso = Command::new("xorriso");
+        xorriso.args(["-as", "mkisofs", "-R", "-r"]);
+
+        // BIOS things
+        if limine_files.contains(&String::from("limine-bios-cd.bin")) {
+            xorriso.args([
+                "-b",
+                "limine-bios-cd.bin",
+                "-no-emul-boot",
+                "-boot-load-size",
+                "4",
+                "-boot-info-table",
+            ]);
+        }
+
+        if limine_files.contains(&String::from("limine-uefi-cd.bin")) {
+            xorriso.args([
+                "--efi-boot",
+                "limine-uefi-cd.bin",
+                "-efi-boot-part",
+                "--efi-boot-image",
+                "--protective-msdos-label",
+            ]);
+        }
+
+        xorriso.arg(limine_dir).arg("-o").arg(&output_image);
+        xorriso.status().unwrap();
+
+        let mut limine_install = Command::new("limine");
+        limine_install.arg("bios-install").arg(&output_image);
+        limine_install.status().unwrap();
+
+        output_image
+    }
+
+    fn limine_cfg(&self) -> String {
+        let mut st = String::new();
+        st += "timeout: 0\n";
+        st += "/Hootux\n";
+        st += "    protocol: multiboot2\n";
+        st += "    path: boot():/hootux\n";
+        for i in &self.modules {
+            writeln!(st, "    module_path: boot():/{i}\n").unwrap();
+        }
+        st
     }
 }
 
