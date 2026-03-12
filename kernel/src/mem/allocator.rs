@@ -35,10 +35,10 @@ pub const HEAP_START: usize = 0xffff808000000000;
 pub const HEAP_SIZE: usize = 1024 * 1024;
 
 pub(super) static MEMORY_ALLOCATORS: crate::util::mutex::ReentrantMutex<(
-    buddy_alloc::BuddyHeap,
+    buddy_alloc::BuddyAllocator,
     fixed_size_block::NewFixedBlockAllocator,
 )> = crate::util::mutex::ReentrantMutex::new((
-    buddy_alloc::BuddyHeap::new(),
+    buddy_alloc::BuddyAllocator::new(),
     fixed_size_block::NewFixedBlockAllocator::new(),
 ));
 
@@ -49,7 +49,7 @@ pub(super) static PHYS_ALLOCATOR: crate::util::mutex::ReentrantMutex<
 /// Maps memory to addr and uses it to initialize the allocator
 pub unsafe fn init_comb_heap(addr: usize) {
     unsafe {
-        assert_eq!(addr & (buddy_alloc::ORDER_MAX_SIZE - 1), 0);
+        assert_eq!(addr & (buddy_alloc::MAX_ORDER_SIZE - 1), 0);
 
         let ptr = addr as *mut u8;
         let mut lock = MEMORY_ALLOCATORS.lock();
