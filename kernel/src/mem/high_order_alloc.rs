@@ -404,12 +404,3 @@ impl AllocAddressType for u64 {
         origin as u64
     }
 }
-
-impl<const BS: u32> FreeMem<usize, BS> {
-    pub unsafe fn into_ptr(self) -> *mut [u8] {
-        unsafe {
-            // SAFETY: safety rules here should be kind of obvious. dont play with fire kids
-            core::slice::from_raw_parts_mut(self.start as *mut u8, self.len)
-        }
-    }
-}

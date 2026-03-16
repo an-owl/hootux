@@ -28,10 +28,7 @@ static MEM_MAP: crate::util::KernelStatic<pre_init_framealloc::PreInitFrameAlloc
     crate::util::KernelStatic::new();
 
 pub(super) unsafe fn init_mem_map(regions: hatcher::boot_info::MemoryMap) {
-    for i in regions.iter() {
-        crate::serial_println!("{:x?}", i)
-    }
-    MEM_MAP.init(unsafe { pre_init_framealloc::PreInitFrameAlloc::new(regions) });
+    MEM_MAP.init(pre_init_framealloc::PreInitFrameAlloc::new(regions));
 }
 
 mod pre_init_framealloc {

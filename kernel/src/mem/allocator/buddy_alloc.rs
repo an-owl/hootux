@@ -206,8 +206,4 @@ impl super::combined_allocator::SuperiorAllocator for BuddyAllocator {
             r
         );
     }
-
-    fn allocated_size(layout: Layout) -> usize {
-        layout.size().max(layout.align()).next_power_of_two()
-    }
 }
