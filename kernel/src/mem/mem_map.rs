@@ -27,7 +27,7 @@ pub fn map_range<'a, S: PageSize + core::fmt::Debug, I: Iterator<Item = Page<S>>
     offset_page_table::OffsetPageTable: Mapper<S>,
 {
     unsafe {
-        let b = allocator::PHYS_ALLOCATOR.lock();
+        let mut b = allocator::PHYS_ALLOCATOR.lock();
         let mut mm = MEMORY_MAP.lock();
 
         for page in pages {
@@ -38,7 +38,7 @@ pub fn map_range<'a, S: PageSize + core::fmt::Debug, I: Iterator<Item = Page<S>>
                     MemRegion::Mem64,
                 )
                 .expect("System ran out of memory");
-            let frame = PhysFrame::from_start_address(PhysAddr::new(frame_addr as u64)).unwrap();
+            let frame = PhysFrame::from_start_address(frame_addr).unwrap();
 
             match mm
                 .as_mut()
@@ -130,7 +130,7 @@ where
     offset_page_table::OffsetPageTable: Mapper<S>,
 {
     unsafe {
-        let b = allocator::PHYS_ALLOCATOR.lock();
+        let mut b = allocator::PHYS_ALLOCATOR.lock();
 
         let frame_addr = b
             .allocate(
@@ -138,7 +138,7 @@ where
                 MemRegion::Mem64,
             )
             .expect("System ran out of memory");
-        let frame = PhysFrame::from_start_address(PhysAddr::new(frame_addr as u64)).unwrap();
+        let frame = PhysFrame::from_start_address(frame_addr).unwrap();
 
         match MEMORY_MAP
             .lock()
@@ -206,8 +206,8 @@ pub(crate) unsafe fn unmap_and_free(addr: VirtAddr) -> Result<(), ()> {
 
                 // if no fae is present
                 if free {
-                    let l = allocator::PHYS_ALLOCATOR.lock();
-                    l.dealloc(entry.addr().as_u64() as usize, len)
+                    let mut l = allocator::PHYS_ALLOCATOR.lock();
+                    l.dealloc(entry.addr(), len)
                 }
             };
         };
@@ -221,7 +221,7 @@ pub(crate) unsafe fn unmap_and_free(addr: VirtAddr) -> Result<(), ()> {
                 }
 
                 unmap_page(Page::<Size4KiB>::containing_address(addr)); // Note that MEMORY_MAP is already dropped.
-                free(e, 0x1000);
+                free(e, Layout::from_size_align(0x1000, 0x1000).unwrap());
             }
             Err(GetEntryErr::NotMapped) => return Err(()),
             Err(GetEntryErr::ParentHugePage) => {
@@ -230,7 +230,7 @@ pub(crate) unsafe fn unmap_and_free(addr: VirtAddr) -> Result<(), ()> {
                 match get_entry(page) {
                     Ok(e) => {
                         unmap_page(Page::<Size2MiB>::containing_address(addr));
-                        free(e, 0x200000);
+                        free(e, Layout::from_size_align(0x200000, 0x200000).unwrap());
                     }
                     // SAFETY: The 4K NotMapped arm will be taken not this one.
                     Err(GetEntryErr::NotMapped) => core::hint::unreachable_unchecked(),
@@ -238,7 +238,10 @@ pub(crate) unsafe fn unmap_and_free(addr: VirtAddr) -> Result<(), ()> {
                         let page = Page::<Size1GiB>::containing_address(addr);
                         // No parent huge pages are possible. This would've returned unmapped on the 4k check. no errors are possible here.
                         unmap_page(Page::<Size1GiB>::containing_address(addr));
-                        free(get_entry(page).unwrap(), 0x40000000);
+                        free(
+                            get_entry(page).unwrap(),
+                            Layout::from_size_align(0x40000000, 0x40000000).unwrap(),
+                        );
                     }
                 }
             }

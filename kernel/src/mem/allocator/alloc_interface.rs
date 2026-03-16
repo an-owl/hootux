@@ -8,6 +8,7 @@ use core::{
     alloc::{AllocError, Allocator, Layout},
     ptr::NonNull,
 };
+use hootux::mem::PAGE_SIZE;
 use hootux::mem::frame_attribute_table::FatOperation;
 use x86_64::{
     PhysAddr, VirtAddr,
@@ -91,9 +92,10 @@ unsafe impl core::alloc::GlobalAlloc for KernelAllocator {
                     } else {
                         // SAFETY: Upheld by caller.
                         unsafe {
-                            super::PHYS_ALLOCATOR
-                                .lock()
-                                .dealloc(addr.as_u64() as usize, mem::PAGE_SIZE)
+                            super::PHYS_ALLOCATOR.lock().dealloc(
+                                addr,
+                                Layout::from_size_align(PAGE_SIZE, PAGE_SIZE).unwrap(),
+                            )
                         }
                     }
                     *entry = x86_64::structures::paging::page_table::PageTableEntry::new();
@@ -120,7 +122,7 @@ fn try_free_frame(addr: PhysAddr) {
         unsafe {
             super::PHYS_ALLOCATOR
                 .lock()
-                .dealloc(addr.as_u64() as usize, mem::PAGE_SIZE)
+                .dealloc(addr, Layout::from_size_align(PAGE_SIZE, PAGE_SIZE).unwrap());
         }
     }
 }
@@ -313,15 +315,11 @@ unsafe impl Allocator for DmaAlloc {
             };
 
             // mem::mem_map cannot be used because DMA areas must be contiguous
-            let phys_addr = mem::allocator::PHYS_ALLOCATOR
-                .lock()
-                .allocate(
-                    Layout::from_size_align(layout.size(), self.phys_align).unwrap(),
-                    self.region,
-                )
-                .ok_or(AllocError)?;
-            let start = PhysAddr::new(phys_addr as u64);
-            let end = PhysAddr::new((phys_addr as u64 + layout.size() as u64) - 1);
+            let start = mem::allocator::PHYS_ALLOCATOR.lock().allocate(
+                Layout::from_size_align(layout.size(), self.phys_align).unwrap(),
+                self.region,
+            )?;
+            let end = start + (layout.size() as u64 - 1);
 
             let p_range = x86_64::structures::paging::frame::PhysFrameRangeInclusive {
                 start: x86_64::structures::paging::frame::PhysFrame::<Size4KiB>::containing_address(
@@ -372,10 +370,7 @@ unsafe impl Allocator for DmaAlloc {
                     return;
                 };
                 let start_address = entry.addr();
-                super::PHYS_ALLOCATOR.lock().dealloc(
-                    start_address.as_u64() as usize,
-                    layout.size().max(layout.align()),
-                );
+                super::PHYS_ALLOCATOR.lock().dealloc(start_address, layout);
                 iter.clear_all();
             }
 

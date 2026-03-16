@@ -59,46 +59,42 @@ unsafe impl<S: SuperiorAllocator, I: InferiorAllocator> core::alloc::GlobalAlloc
     for crate::util::mutex::ReentrantMutex<DualHeap<S, I>>
 {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        unsafe {
-            use x86_64::VirtAddr;
-            use x86_64::structures::paging::{
-                PageTableFlags,
-                page::{Page, PageRangeInclusive, Size4KiB},
+        use x86_64::VirtAddr;
+        use x86_64::structures::paging::{
+            PageTableFlags,
+            page::{Page, PageRangeInclusive, Size4KiB},
+        };
+
+        let alloc = self.lock();
+
+        let cmp = layout.size().max(layout.align());
+
+        return if cmp < 2048 {
+            // inferior max size
+            let t = alloc.inferior.allocate(layout).unwrap().cast().as_ptr(); // panic is expected on fail
+            t
+        } else {
+            let ret = alloc
+                .superior
+                .virt_allocate(layout)
+                .unwrap()
+                .cast()
+                .as_ptr();
+
+            let pages = {
+                let start = VirtAddr::from_ptr(ret);
+                PageRangeInclusive::<Size4KiB> {
+                    start: Page::containing_address(start),
+                    end: Page::containing_address(start + S::allocated_size(layout) as u64 - 1u64),
+                }
             };
 
-            let alloc = self.lock();
+            let flags = PageTableFlags::WRITABLE | PageTableFlags::PRESENT;
 
-            let cmp = layout.size().max(layout.align());
+            mem::mem_map::map_range(pages, flags);
 
-            return if cmp < 2048 {
-                // inferior max size
-                let t = alloc.inferior.allocate(layout).unwrap().cast().as_ptr(); // panic is expected on fail
-                t
-            } else {
-                let ret = alloc
-                    .superior
-                    .virt_allocate(layout)
-                    .unwrap()
-                    .cast()
-                    .as_ptr();
-
-                let pages = {
-                    let start = VirtAddr::from_ptr(ret);
-                    PageRangeInclusive::<Size4KiB> {
-                        start: Page::containing_address(start),
-                        end: Page::containing_address(
-                            start + S::allocated_size(layout) as u64 - 1u64,
-                        ),
-                    }
-                };
-
-                let flags = PageTableFlags::WRITABLE | PageTableFlags::PRESENT;
-
-                mem::mem_map::map_range(pages, flags);
-
-                ret
-            };
-        }
+            ret
+        };
     }
 
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {

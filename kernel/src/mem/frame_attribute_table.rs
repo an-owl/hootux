@@ -471,13 +471,13 @@ impl FrameAttributeTable {
                     flags.get_mem_region(),
                 )
                 .expect("System ran out of memory");
-            let dst = PhysAddr::new(frame as u64);
+
             // SAFETY: `ptr` is to be copied, `dst` is given by the memory allocator. `size` is given as the page size by the mapper.
-            unsafe { Self::copy_frame(pte.addr(), dst, size) };
+            unsafe { Self::copy_frame(pte.addr(), frame, size) };
             let mut pt_flags = pte.flags();
             pt_flags.set(x86_64::structures::paging::PageTableFlags::WRITABLE, true);
             pt_flags.remove(FRAME_ATTR_ENTRY_FLAG);
-            map_to(addr, dst, size, pt_flags).expect("Mapping failed");
+            map_to(addr, frame, size, pt_flags).expect("Mapping failed");
             Ok(())
         } else {
             Err(())

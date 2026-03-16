@@ -47,7 +47,8 @@ unsafe impl FrameAllocator<Size4KiB> for DummyFrameAlloc {
                 unsafe { Layout::from_size_align_unchecked(PAGE_SIZE, PAGE_SIZE) },
                 MemRegion::Mem64,
             )
-            .map(|n| PhysFrame::from_start_address(PhysAddr::new(n as u64)).unwrap())
+            .map(|n| PhysFrame::from_start_address(n).unwrap())
+            .ok()
     }
 }
 unsafe impl FrameAllocator<Size2MiB> for DummyFrameAlloc {
@@ -451,6 +452,19 @@ pub enum MemRegion {
     Mem32,
     #[cfg_attr(target_pointer_width = "64", default)]
     Mem64,
+}
+
+impl From<PhysAddr> for MemRegion {
+    fn from(val: PhysAddr) -> Self {
+        const MEM_16_CAP: u64 = u16::MAX as u64;
+        const MEM_32_CAP: u64 = u32::MAX as u64;
+        let raw = val.as_u64();
+        match raw {
+            0..=MEM_16_CAP => Self::Mem16,
+            0..=MEM_32_CAP => Self::Mem32,
+            0..=u64::MAX => Self::Mem64,
+        }
+    }
 }
 
 /// Initializes Memory Management subsystems which are required runtime operation.
