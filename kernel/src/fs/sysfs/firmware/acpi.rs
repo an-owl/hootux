@@ -30,7 +30,7 @@ impl Tables {
 
     pub fn get_table<T: acpi::AcpiTable>(&self) -> Result<SdtFile<T>, IoError> {
         Ok(SdtFile {
-            table: alloc::sync::Arc::new(self.rsdt.find_table().map_err(|_| IoError::MediaError)?),
+            table: alloc::sync::Arc::new(self.rsdt.find_table().ok_or(IoError::MediaError)?),
         })
     }
 }
@@ -63,7 +63,7 @@ impl File for Tables {
 
 impl SysfsDirectory for Tables {
     fn entries(&self) -> usize {
-        self.rsdt.headers().count()
+        self.rsdt.table_entries().count()
     }
 
     fn file_list(&self) -> Vec<String> {
@@ -97,7 +97,7 @@ impl SysfsDirectory for Tables {
                 match name {
                     $( $sig => {
                         Ok(alloc::boxed::Box::new(SdtFile {
-                            table: alloc::sync::Arc::new(self.rsdt.find_table::<$name>().map_err(|_| IoError::MediaError)?),
+                            table: alloc::sync::Arc::new(self.rsdt.find_table::<$name>().ok_or(IoError::MediaError)?),
                         }))
                     })*
                     _ => Err(IoError::NotPresent)
@@ -106,12 +106,12 @@ impl SysfsDirectory for Tables {
         }
 
         match_table!(
-            "MADT" => acpi::madt::Madt,
-            "BGRT" => acpi::bgrt::Bgrt,
-            "FADT" => acpi::fadt::Fadt,
-            "HPET" => acpi::hpet::HpetTable,
-            "MCFG" => acpi::mcfg::Mcfg,
-            "SPCR" => acpi::spcr::Spcr
+            "MADT" => acpi::sdt::madt::Madt,
+            "BGRT" => acpi::sdt::bgrt::Bgrt,
+            "FADT" => acpi::sdt::fadt::Fadt,
+            "HPET" => acpi::sdt::hpet::HpetTable,
+            "MCFG" => acpi::sdt::mcfg::Mcfg,
+            "SPCR" => acpi::sdt::spcr::Spcr
         )
     }
 
@@ -171,7 +171,7 @@ impl<T: acpi::AcpiTable + 'static> File for SdtFile<T> {
     }
 
     fn len(&self) -> IoResult<'_, u64> {
-        async { Ok(self.table.region_length() as u64) }.boxed()
+        async { Ok(self.table.region_length as u64) }.boxed()
     }
 }
 

@@ -1,13 +1,13 @@
 use crate::system::pci::DeviceControl;
 
-pub fn scan_advanced(mcfg: &[acpi::mcfg::McfgEntry]) {
+pub fn scan_advanced(mcfg: &[acpi::sdt::mcfg::McfgEntry]) {
     for seg in mcfg {
         scan_bus(seg, seg.pci_segment_group, 0);
     }
     //super::PCI_META.write().sort();
 }
 
-fn scan_bus(segment_info: &acpi::mcfg::McfgEntry, bus_group: u16, bus: u8) {
+fn scan_bus(segment_info: &acpi::sdt::mcfg::McfgEntry, bus_group: u16, bus: u8) {
     for dev_num in 0..32 {
         let dev_addr = super::DeviceAddress::new(bus_group, bus, dev_num, 0);
         if let Some(phys_addr) = dev_addr.advanced_cfg_addr(segment_info) {
@@ -22,7 +22,7 @@ fn scan_bus(segment_info: &acpi::mcfg::McfgEntry, bus_group: u16, bus: u8) {
     }
 }
 
-fn check_dev(mcfg: &acpi::mcfg::McfgEntry, mut dev: DeviceControl) {
+fn check_dev(mcfg: &acpi::sdt::mcfg::McfgEntry, mut dev: DeviceControl) {
     log::info!("Discovered PCI Device at: {}", dev.address());
     if dev.dev_type() == super::configuration::register::HeaderType::Bridge {
         let dev_addr = dev.address();
@@ -42,7 +42,7 @@ fn check_dev(mcfg: &acpi::mcfg::McfgEntry, mut dev: DeviceControl) {
         .insert_device(alloc::boxed::Box::new(func_dir));
 }
 
-fn check_fns(mcfg: &acpi::mcfg::McfgEntry, addr: super::DeviceAddress) {
+fn check_fns(mcfg: &acpi::sdt::mcfg::McfgEntry, addr: super::DeviceAddress) {
     for i in 1..8 {
         let new_addr = addr.new_function(i);
 

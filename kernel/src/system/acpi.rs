@@ -1,12 +1,13 @@
 use crate::alloc_interface::MmioAlloc;
-use acpi::{AcpiHandler, PhysicalMapping};
+use acpi::aml::AmlError;
+use acpi::{Handle, Handler, PciAddress, PhysicalMapping};
 use core::alloc::{Allocator, Layout};
 use core::mem;
 
 #[derive(Copy, Clone)]
 pub struct AcpiGrabber;
 
-impl AcpiHandler for AcpiGrabber {
+impl Handler for AcpiGrabber {
     unsafe fn map_physical_region<T>(
         &self,
         physical_address: usize,
@@ -31,19 +32,130 @@ impl AcpiHandler for AcpiGrabber {
             end - start
         };
 
-        unsafe { PhysicalMapping::new(physical_address, addr, size, mapped_length, self.clone()) }
+        //unsafe { PhysicalMapping::new(physical_address, addr, size, mapped_length, self.clone()) }
+        PhysicalMapping {
+            physical_start: physical_address,
+            virtual_start: addr,
+            region_length: size,
+            mapped_length,
+            handler: self.clone(),
+        }
     }
 
     fn unmap_physical_region<T>(region: &PhysicalMapping<Self, T>) {
-        let alloc = unsafe { MmioAlloc::new(region.physical_start()) };
-        let start = region.virtual_start();
+        let alloc = unsafe { MmioAlloc::new(region.physical_start) };
+        let start = region.virtual_start;
 
         unsafe {
             alloc.deallocate(
                 start.cast(),
-                Layout::from_size_align(region.region_length(), mem::align_of::<T>()).unwrap(),
+                Layout::from_size_align(region.region_length, mem::align_of::<T>()).unwrap(),
             ) // should not panic. blame acpi if it does
         }
+    }
+
+    fn read_u8(&self, _address: usize) -> u8 {
+        unimplemented!()
+    }
+
+    fn read_u16(&self, _address: usize) -> u16 {
+        unimplemented!()
+    }
+
+    fn read_u32(&self, _address: usize) -> u32 {
+        unimplemented!()
+    }
+
+    fn read_u64(&self, _address: usize) -> u64 {
+        unimplemented!()
+    }
+
+    fn write_u8(&self, _address: usize, _value: u8) {
+        unimplemented!()
+    }
+
+    fn write_u16(&self, _address: usize, _value: u16) {
+        unimplemented!()
+    }
+
+    fn write_u32(&self, _address: usize, _value: u32) {
+        unimplemented!()
+    }
+
+    fn write_u64(&self, _address: usize, _value: u64) {
+        unimplemented!()
+    }
+
+    fn read_io_u8(&self, __port: u16) -> u8 {
+        unimplemented!()
+    }
+
+    fn read_io_u16(&self, _port: u16) -> u16 {
+        unimplemented!()
+    }
+
+    fn read_io_u32(&self, _port: u16) -> u32 {
+        unimplemented!()
+    }
+
+    fn write_io_u8(&self, _port: u16, _value: u8) {
+        unimplemented!()
+    }
+
+    fn write_io_u16(&self, _port: u16, _value: u16) {
+        unimplemented!()
+    }
+
+    fn write_io_u32(&self, _port: u16, _value: u32) {
+        unimplemented!()
+    }
+
+    fn read_pci_u8(&self, _address: PciAddress, _offset: u16) -> u8 {
+        unimplemented!()
+    }
+
+    fn read_pci_u16(&self, _address: PciAddress, _offset: u16) -> u16 {
+        unimplemented!()
+    }
+
+    fn read_pci_u32(&self, _address: PciAddress, _offset: u16) -> u32 {
+        unimplemented!()
+    }
+
+    fn write_pci_u8(&self, _address: PciAddress, _offset: u16, _value: u8) {
+        unimplemented!()
+    }
+
+    fn write_pci_u16(&self, _address: PciAddress, _offset: u16, _value: u16) {
+        unimplemented!()
+    }
+
+    fn write_pci_u32(&self, _address: PciAddress, _offset: u16, _value: u32) {
+        unimplemented!()
+    }
+
+    fn nanos_since_boot(&self) -> u64 {
+        unimplemented!()
+    }
+
+    fn stall(&self, _microseconds: u64) {
+        unimplemented!()
+    }
+
+    fn sleep(&self, _milliseconds: u64) {
+        unimplemented!()
+    }
+
+    fn create_mutex(&self) -> Handle {
+        unimplemented!()
+    }
+
+    fn acquire(&self, _mutex: Handle, _timeout: u16) -> Result<(), AmlError> {
+        unimplemented!()
+    }
+
+    fn release(&self, _mutex: Handle) {
+        unimplemented!()
     }
 }
 
@@ -53,7 +165,7 @@ pub(crate) mod data_access {
     //! of the data. [DataAccessType] is provided to allow a universal access to needed data.
 
     use crate::alloc_interface::MmioAlloc;
-    use acpi::address::{AccessSize, AddressSpace, GenericAddress};
+    use acpi::address::{AddressSpace, GenericAddress};
     use core::alloc::{Allocator, Layout};
     use core::fmt::{Debug, Formatter};
     use x86_64::VirtAddr;
@@ -197,14 +309,15 @@ pub(crate) mod data_access {
         }
     }
 
-    impl From<AccessSize> for DataSize {
-        fn from(o: AccessSize) -> Self {
+    impl From<u8> for DataSize {
+        fn from(o: u8) -> Self {
             match o {
-                AccessSize::Undefined => Self::Undefined,
-                AccessSize::ByteAccess => Self::Byte,
-                AccessSize::WordAccess => Self::Word,
-                AccessSize::DWordAccess => Self::DWord,
-                AccessSize::QWordAccess => Self::QWord,
+                0 => Self::Undefined,
+                1 => Self::Byte,
+                2 => Self::Word,
+                4 => Self::DWord,
+                8 => Self::QWord,
+                _ => panic!("Invalid data size"),
             }
         }
     }

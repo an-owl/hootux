@@ -4,8 +4,8 @@
 //! The structs here are for hardware configurations which is abstracted by the kernel via other modules.
 
 use crate::interrupts::apic::ioapic::{PinPolarity, TriggerMode};
-use acpi::InterruptModel;
 use acpi::platform::interrupt::Polarity;
+use acpi::sdt::madt::{InterruptSourceOverrideEntry, MadtEntry};
 
 pub struct SystemctlResources {
     pub(crate) ioapic: GlobalIoApic,
@@ -69,49 +69,48 @@ impl GlobalIoApic {
         Err(())
     }
 
-    pub(super) fn cfg_madt(&self, madt: core::pin::Pin<&acpi::madt::Madt>) {
-        let parsed = madt
-            .parse_interrupt_model_in(alloc::alloc::Global)
-            .expect("Failed to parse interrupt model")
-            .0;
-
+    pub(super) fn cfg_madt(&self, madt: core::pin::Pin<&acpi::sdt::madt::Madt>) {
         let mut arr = alloc::vec::Vec::new();
 
-        match parsed {
-            InterruptModel::Unknown => unimplemented!(),
-            InterruptModel::Apic(a) => {
-                for i in a.io_apics.iter() {
-                    let addr = i.address;
-                    let gsi_base = i.global_system_interrupt_base;
-                    let b = crate::util::UnsafeBox::new(unsafe {
-                        crate::mem::write_combining::WcMmioAlloc::new(addr as u64)
-                    });
-
-                    // SAFETY: References "will be dropped first", these should actually ever be
-                    // dropped for the lifetime of the system.
-                    let ptr: *mut [u8; 16] = unsafe { b.ptr() };
-
-                    // SAFETY: The address is given by firmware, if its is wrong then there is a firmware bug.
-                    let apic = unsafe {
-                        crate::interrupts::apic::ioapic::IoApic::new(ptr.cast(), gsi_base)
-                    };
-
-                    // this is safe, the addr is given by APCI firmware
-                    arr.push((apic, b));
-                }
-
-                let overrides: alloc::vec::Vec<InterruptOverride> = a
-                    .interrupt_source_overrides
-                    .iter()
-                    .map(|f| f.into())
-                    .collect();
-                self.overrides
-                    .0
-                    .set(overrides.into_boxed_slice())
-                    .expect("ISA overrides already set");
+        for i in madt.entries().find(|entry| {
+            if let MadtEntry::IoApic(_) = entry {
+                true
+            } else {
+                false
             }
-            _ => unimplemented!(),
+        }) {
+            let MadtEntry::IoApic(i) = i else {
+                unreachable!()
+            };
+            let addr = i.io_apic_address;
+            let gsi_base = i.global_system_interrupt_base;
+            let b = crate::util::UnsafeBox::new(unsafe {
+                crate::mem::write_combining::WcMmioAlloc::new(addr as u64)
+            });
+
+            // SAFETY: References "will be dropped first", these should actually ever be
+            // dropped for the lifetime of the system.
+            let ptr: *mut [u8; 16] = unsafe { b.ptr() };
+
+            // SAFETY: The address is given by firmware, if its is wrong then there is a firmware bug.
+            let apic =
+                unsafe { crate::interrupts::apic::ioapic::IoApic::new(ptr.cast(), gsi_base) };
+
+            // this is safe, the addr is given by APCI firmware
+            arr.push((apic, b));
         }
+
+        let mut overrides = alloc::vec::Vec::new();
+        for i in madt.entries() {
+            let MadtEntry::InterruptSourceOverride(ov) = i else {
+                continue;
+            };
+            overrides.push(ov.into());
+        }
+        self.overrides
+            .0
+            .set(overrides.into_boxed_slice())
+            .expect("ISA overrides already set");
 
         *self.inner.lock() = arr;
     }
@@ -163,6 +162,32 @@ impl From<&acpi::platform::interrupt::InterruptSourceOverride> for InterruptOver
 
         Self {
             isa_source: value.isa_source,
+            global_system_interrupt: value.global_system_interrupt,
+            polarity,
+            trigger_mode,
+        }
+    }
+}
+
+impl From<&InterruptSourceOverrideEntry> for InterruptOverride {
+    fn from(value: &InterruptSourceOverrideEntry) -> Self {
+        let polarity = match value.flags & 3 {
+            0 => None,
+            1 => Some(PinPolarity::AssertHigh),
+            2 => panic!("Invalid polarity `2`"),
+            3 => Some(PinPolarity::AssertLow),
+            _ => unreachable!(),
+        };
+        let trigger_mode = match (value.flags & 3 << 2) >> 2 {
+            0 => None,
+            1 => Some(TriggerMode::EdgeTriggered),
+            2 => panic!("Invalid trigger mode `2`"),
+            3 => Some(TriggerMode::LevelTriggered),
+            _ => unreachable!(),
+        };
+
+        Self {
+            isa_source: value.irq,
             global_system_interrupt: value.global_system_interrupt,
             polarity,
             trigger_mode,

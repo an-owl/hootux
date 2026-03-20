@@ -18,7 +18,7 @@ mod file;
 mod scan;
 
 pub fn init() {
-    let t = hootux::fs::sysfs::firmware::acpi::get_table::<acpi::mcfg::Mcfg>().unwrap();
+    let t = hootux::fs::sysfs::firmware::acpi::get_table::<acpi::sdt::mcfg::Mcfg>().unwrap();
     scan::scan_advanced(t.entries())
 }
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd)]
@@ -48,7 +48,7 @@ impl DeviceAddress {
         }
     }
 
-    fn advanced_cfg_addr(&self, region: &acpi::mcfg::McfgEntry) -> Option<u64> {
+    fn advanced_cfg_addr(&self, region: &acpi::sdt::mcfg::McfgEntry) -> Option<u64> {
         Some(
             region.base_address
                 + ((u64::from(self.bus - region.bus_number_start) << 20)
@@ -930,7 +930,7 @@ impl Ord for BarInfo {
     }
 }
 
-pub fn enumerate_devices(pci_regions: &[acpi::mcfg::McfgEntry]) {
+pub fn enumerate_devices(pci_regions: &[acpi::sdt::mcfg::McfgEntry]) {
     scan::scan_advanced(pci_regions)
 }
 

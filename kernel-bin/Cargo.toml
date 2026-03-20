@@ -14,7 +14,7 @@ kernel-shell = ["hootux/kernel-shell"]
 hootux = { path = "../kernel" }
 log = "0.4.17"
 x86_64 = "0.15.2"
-acpi = "5.2.0"
+acpi = "6.1.1"
 
 multiboot2-header = "0.4.0"
 hatcher = { path = "../lib/libboot", features = ["uefi", "multiboot2", "define-start", "relocate"] }

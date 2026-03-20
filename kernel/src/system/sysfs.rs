@@ -31,7 +31,7 @@ impl SysFsRoot {
         &self.discovery_driver
     }
 
-    pub fn setup_ioapic(&self, madt: core::pin::Pin<&acpi::madt::Madt>) {
+    pub fn setup_ioapic(&self, madt: core::pin::Pin<&acpi::sdt::madt::Madt>) {
         self.systemctl.ioapic.cfg_madt(madt)
     }
 }

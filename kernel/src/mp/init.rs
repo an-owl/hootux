@@ -2,7 +2,7 @@
 #![cfg_attr(not(feature = "multiprocessing"), allow(dead_code))]
 
 use crate::mem;
-use acpi::platform::ProcessorState;
+use acpi::sdt::madt::MadtEntry;
 use alloc::boxed::Box;
 use alloc::vec::Vec;
 use x86_64::VirtAddr;
@@ -34,19 +34,30 @@ pub(super) unsafe fn start_mp(tls_data: *const u8, tls_file_size: usize, tls_dat
         log::warn!("No ACPI present aborting MP startup");
         return;
     };
-    let Ok(madt) = acpi.get_table::<acpi::madt::Madt>() else {
+    let Ok(madt) = acpi.get_table::<acpi::sdt::madt::Madt>() else {
         log::warn!("No MADT present aborting MP startup");
         return;
     };
 
-    let cpus = madt
+    let mut cpus = madt
         .get()
-        .parse_interrupt_model_in(alloc::alloc::Global)
-        .unwrap()
-        .1
-        .unwrap();
+        .entries()
+        .filter(|e| {
+            if let MadtEntry::LocalApic(_) = e {
+                true
+            } else {
+                false
+            }
+        })
+        .map(|e| {
+            let MadtEntry::LocalApic(e) = e else {
+                unreachable!()
+            };
+            *e
+        })
+        .collect::<Vec<_>>();
 
-    if cpus.application_processors.len() == 0 {
+    if cpus.len() == 0 {
         return;
     }
     crate::runlevel::update_runlevel(crate::runlevel::Runlevel::Mp);
@@ -88,20 +99,20 @@ pub(super) unsafe fn start_mp(tls_data: *const u8, tls_file_size: usize, tls_dat
     // SAFETY: This is safe because data_region is initialized above
     let tr_data = unsafe { &mut *data_region };
 
-    log::info!("Starting {} CPUs", cpus.application_processors.len());
+    log::info!("Starting {} CPUs", cpus.len());
     // count for BSP
     AP_INIT_COUNT.fetch_add(1, atomic::Ordering::Relaxed);
 
-    for i in cpus.application_processors.iter() {
-        match i.state {
-            ProcessorState::Disabled => {
-                log::warn!("CPU with ACPI-ID {} is disabled", i.local_apic_id)
+    for i in cpus.iter() {
+        match i.flags & 1 << 3 {
+            1 => {
+                log::warn!("CPU with ACPI-ID {} is disabled", i.apic_id)
             }
-            ProcessorState::WaitingForSipi => {
+            2 => {
                 AP_INIT_COUNT.fetch_add(1, atomic::Ordering::Relaxed);
                 unsafe {
                     bring_up_ap(
-                        i.local_apic_id,
+                        i.apic_id as crate::mp::CpuIndex,
                         addr,
                         &cache,
                         tls_data,
@@ -111,7 +122,8 @@ pub(super) unsafe fn start_mp(tls_data: *const u8, tls_file_size: usize, tls_dat
                     )
                 }
             }
-            ProcessorState::Running => panic!("Why are you running? {}", i.local_apic_id),
+            3 => panic!("Why are you running? {}", i.apic_id),
+            _ => unreachable!(),
         }
     }
 

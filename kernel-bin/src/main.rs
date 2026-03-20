@@ -106,8 +106,10 @@ fn kernel_main(b: *mut hatcher::boot_info::BootInfo) -> ! {
         } else {
             todo!(); // try alternate ways to locate rsdp
         };
-        let fadt = acpi::PlatformInfo::new(&t).unwrap();
-        let pmtimer = fadt.pm_timer.expect("No PmTimer found");
+        let fadt = t.find_table::<acpi::sdt::fadt::Fadt>().unwrap(); //acpi::PlatformInfo::new(&t).unwrap();
+        let pmtimer = acpi::platform::PmTimer::new(&fadt)
+            .expect("No PmTimer found")
+            .expect("No PmTimer found");
         let timer = Box::new(time::acpi_pm_timer::AcpiTimer::locate(pmtimer));
         kernel_init_timer(timer);
 
@@ -160,7 +162,7 @@ fn kernel_main(b: *mut hatcher::boot_info::BootInfo) -> ! {
         fs::sysfs::SysFsRoot::new().firmware.load_acpi(acpi_tables);
     }
 
-    if let Some(madt) = fs::sysfs::firmware::acpi::get_table::<acpi::madt::Madt>() {
+    if let Some(madt) = fs::sysfs::firmware::acpi::get_table::<acpi::sdt::madt::Madt>() {
         system::sysfs::get_sysfs().setup_ioapic((&*madt).get());
     } else {
         log::warn!("No MADT was found unable to setup IOAPIC")
@@ -169,7 +171,7 @@ fn kernel_main(b: *mut hatcher::boot_info::BootInfo) -> ! {
     log::info!("Scanning pcie bus");
 
     // move into task
-    if let Some(mcfg) = fs::sysfs::firmware::acpi::get_table::<acpi::mcfg::Mcfg>() {
+    if let Some(mcfg) = fs::sysfs::firmware::acpi::get_table::<acpi::sdt::mcfg::Mcfg>() {
         system::pci::enumerate_devices(mcfg.entries());
     }
     log::info!("Bus scan complete");
