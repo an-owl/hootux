@@ -315,7 +315,7 @@ impl OffsetPageTable {
         };
 
         if table[index].is_unused() {
-            table[index].set_addr(phys_addr, flags);
+            table[index].set_addr(phys_addr, flags | PageTableFlags::PRESENT);
             Ok(())
         } else {
             Err(InternalError::PageAlreadyMapped(table[index].addr()))
@@ -371,7 +371,8 @@ impl Mapper<Size4KiB> for OffsetPageTable {
                         self.new_table(),
                         PageTableLevel::L1,
                         page,
-                        parent_table_flags,
+                        // parent tables should always be writable. Otherwise, they block lower levels form enabling writable.
+                        parent_table_flags | PageTableFlags::WRITABLE,
                     )
                     .unwrap(); // Shouldn't panic
                     self.traverse_mut(PageTableLevel::L1, page).unwrap() // Shouldn't panic

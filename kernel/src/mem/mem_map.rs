@@ -140,12 +140,12 @@ where
             .expect("System ran out of memory");
         let frame = PhysFrame::from_start_address(frame_addr).unwrap();
 
-        match MEMORY_MAP
-            .lock()
-            .as_mut()
-            .unwrap()
-            .map_to(page, frame, flags, &mut DummyFrameAlloc)
-        {
+        match MEMORY_MAP.lock().as_mut().unwrap().map_to(
+            page,
+            frame,
+            flags | PageTableFlags::PRESENT,
+            &mut DummyFrameAlloc,
+        ) {
             Ok(flush) => flush.flush(),
             Err(err) => {
                 panic!("{:?}", err);
