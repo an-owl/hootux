@@ -16,7 +16,7 @@ log = "0.4.17"
 x86_64 = "0.15.2"
 acpi = "6.1.1"
 
-multiboot2-header = "0.4.0"
+multiboot2-header = { path = "../../multiboot2/multiboot2-header" }
 hatcher = { path = "../lib/libboot", features = ["uefi", "multiboot2", "define-start", "relocate"] }
 kernel-proc-macro = { path = "../kernel-interrupts-proc-macro" }
 cast_trait_object = "0.1.3"

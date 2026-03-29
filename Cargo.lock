@@ -150,7 +150,6 @@ dependencies = [
 [[package]]
 name = "bootstrappable_buddy_allocator"
 version = "0.1.0"
-source = "git+https://github.com/an-owl/Bootstrappable-buddy-allocator#d4a017f113655c351f7acbf2b8e567de8906fd45"
 dependencies = [
  "binary_search_tree",
  "memory_addresses",
@@ -295,17 +294,6 @@ name = "derivative"
 version = "2.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fcc3dd5e9e9c0b295d6e1e4d811fb6f157d5ffd784b8d202fc62eac8035a770b"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 1.0.109",
-]
-
-[[package]]
-name = "derive_more"
-version = "0.99.17"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4fb810d30a7c1953f91334de7244731fc3f3c10d7fe163338a35b9f640960321"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -464,7 +452,7 @@ dependencies = [
  "cfg-if",
  "elf",
  "elfload",
- "multiboot2 0.24.1",
+ "multiboot2 0.24.1 (git+https://github.com/an-owl/multiboot2)",
  "ranges",
  "suffix",
  "uefi",
@@ -524,6 +512,8 @@ dependencies = [
  "cfg-if",
  "conquer-once",
  "crossbeam-queue",
+ "elf",
+ "elfload",
  "futures-util",
  "hatcher",
  "kernel-proc-macro",
@@ -692,15 +682,16 @@ dependencies = [
 
 [[package]]
 name = "multiboot2"
-version = "0.20.0"
+version = "0.24.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3d67e1b461b49127f2226c78a2b4090f72212c44fa27342bcfef93dd39bd6b86"
+checksum = "89797c447846ff7c39eebf22b1c6ce1c6d8721d0dced9771fc142d10cc2a4e97"
 dependencies = [
  "bitflags 2.11.0",
- "derive_more",
  "log",
- "ptr_meta 0.2.0",
- "uefi-raw 0.5.2",
+ "multiboot2-common",
+ "ptr_meta 0.3.1",
+ "thiserror 2.0.17",
+ "uefi-raw 0.12.0",
 ]
 
 [[package]]
@@ -729,12 +720,12 @@ dependencies = [
 
 [[package]]
 name = "multiboot2-header"
-version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e8bc033c3c641faa8b8a6fecaa6eec912f25ec7056d35d0332a03c626bd750ba"
+version = "0.7.0"
 dependencies = [
- "derive_more",
- "multiboot2 0.20.0",
+ "multiboot2 0.24.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "multiboot2-common",
+ "ptr_meta 0.3.1",
+ "thiserror 2.0.17",
 ]
 
 [[package]]
@@ -1290,6 +1281,16 @@ checksum = "efa8716f52e8cab8bcedfd5052388a0f263b69fe5cc2561548dc6a530678333c"
 dependencies = [
  "bitflags 2.11.0",
  "ptr_meta 0.2.0",
+ "uguid",
+]
+
+[[package]]
+name = "uefi-raw"
+version = "0.12.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8aff2f4f2b556a36a201d335a1e0a57754967a96857b1f47a52d5a23825cac84"
+dependencies = [
+ "bitflags 2.11.0",
  "uguid",
 ]
 

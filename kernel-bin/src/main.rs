@@ -70,6 +70,24 @@ fn kernel_main(b: *mut hatcher::boot_info::BootInfo) -> ! {
         unsafe { mem::thread_local_storage::init_tls(tls.file.as_ptr(), tls.file.len(), tls.size) }
     }
 
+    {
+        // SAFETY: The elf sections tag contains the ELF for the loaded image, and the
+        // `r_address` field contains the currently loaded address.
+        let new_base = unsafe {
+            elf::relocate(
+                b.optionals
+                    .mb2_info
+                    .as_ref()
+                    .unwrap()
+                    .elf_sections_tag()
+                    .unwrap()
+                    .sections()
+                    .map(|sec| sec.section_raw()),
+            )
+        };
+        unsafe { elf::switch_image(core::ptr::null(), new_base) };
+    }
+
     mem::init_mm_subsys();
 
     interrupts::apic::load_apic();

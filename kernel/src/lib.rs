@@ -17,7 +17,9 @@
 #![feature(layout_for_ptr)]
 #![feature(set_ptr_value)]
 #![allow(incomplete_features)]
-#![feature(generic_const_exprs)] // https://github.com/rust-lang/rust/issues/134044#issuecomment-2526396815 for why this is here
+#![feature(generic_const_exprs)]
+#![feature(ptr_metadata)]
+// https://github.com/rust-lang/rust/issues/134044#issuecomment-2526396815 for why this is here
 extern crate alloc;
 extern crate self as hootux;
 pub use mem::allocator::alloc_interface;
@@ -28,6 +30,7 @@ pub mod gdt;
 pub mod graphics;
 pub mod interrupts;
 
+pub mod elf;
 #[cfg(feature = "kernel-shell")]
 pub mod kshell;
 pub mod llvm;
@@ -71,6 +74,18 @@ fn who_am_i() -> u32 {
 
 pub trait Testable {
     fn run(&self);
+}
+
+pub fn check() {
+    log::debug!("Running test");
+    let addr = 0xffff800000000000 as *mut u8;
+    unsafe {
+        mem::mem_map::map_page(
+            x86_64::structures::paging::Page::<x86_64::structures::paging::Size4KiB>::containing_address(x86_64::VirtAddr::from_ptr(addr)),
+            x86_64::structures::paging::PageTableFlags::WRITABLE | x86_64::structures::paging::PageTableFlags::PRESENT,
+        )
+    };
+    unsafe { addr.write(1) };
 }
 
 impl<T> Testable for T

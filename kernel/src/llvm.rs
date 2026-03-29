@@ -15,6 +15,10 @@ unsafe extern "C" {
     #[doc(hidden)]
     #[link_name = "llvm.returnaddress"]
     pub fn private_return_address(frame: i32) -> *const ();
+
+    #[doc(hidden)]
+    #[link_name = "llvm.addressofreturnaddress"]
+    pub fn _private_address_of_return_address(frame: i32) -> *mut *const ();
 }
 
 /// Fetches the return address of the current fn.
@@ -37,3 +41,18 @@ macro_rules! return_address {
         }
     }};
 }
+
+/// Returns the address of the return address, allowing it to be modified.
+/// This will ignore inlining.
+/// For info see [llvm documentation](https://llvm.org/docs/LangRef.html#llvm-addressofreturnaddress-intrinsic)
+///
+/// # Safety
+///
+/// This fn is not unsafe but it is unstable. Implementation is designed for LLVM 21.1.8
+macro_rules! address_of_return_address {
+    () => {{
+        let rc = $crate::llvm::_private_address_of_return_address(0);
+        if rc.is_null() { None } else { Some(rc) }
+    }};
+}
+pub(crate) use address_of_return_address;

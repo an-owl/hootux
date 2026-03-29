@@ -37,8 +37,10 @@ cfg-if = "1.0.0"
 async-lock = { version = "3.3.0", default-features = false }
 ustar = { git = "https://github.com/an-owl/ustar" }
 byteyarn = { git = "https://github.com/mcy/strings.git", rev = "refs/pull/13/head" }
-bootstrappable_buddy_allocator = { git = "https://github.com/an-owl/Bootstrappable-buddy-allocator" }
+bootstrappable_buddy_allocator = { path = "../../bootstrappable_buddy_allocator" }
 memory_addresses = { version = "0.3.0", features = ["x86_64", "conv-x86_64"], default-features = false }
+elf = { version = "0.8.0", default-features = false }
+elfload = { path = "../lib/elfload" }
 
 hatcher = { path = "../lib/libboot", features = ["uefi", "multiboot2"] }
 cast_trait_object = "0.1.4"

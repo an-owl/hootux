@@ -1,6 +1,5 @@
 use super::MemRegion;
 use super::PAGE_SIZE;
-use crate::mem::allocator::buddy_alloc::MAX_ORDER_SIZE;
 use crate::mem::high_order_alloc::FreeMem;
 use core::alloc::{AllocError, Layout};
 use x86_64::PhysAddr;
@@ -310,13 +309,11 @@ impl Region {
             return Err(());
         };
         let base = memory_addresses::PhysAddr::new(t.as_raw().0 as u64);
-        let higher = base + MAX_ORDER_SIZE as u64;
+        let higher = base + ORDER_MAX_SIZE as u64;
 
         // We use base here because backend will allocate the lowest value blocks, meaning that the
         // start of free memory after the original allocation is satisfied will be contiguous with the higher block.
-        self.backend
-            .deallocate(HIGH_ORDER_BLOCK_SIZE as usize, base)
-            .unwrap();
+        self.backend.deallocate(ORDER_MAX_SIZE, base).unwrap();
         self.extend_recurse.store(false, atomic::Ordering::Release);
         Ok(higher)
     }
@@ -348,7 +345,7 @@ impl Region {
                 // This can never return the buddy.
                 // Part of the buddy is `rc`, this can be guaranteed because
                 // self.high_order_alloc **only** deals is BS aligned blocks.
-                self.backend.deallocate(MAX_ORDER_SIZE, hold).unwrap();
+                self.backend.deallocate(ORDER_MAX_SIZE, hold).unwrap();
                 rc
             }
         };
