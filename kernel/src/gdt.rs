@@ -1,8 +1,8 @@
 use lazy_static::lazy_static;
+use x86_64::VirtAddr;
 use x86_64::instructions::segmentation::SS;
 use x86_64::registers::segmentation::FS;
 use x86_64::structures::tss::TaskStateSegment;
-use x86_64::VirtAddr;
 
 pub const DOUBLE_FAULT_IST_INDEX: u16 = 0;
 const STACK_SIZE: usize = 4096 * 5;
@@ -62,15 +62,19 @@ struct Selectors {
     data_selector: SegmentSelector,
 }
 
-pub fn init() {
-    use x86_64::instructions::segmentation::Segment;
+pub fn init_segments() {
     use x86_64::instructions::segmentation::CS;
+    use x86_64::instructions::segmentation::Segment;
     use x86_64::instructions::tables::load_tss;
-    GDT.0.load();
+    load_gdt();
     unsafe {
         CS::set_reg(GDT.1.code_selector);
         load_tss(GDT.1.tss_selector);
         SS::set_reg(GDT.1.data_selector);
         FS::set_reg(GDT.1.data_selector); // Set base addr using `IA32_FS_BASE`.
     }
+}
+
+pub fn load_gdt() {
+    GDT.0.load();
 }

@@ -55,7 +55,7 @@ fn kernel_main(b: *mut hatcher::boot_info::BootInfo) -> ! {
     unsafe {
         mapper = mem::init(VirtAddr::new(b.physical_address_offset));
 
-        init(); // todo break apart
+        //init(); // todo break apart
 
         mem::set_sys_frame_alloc(b.memory_map.take().unwrap()); // memory map is guaranteed to be present
 
@@ -86,6 +86,11 @@ fn kernel_main(b: *mut hatcher::boot_info::BootInfo) -> ! {
             )
         };
         unsafe { elf::switch_image(core::ptr::null(), new_base) };
+
+        // todo: Fix this up
+        let fs = x86_64::registers::model_specific::FsBase::read();
+        init();
+        x86_64::registers::model_specific::FsBase::write(fs);
     }
 
     mem::init_mm_subsys();

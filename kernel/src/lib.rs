@@ -113,7 +113,7 @@ pub fn p_pat() {
 }
 
 pub fn init() {
-    gdt::init();
+    gdt::init_segments();
     interrupts::init_exceptions();
     //unsafe { interrupts::PICS.lock().initialize() }
     unsafe { interrupts::PICS.lock().disable() }
@@ -127,6 +127,12 @@ pub fn init() {
     unsafe {
         x86_64::registers::control::Cr0::write(ctl);
     }
+}
+
+/// Forces a reload of the GDT/IDT
+pub fn reload_tables() {
+    gdt::load_gdt();
+    interrupts::init_exceptions();
 }
 
 pub fn init_logger() {
