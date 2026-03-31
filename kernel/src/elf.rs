@@ -10,17 +10,19 @@ use x86_64::structures::paging::{Page, PageTableFlags, Size4KiB};
 const DEFAULT_KERNEL_BASE: usize = 0xFFFF800000000000;
 
 /// Reloads the kernel sections into `new_base`,
-/// this ignores all sections without the "ALLOC" and "TLS" flags set.
+/// this ignores all sections where "ALLOC" is not set or "TLS" is set.
 ///
 /// This will not handle [elf::abi::SHT_RELA] sections.
 ///
-/// This fn will return the address of the last allocated byte in `sections`
+/// This fn will return the address of the last allocated byte in `sections`.
+///
+/// All newly mapped memory will be in an invalid state.
 ///
 /// # Safety
 ///
 /// The caller must ensure that `sections` correctly describes the elf sections of the currently
 /// loaded image and the `sh_addr` value is set to the **current** address of the section.
-unsafe fn reload_image(
+unsafe fn alloc_image(
     new_base: *mut u8,
     sections: impl Iterator<Item = elf::section::SectionHeader>,
 ) -> usize {
@@ -70,27 +72,54 @@ unsafe fn reload_image(
         };
         // todo: Change to use most appropriate
         crate::mem::mem_map::map_range(iter, flags);
-        // SAFETY: We've just created this section.
+    }
+    tail as usize
+}
+
+/// Copies `sections` with a slide of `new_base`.
+///
+/// # Safety
+///
+/// Note this function must not modify any static data regardless of interior mutability.
+/// * The caller must ensure that no static data is modified (including allocating/freeing memory)
+/// until [switch_image] is called.
+/// * The caller must ensure that `sections` slided to `new_base` are all mapped.
+/// This function disables write protection.
+unsafe fn reload_image(
+    new_base: *mut u8,
+    sections: impl Iterator<Item = elf::section::SectionHeader>,
+) {
+    let mut cr0f = Cr0::read();
+    cr0f.set(Cr0Flags::WRITE_PROTECT, false);
+    // SAFETY: This is literally the purpose of this bit described in the documentation.
+    unsafe {
+        Cr0::write(cr0f);
+    }
+
+    for section in sections.filter(|sh| {
+        let flags = ElfFlags::from_bits_truncate(sh.sh_flags);
+        flags.contains(ElfFlags::SHF_ALLOC) && !flags.contains(ElfFlags::SHF_TLS)
+    }) {
+        let dst_start = VirtAddr::from_ptr(new_base) + section.sh_addr;
+        let data = unsafe {
+            core::slice::from_raw_parts(
+                section.sh_addr as usize as *mut u8,
+                section.sh_size as usize,
+            )
+        };
+
         let dest = unsafe {
             core::slice::from_raw_parts_mut(dst_start.as_mut_ptr(), section.sh_size as usize)
         };
 
-        let mut cr0f = Cr0::read();
-        cr0f.set(Cr0Flags::WRITE_PROTECT, false);
-        // SAFETY: This is literally the purpose of this bit described in the documentation.
-        unsafe {
-            Cr0::write(cr0f);
-        }
-
         dest.copy_from_slice(data);
-
-        cr0f.set(Cr0Flags::WRITE_PROTECT, true);
-        // SAFETY: This is literally the purpose of this bit described in the documentation.
-        unsafe {
-            Cr0::write(cr0f);
-        }
     }
-    tail as usize
+
+    cr0f.set(Cr0Flags::WRITE_PROTECT, true);
+    // SAFETY: This is literally the purpose of this bit described in the documentation.
+    unsafe {
+        Cr0::write(cr0f);
+    }
 }
 
 #[cfg(target_arch = "x86_64")]
@@ -128,7 +157,9 @@ pub unsafe fn relocate(
     mut sections: impl Iterator<Item = elf::section::SectionHeader> + Clone,
 ) -> *const u8 {
     // SAFETY: Upheld by caller.
-    let image_tail = unsafe { reload_image(get_base(), sections.clone()) };
+    let image_tail = unsafe { alloc_image(get_base(), sections.clone()) };
+    reload_image(get_base(), sections.clone());
+
     let new_image = core::ptr::from_raw_parts_mut(get_base(), image_tail);
 
     if let Some(sh_rela) = sections.find(|s| s.sh_type == elf::abi::SHT_RELA) {
