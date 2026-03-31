@@ -30,14 +30,6 @@ unsafe fn alloc_image(
     'section: for section in sections
         .filter(|sh| ElfFlags::from_bits_truncate(sh.sh_flags).contains(ElfFlags::SHF_ALLOC))
     {
-        // SAFETY: Guaranteed by caller.
-        let data = unsafe {
-            core::slice::from_raw_parts(
-                section.sh_addr as usize as *mut u8,
-                section.sh_size as usize,
-            )
-        };
-
         tail = tail.max(section.sh_addr + section.sh_size);
 
         let dst_start = VirtAddr::from_ptr(new_base) + section.sh_addr;
@@ -152,13 +144,16 @@ fn get_base() -> *mut u8 {
 /// # Safety
 ///
 /// The caller must ensure that `sections` points to the currently loaded elf sections.
+/// The caller must ensure that no `static` data is mutated.
+/// To achieve this [switch_image] should be called ASAP.
 #[must_use]
 pub unsafe fn relocate(
     mut sections: impl Iterator<Item = elf::section::SectionHeader> + Clone,
 ) -> *const u8 {
     // SAFETY: Upheld by caller.
     let image_tail = unsafe { alloc_image(get_base(), sections.clone()) };
-    reload_image(get_base(), sections.clone());
+    // SAFETY: reload_image guarantees that all sections regions are mapped.
+    unsafe { reload_image(get_base(), sections.clone()) };
 
     let new_image = core::ptr::from_raw_parts_mut(get_base(), image_tail);
 
@@ -211,8 +206,10 @@ pub unsafe fn switch_image(current_base: *const u8, new_base: *const u8) {
     let diff = new_base.addr() - current_base.addr();
     // SAFETY: I'm not even sure what to write here.
     let t = unsafe { crate::llvm::address_of_return_address!() }.unwrap();
-    let ra = t.read().byte_offset(diff as isize);
+    // SAFETY: `byte_offset` is not unsafe here. The `*t` is accessable it points to a value on the stack
+    let ra = unsafe { t.read().byte_offset(diff as isize) };
 
     // SAFETY: Offset contains the address of the same code in a new location.
-    t.write(ra);
+
+    unsafe { t.write(ra) };
 }
