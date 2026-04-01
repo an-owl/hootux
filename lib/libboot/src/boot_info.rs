@@ -3,7 +3,7 @@ pub use ::uefi::table::boot::MemoryAttribute;
 #[cfg(feature = "uefi")]
 pub use ::uefi::table::boot::MemoryType;
 use cfg_if::cfg_if;
-use multiboot2::MemoryAreaType;
+use multiboot2::{ElfSectionType, MemoryAreaType};
 
 cfg_if! {
     if #[cfg(any(target_arch = "x86",target_arch = "x86_64"))] {
@@ -48,9 +48,9 @@ impl BootInfo {
         let mut start: Option<u64> = None;
         let mut end: Option<u64> = None;
         for s in sections {
-            if let Ok(n) = s.name() {
-                match n {
-                    ".tdata" => {
+            if s.flags().bits() & elf::abi::SHF_TLS as u64 != 0 {
+                match s.section_type() {
+                    ElfSectionType::ProgramSection => {
                         // SAFETY: This address and size is given by the bootloader
                         if let Some(st) = start {
                             start = Some(st.min(s.start_address()));
@@ -69,7 +69,7 @@ impl BootInfo {
                             end = Some(s.end_address())
                         }
                     }
-                    ".tbss" => {
+                    ElfSectionType::Uninitialized => {
                         if let Some(st) = start {
                             start = Some(st.min(s.start_address()));
                         } else {

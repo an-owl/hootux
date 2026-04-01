@@ -71,26 +71,29 @@ fn kernel_main(b: *mut hatcher::boot_info::BootInfo) -> ! {
     }
 
     {
+        let sections = b
+            .optionals
+            .mb2_info
+            .as_ref()
+            .unwrap()
+            .elf_sections_tag()
+            .unwrap();
         // SAFETY: The elf sections tag contains the ELF for the loaded image, and the
         // `r_address` field contains the currently loaded address.
-        let new_base = unsafe {
-            elf::relocate(
-                b.optionals
-                    .mb2_info
-                    .as_ref()
-                    .unwrap()
-                    .elf_sections_tag()
-                    .unwrap()
-                    .sections()
-                    .map(|sec| sec.section_raw()),
-            )
-        };
+        let new_base = unsafe { elf::relocate(sections.sections().map(|sec| sec.section_raw())) };
         unsafe { elf::switch_image(core::ptr::null(), new_base) };
 
         // todo: Fix this up
         let fs = x86_64::registers::model_specific::FsBase::read();
         init();
         x86_64::registers::model_specific::FsBase::write(fs);
+        // SAFETY: We have changed image and
+        unsafe {
+            elf::unload_image(
+                core::ptr::null_mut(),
+                sections.sections().map(|sec| sec.section_raw()),
+            )
+        };
     }
 
     mem::init_mm_subsys();

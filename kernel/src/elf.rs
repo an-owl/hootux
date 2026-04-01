@@ -27,7 +27,7 @@ unsafe fn alloc_image(
     sections: impl Iterator<Item = elf::section::SectionHeader>,
 ) -> usize {
     let mut tail = 0;
-    'section: for section in sections
+    for section in sections
         .filter(|sh| ElfFlags::from_bits_truncate(sh.sh_flags).contains(ElfFlags::SHF_ALLOC))
     {
         tail = tail.max(section.sh_addr + section.sh_size);
@@ -56,16 +56,43 @@ unsafe fn alloc_image(
                 acc |= PageTableFlags::WRITABLE;
             };
 
-            if flags.contains(ElfFlags::SHF_TLS) {
-                continue 'section;
-            }
-
             acc
         };
         // todo: Change to use most appropriate
         crate::mem::mem_map::map_range(iter, flags);
     }
     tail as usize
+}
+
+/// Unloads the image at `sections` + `base`. This will unmap *all* image sections, regardless of whether
+///
+/// # Safety
+///
+/// The caller must ensure that the described image does not describe the current image.
+/// The caller must ensure that no references are kept to the removed image, including the program counter.
+pub unsafe fn unload_image(
+    base: *mut u8,
+    sections: impl Iterator<Item = elf::section::SectionHeader>,
+) {
+    for section in sections {
+        let section_base = unsafe { base.byte_offset(section.sh_addr as isize) };
+        let section_base = VirtAddr::from_ptr(section_base);
+        let section_tail = section_base + section.sh_size;
+
+        let iter = PageRangeInclusive::<Size4KiB> {
+            start: Page::containing_address(section_base),
+            end: Page::containing_address(section_tail),
+        };
+
+        for page in iter {
+            unsafe {
+                // SAFETY: Upheld by caller.
+                // Return code is ignored, pages may overlap with other sections,
+                // so we just ignore if it fails to unmap sections.
+                let _ = crate::mem::mem_map::unmap_and_free(page.start_address());
+            }
+        }
+    }
 }
 
 /// Copies `sections` with a slide of `new_base`.
@@ -90,7 +117,7 @@ unsafe fn reload_image(
 
     for section in sections.filter(|sh| {
         let flags = ElfFlags::from_bits_truncate(sh.sh_flags);
-        flags.contains(ElfFlags::SHF_ALLOC) && !flags.contains(ElfFlags::SHF_TLS)
+        flags.contains(ElfFlags::SHF_ALLOC)
     }) {
         let dst_start = VirtAddr::from_ptr(new_base) + section.sh_addr;
         let data = unsafe {
@@ -206,7 +233,7 @@ pub unsafe fn switch_image(current_base: *const u8, new_base: *const u8) {
     let diff = new_base.addr() - current_base.addr();
     // SAFETY: I'm not even sure what to write here.
     let t = unsafe { crate::llvm::address_of_return_address!() }.unwrap();
-    // SAFETY: `byte_offset` is not unsafe here. The `*t` is accessable it points to a value on the stack
+    // SAFETY: `byte_offset` is not unsafe here. The `*t` is accessible it points to a value on the stack
     let ra = unsafe { t.read().byte_offset(diff as isize) };
 
     // SAFETY: Offset contains the address of the same code in a new location.
