@@ -76,6 +76,23 @@ impl LoadSection<'_> {
     }
 
     /// Loads the section into memory where `base` points to the base address where the ELF is being loaded.
+    /// `base` should be the address of [`ElfLoad::load_range`]`.start` in the loaded image.
+    ///
+    /// ```
+    /// # use std::iter::TrustedRandomAccessNoCoerce;
+    /// # use elfload::load::ElfLoad;
+    ///
+    /// fn load_elf(elf: &elf::ElfBytes<elf::endian::NativeEndian>) -> Box<u8> {
+    ///     // Construct box with enough space to store the entire image.
+    ///     let image = vec![0u8;elf.load_range().size()].into_boxed_slice()
+    ///
+    ///     for segment in elf.map() {
+    ///         // `base` always points to byte `0` regardless of the actual range of the image
+    ///         segment.load(&image[0])
+    ///     }
+    /// }
+    ///
+    /// ```
     ///
     /// # Safety
     ///
@@ -83,20 +100,23 @@ impl LoadSection<'_> {
     /// The caller must also ensure that the region that this section will be loaded into is valid for writes
     pub unsafe fn load(&self, base: *mut u8) -> Result<(), ()> {
         let phdr = self.elf.segments().unwrap().get(self.segment).unwrap();
+        let offset_base = self.elf.load_range().start;
+        let section_start = offset_base + phdr.p_vaddr;
 
         // SAFETY: Caller must guarantee that this region can be referenced safely.
         let section = unsafe {
             core::slice::from_raw_parts_mut(
-                base.offset(self.offset() as isize),
+                base.offset((self.offset() - offset_base) as isize),
                 phdr.p_memsz as usize,
             )
         };
+        section.fill(0);
 
         for (l, offset) in self.load_seg_iter() {
             match l {
-                LoadData::Data(data) => {
-                    section[offset as usize..offset as usize + data.len()].copy_from_slice(data)
-                }
+                LoadData::Data(data) => section[(offset - section_start) as usize
+                    ..(offset - section_start) as usize + data.len()]
+                    .copy_from_slice(data),
                 LoadData::Zero => section[offset as usize..].fill(0),
                 LoadData::LoadError => return Err(()),
             }
