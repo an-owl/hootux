@@ -477,6 +477,7 @@ impl DmaBuffer {
                 ))
             };
 
+            core::mem::forget(self);
             rc
         } else {
             Err(FromDmaBufferError::IncorrectAllocator(self))
