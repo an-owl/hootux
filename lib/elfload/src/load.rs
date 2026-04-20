@@ -13,6 +13,11 @@ pub trait ElfLoad {
     ///
     /// All offsets given for this file will be within this range.
     fn load_range(&self) -> core::ops::Range<u64>;
+
+    /// Applies relocations to the loaded image.
+    /// The first byte of `loaded` must be the image virtual address `0` and the last byte must be
+    /// the last byte of the image.
+    unsafe fn relocate(&self, loaded: *mut [u8]) -> Result<(), ()>;
 }
 
 impl<'a> ElfLoad for ElfBytes<'a, NativeEndian> {
@@ -36,6 +41,20 @@ impl<'a> ElfLoad for ElfBytes<'a, NativeEndian> {
             high = i.p_vaddr.add(i.p_memsz).max(high);
         }
         low..high
+    }
+
+    unsafe fn relocate(&self, loaded: *mut [u8]) -> Result<(), ()> {
+        for i in self
+            .section_headers()
+            .unwrap()
+            .iter()
+            .filter(|shdr| shdr.sh_type == elf::abi::SHT_RELA)
+        {
+            let t = self.section_data_as_relas(&i).unwrap();
+            crate::relocation::relocate_image(loaded, core::ptr::null(), core::ptr::null(), t)
+                .unwrap();
+        }
+        Ok(())
     }
 }
 

@@ -69,10 +69,10 @@ pub unsafe fn relocate_image(
     image: *mut [u8],
     got: *const u8,
     plt: *const u8,
-    rela: &[Elf64_Rela],
+    rela: impl Iterator<Item = Elf64_Rela>,
 ) -> Result<(), RelocError> {
     let base = image.cast::<u8>();
-    for i in rela {
+    for ref i in rela {
         let Ok(reloc): Result<X86_64RelocType, _> = i.try_into() else {
             return Err(RelocError::UnknownRelocType);
         };
@@ -206,19 +206,28 @@ impl X86_64RelocType {
             },
 
             // G + A
-            Self::R_x86_64_GOT32 => RelocCalc {
+            Self::R_x86_64_GOT32 =>
+            /*RelocCalc {
                 addened: true,
                 got_offset: true,
                 ..Default::default()
-            },
+
+            },*/
+            {
+                todo!("Unsupported reloc type")
+            }
 
             // L + A - P
-            Self::R_x86_64_PLT32 => RelocCalc {
+            Self::R_x86_64_PLT32 =>
+            /* RelocCalc {
                 plt: true,
                 addened: true,
                 sym_offset: Usage::Sub,
                 ..Default::default()
-            },
+            }, */
+            {
+                todo!("Unsupported reloc type")
+            }
 
             // S
             Self::R_x86_64_GLOB_DAT | Self::R_x86_64_JUMP_SLOT => RelocCalc {
@@ -234,29 +243,41 @@ impl X86_64RelocType {
             },
 
             // G + GOT + A - P
-            Self::R_x86_64_GOTPCREL => RelocCalc {
+            Self::R_x86_64_GOTPCREL =>
+            /* RelocCalc {
                 got: Usage::Add,
                 got_offset: true,
                 addened: true,
                 sym_offset: Usage::Add,
                 ..Default::default()
-            },
+            }, */
+            {
+                todo!("Unsupported reloc type")
+            }
 
             // S + A - GOT
-            Self::R_x86_64_GOTOFF64 => RelocCalc {
+            Self::R_x86_64_GOTOFF64 =>
+            /* RelocCalc {
                 tgt_symbol: true,
                 addened: true,
                 got: Usage::Sub,
                 ..Default::default()
-            },
+            }, */
+            {
+                todo!("Unsupported reloc type")
+            }
 
             // GOT + A + P
-            Self::R_x86_64_GOTPC32 => RelocCalc {
+            Self::R_x86_64_GOTPC32 =>
+            /* RelocCalc {
                 got: Usage::Add,
                 addened: true,
                 plt: true,
                 ..Default::default()
-            },
+            }, */
+            {
+                todo!("Unsupported reloc type")
+            }
 
             // Z + A
             Self::R_x86_64_SIZE32 | Self::R_x86_64_SIZE64 => RelocCalc {
